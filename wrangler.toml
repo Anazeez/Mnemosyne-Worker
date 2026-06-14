@@ -1,0 +1,22 @@
+name = "mnemosyne-worker"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding    = "MATRIX_KNOWLEDGE"
+index_name = "mnemosyne-knowledge"
+
+[[vectorize]]
+binding    = "MATRIX_AGENTS"
+index_name = "mnemosyne-agents"
+
+[[vectorize]]
+binding    = "MATRIX_SKILLS"
+index_name = "mnemosyne-skills"
+
+[[vectorize]]
+binding    = "MATRIX_FILES"
+index_name = "mnemosyne-files"
