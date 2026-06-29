@@ -192,15 +192,16 @@ function authenticateRequest(request, env) {
 }
 
 function principalFromScopedKey(authKey, env) {
-  const raw = env.MATRIX_PRINCIPAL_KEYS || env.MNEMOSYNE_PRINCIPAL_KEYS;
-  if (!raw) return null;
+  let records = env.MATRIX_PRINCIPAL_KEYS || env.MNEMOSYNE_PRINCIPAL_KEYS;
+  if (!records) return null;
 
-  let records;
-  try {
-    records = JSON.parse(raw);
-  } catch (e) {
-    console.error('Failed to parse MATRIX_PRINCIPAL_KEYS:', e.message);
-    return null;
+  if (typeof records === 'string') {
+    try {
+      records = JSON.parse(records);
+    } catch (e) {
+      console.error('Failed to parse MATRIX_PRINCIPAL_KEYS:', e.message);
+      return null;
+    }
   }
 
   if (Array.isArray(records)) {
@@ -212,7 +213,11 @@ function principalFromScopedKey(authKey, env) {
     return unwrapPrincipalRecord(record);
   }
 
-  return unwrapPrincipalRecord(records[authKey]);
+  if (typeof records === 'object') {
+    return unwrapPrincipalRecord(records[authKey]);
+  }
+
+  return null;
 }
 
 function unwrapPrincipalRecord(record) {
