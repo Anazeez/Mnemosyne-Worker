@@ -204,26 +204,64 @@ function principalFromScopedKey(authKey, env) {
   }
 
   if (Array.isArray(records)) {
-    const record = records.find(item => item?.key === authKey);
-    return record?.principal || stripKeyFromPrincipal(record);
+    const record = records.find(item =>
+      item?.key === authKey ||
+      item?.action_key === authKey
+    );
+
+    return unwrapPrincipalRecord(record);
   }
 
-  return records[authKey] || null;
+  return unwrapPrincipalRecord(records[authKey]);
 }
 
-function stripKeyFromPrincipal(record) {
+function unwrapPrincipalRecord(record) {
   if (!record) return null;
-  const { key, ...principal } = record;
+
+  if (record.principal) {
+    return {
+      ...record.principal,
+      capabilities:
+        record.principal.capabilities ||
+        record.capabilities,
+      memory_domains:
+        record.principal.memory_domains ||
+        record.principal.allowed_domains ||
+        record.memory_domains ||
+        record.allowed_domains
+    };
+  }
+
+  const { key, action_key, ...principal } = record;
   return principal;
 }
 
 function normalizePrincipal(principal) {
   return {
-    principal_id: String(principal.principal_id || principal.id || 'unknown'),
-    class: String(principal.class || 'standard'),
-    capabilities: Array.isArray(principal.capabilities) ? principal.capabilities : [],
-    memory_domains: Array.isArray(principal.memory_domains) ? principal.memory_domains : []
+    principal_id: String(
+      principal.principal_id ||
+      principal.id ||
+      principal.name ||
+      'unknown'
+    ),
+    class: String(
+      principal.class ||
+      principal.type ||
+      'standard'
+    ),
+    capabilities: normalizeStringList(principal.capabilities),
+    memory_domains: normalizeStringList(
+      principal.memory_domains ||
+      principal.allowed_domains ||
+      principal.domains
+    )
   };
+}
+
+function normalizeStringList(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'string') return [value];
+  return [];
 }
 
 function hasCapability(principal, capability) {
