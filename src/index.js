@@ -453,11 +453,10 @@ async function handleMandateDispatch(request, env, principal) {
   }
 
   const mandate = buildMandateDraft(body, principal);
-  const recipients = sanitizeRecipients(body.recipients || body.recipient_ids || []);
-
+const recipients = resolveMandateRecipients(env, principal);
   if (recipients.length === 0) {
-    return jsonError('At least one recipient is required', 400);
-  }
+return jsonError('No eligible mandate recipients found', 400); 
+ }
 
   const now = new Date().toISOString();
 
@@ -590,7 +589,34 @@ function buildMandateDraft(body, principal) {
     state: 'draft'
   };
 }
+function resolveMandateRecipients(env, principal) {
+  let records = env.MATRIX_PRINCIPAL_KEYS || env.MNEMOSYNE_PRINCIPAL_KEYS;
+  if (!records) return [];
 
+  if (typeof records === 'string') {
+    try {
+      records = JSON.parse(records);
+    } catch (e) {
+      console.error('Failed to parse MATRIX_PRINCIPAL_KEYS for recipients:', e.message);
+      return [];
+    }
+  }
+
+  const principals = Array.isArray(records)
+    ? records.map(unwrapPrincipalRecord)
+    : Object.values(records).map(unwrapPrincipalRecord);
+
+  return [...new Set(
+    principals
+      .filter(Boolean)
+      .map(normalizePrincipal)
+      .filter(p => p.principal_id !== principal.principal_id)
+      .filter(p => p.class !== 'orchestrator')
+      .filter(p => p.class !== 'root')
+      .filter(p => hasCapability(p, CAPABILITY.MANDATES_READ))
+      .map(p => p.principal_id)
+  )];
+}
 function sanitizeRecipients(recipients) {
   if (!Array.isArray(recipients)) return [];
   return [...new Set(
