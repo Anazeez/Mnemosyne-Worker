@@ -1,0 +1,36 @@
+ Project Mnemosyne — governed identity and mandate storage
+ Apply to the D1 database bound as DB.
+
+CREATE TABLE IF NOT EXISTS mandates (
+  mandate_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('draft', 'dispatched', 'active', 'closed', 'expired', 'cancelled'))
+);
+
+CREATE TABLE IF NOT EXISTS mandate_recipients (
+  mandate_id TEXT NOT NULL,
+  recipient_id TEXT NOT NULL,
+  acknowledged_at TEXT,
+  PRIMARY KEY (mandate_id, recipient_id),
+  FOREIGN KEY (mandate_id) REFERENCES mandates(mandate_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mandate_recipients_recipient
+  ON mandate_recipients (recipient_id, acknowledged_at);
+
+CREATE INDEX IF NOT EXISTS idx_mandates_state_expires
+  ON mandates (state, expires_at);
+
+CREATE TABLE IF NOT EXISTS principals (
+  principal_id TEXT PRIMARY KEY,
+  class TEXT NOT NULL,
+  capabilities TEXT NOT NULL,
+  memory_domains TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
