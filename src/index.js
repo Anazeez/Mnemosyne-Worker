@@ -2,35 +2,27 @@
  * Project Mnemosyne — Mnemosyne's Matrix (EQUILIBRIUM-COMPLIANT)
  * ─────────────────────────────────────────────────────────────────────────────
  * Worker:  mnemosyne-worker
- * Role:    Vector memory ingestion and retrieval for Project Infinitum
+ * Role:    Governed vector memory, identity authorization, and mandate dispatch
  * Model:   @cf/baai/bge-large-en-v1.5  (1024 dims, cosine)
  *
- * CRITICAL: This worker enforces the Well Equilibrium.
- * Layer 0 (canon) is sacred. Layer 1 (Vectorize/D1) is shadow.
- * Deterministic validation PRECEDES probabilistic indexing.
+ * Layer 0 (canon) remains deterministic. Layer 1 (Vectorize/D1) remains shadow.
+ * Identity and authorization now sit above memory access:
+ *   Action Key → Principal → Capabilities → Allowed memory domains → Vector search
  *
- * Routes:
- *   GET  /ping    → health check (no auth)
- *   POST /hash    → compute canonical body sha256 for a document (no ingest)
- *   POST /ingest  → validate frontmatter, verify hash, embed, upsert sections
- *   POST /query   → embed query, search index, return matches with citations
+ * Legacy routes remain available:
+ *   GET  /ping
+ *   POST /hash
+ *   POST /ingest
+ *   POST /query
  *
- * Indexes (Mnemosyne's Matrix):
- *   MATRIX_KNOWLEDGE → doctrine, protocols, runtime, handoff contracts
- *   MATRIX_AGENTS    → roles, specialist DNA, destination registry
- *   MATRIX_SKILLS    → skill definitions, capability maps
- *   MATRIX_FILES     → uploaded artifacts, session outputs
- *
- * Auth:
- *   Header: X-Matrix-Key → must match MATRIX_AUTH_KEY secret
- *   /ping is exempt from auth
- *
- * v2 FIXES (2026-06-13):
- *   • returnMetadata: 'all'  (V2 string enum — boolean true returns no
- *     metadata, which silently destroys all citations)
- *   • New POST /hash route — returns the canonical sha256 the gate will
- *     compute, so عِز can paste the correct hash into frontmatter before
- *     admission. Removes the entire hash-mismatch failure class.
+ * v1 governed API routes:
+ *   GET  /v1/memory/self
+ *   POST /v1/memory/search
+ *   GET  /v1/mandates/inbox
+ *   POST /v1/mandates/{id}/acknowledge
+ *   POST /v1/router/mandates/draft
+ *   POST /v1/router/mandates/dispatch
+ *   GET  /v1/router/status
  */
 
 // ─── Routing Table ────────────────────────────────────────────────────────────
@@ -50,9 +42,9 @@ const INDEX_BINDING = {
 };
 
 const EMBEDDING_MODEL     = '@cf/baai/bge-large-en-v1.5';
-const RETRIEVAL_THRESHOLD = 0.85;
-
-// ─── Well Frontmatter Schema ──────────────────────────────────────────────────
+const RETRIEVAL_THRESHOLD = 0.65;
+const DEFAULT_TOP_K       = 5;
+const MAX_TOP_K           = 25;
 
 const REQUIRED_FRONTMATTER_FIELDS = [
   'id', 'title', 'created', 'status',
@@ -61,11 +53,28 @@ const REQUIRED_FRONTMATTER_FIELDS = [
 
 const VALID_STATUS_VALUES = ['intake', 'canon', 'sealed'];
 
+const CAPABILITY = {
+  MEMORY_SEARCH:      'memory.search',
+  MEMORY_INGEST:      'memory.ingest',
+  HASH:               'memory.hash',
+  MANDATES_READ:      'mandates.read',
+  MANDATES_ACK:       'mandates.ack',
+  MANDATES_DRAFT:     'mandates.draft',
+  MANDATES_DISPATCH:  'mandates.dispatch',
+  ROUTER_STATUS:      'router.status'
+};
+
+const LEGACY_ARCHITECT_PRINCIPAL = {
+  principal_id: 'architectus',
+  class: 'orchestrator',
+  capabilities: ['*'],
+  memory_domains: ['*']
+};
+
 // ─── Main Handler ─────────────────────────────────────────────────────────────
 
 export default {
   async fetch(request, env) {
-
     const url    = new URL(request.url);
     const method = request.method;
 
@@ -74,60 +83,507 @@ export default {
         status:      'alive',
         project:     'Project Mnemosyne',
         worker:      'mnemosyne-worker',
+        api:         'v1-governed-memory',
         matrix:      Object.keys(INDEX_BINDING),
         model:       EMBEDDING_MODEL,
         threshold:   RETRIEVAL_THRESHOLD,
-        equilibrium: 'enforced'
+        equilibrium: 'enforced',
+        identity:    'enabled',
+        mandates:    Boolean(env.DB) ? 'd1-enabled' : 'd1-not-bound'
       });
     }
 
-    const authKey = request.headers.get('X-Matrix-Key');
-    if (authKey !== env.MATRIX_AUTH_KEY) {
-      return new Response('Unauthorized', { status: 401 });
+    const auth = authenticateRequest(request, env);
+    if (!auth.ok) {
+      return jsonError(auth.error, auth.status);
     }
 
-    if (url.pathname === '/hash' && method === 'POST') {
-      return handleHash(request);
-    }
+    const principal = auth.principal;
 
-    if (url.pathname === '/ingest' && method === 'POST') {
-      return handleIngest(request, env);
-    }
+    try {
+      if (url.pathname === '/hash' && method === 'POST') {
+        requireCapability(principal, CAPABILITY.HASH);
+        return handleHash(request);
+      }
 
-    if (url.pathname === '/query' && method === 'POST') {
-      return handleQuery(request, env);
-    }
+      if (url.pathname === '/ingest' && method === 'POST') {
+        requireCapability(principal, CAPABILITY.MEMORY_INGEST);
+        return handleIngest(request, env, principal);
+      }
 
-    return new Response('Not found', { status: 404 });
+      if (url.pathname === '/query' && method === 'POST') {
+        requireCapability(principal, CAPABILITY.MEMORY_SEARCH);
+        return handleMemorySearch(request, env, principal, { legacy: true });
+      }
+
+      if (url.pathname === '/v1/memory/self' && method === 'GET') {
+        return handleMemorySelf(principal);
+      }
+
+      if (url.pathname === '/v1/memory/search' && method === 'POST') {
+        requireCapability(principal, CAPABILITY.MEMORY_SEARCH);
+        return handleMemorySearch(request, env, principal, { legacy: false });
+      }
+
+      if (url.pathname === '/v1/mandates/inbox' && method === 'GET') {
+        requireCapability(principal, CAPABILITY.MANDATES_READ);
+        return handleMandateInbox(env, principal);
+      }
+
+      const acknowledgeMatch = url.pathname.match(/^\/v1\/mandates\/([^/]+)\/acknowledge$/);
+      if (acknowledgeMatch && method === 'POST') {
+        requireCapability(principal, CAPABILITY.MANDATES_ACK);
+        return handleMandateAcknowledge(env, principal, acknowledgeMatch[1]);
+      }
+
+      if (url.pathname === '/v1/router/mandates/draft' && method === 'POST') {
+        requireCapability(principal, CAPABILITY.MANDATES_DRAFT);
+        return handleMandateDraft(request, principal);
+      }
+
+      if (url.pathname === '/v1/router/mandates/dispatch' && method === 'POST') {
+        requireCapability(principal, CAPABILITY.MANDATES_DISPATCH);
+        return handleMandateDispatch(request, env, principal);
+      }
+
+      if (url.pathname === '/v1/router/status' && method === 'GET') {
+        requireCapability(principal, CAPABILITY.ROUTER_STATUS);
+        return handleRouterStatus(env, principal);
+      }
+
+      return new Response('Not found', { status: 404 });
+    } catch (e) {
+      if (e instanceof AuthzError) {
+        return jsonError(e.message, e.status, e.details);
+      }
+      console.error('Unhandled worker error:', e);
+      return jsonError('Internal worker error', 500);
+    }
   }
 };
 
-// ─── Hash Helper (no ingest, no writes) ──────────────────────────────────────
-// Send the FULL document (frontmatter + body). The worker strips frontmatter
-// exactly as the gate does and returns the sha256 it would expect to find in
-// the frontmatter. Paste that value into the document's sha256 field.
-// If the document has no frontmatter, the whole normalized content is hashed.
+// ─── Identity and Authorization ───────────────────────────────────────────────
+
+class AuthzError extends Error {
+  constructor(message, status = 403, details = undefined) {
+    super(message);
+    this.status = status;
+    this.details = details;
+  }
+}
+
+function authenticateRequest(request, env) {
+  const authKey = request.headers.get('X-Matrix-Key') || request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+
+  if (!authKey) {
+    return { ok: false, status: 401, error: 'Missing action key' };
+  }
+
+  if (env.MATRIX_AUTH_KEY && authKey === env.MATRIX_AUTH_KEY) {
+    return { ok: true, principal: LEGACY_ARCHITECT_PRINCIPAL };
+  }
+
+  const principal = principalFromScopedKey(authKey, env);
+  if (!principal) {
+    return { ok: false, status: 401, error: 'Unauthorized' };
+  }
+
+  return { ok: true, principal: normalizePrincipal(principal) };
+}
+
+function principalFromScopedKey(authKey, env) {
+  const raw = env.MATRIX_PRINCIPAL_KEYS || env.MNEMOSYNE_PRINCIPAL_KEYS;
+  if (!raw) return null;
+
+  let records;
+  try {
+    records = JSON.parse(raw);
+  } catch (e) {
+    console.error('Failed to parse MATRIX_PRINCIPAL_KEYS:', e.message);
+    return null;
+  }
+
+  if (Array.isArray(records)) {
+    const record = records.find(item => item?.key === authKey);
+    return record?.principal || stripKeyFromPrincipal(record);
+  }
+
+  return records[authKey] || null;
+}
+
+function stripKeyFromPrincipal(record) {
+  if (!record) return null;
+  const { key, ...principal } = record;
+  return principal;
+}
+
+function normalizePrincipal(principal) {
+  return {
+    principal_id: String(principal.principal_id || principal.id || 'unknown'),
+    class: String(principal.class || 'standard'),
+    capabilities: Array.isArray(principal.capabilities) ? principal.capabilities : [],
+    memory_domains: Array.isArray(principal.memory_domains) ? principal.memory_domains : []
+  };
+}
+
+function hasCapability(principal, capability) {
+  return principal.capabilities.includes('*') || principal.capabilities.includes(capability);
+}
+
+function requireCapability(principal, capability) {
+  if (!hasCapability(principal, capability)) {
+    throw new AuthzError(`Principal lacks capability: ${capability}`, 403, {
+      principal_id: principal.principal_id,
+      required: capability
+    });
+  }
+}
+
+function allowedDomains(principal) {
+  const allDomains = Object.keys(INDEX_BINDING);
+  if (principal.memory_domains.includes('*')) return allDomains;
+  return principal.memory_domains.filter(domain => domain in INDEX_BINDING);
+}
+
+function resolveSearchDomains(requestedIndex, principal) {
+  const allowed = allowedDomains(principal);
+
+  if (requestedIndex === 'all') {
+    return allowed;
+  }
+
+  if (!(requestedIndex in INDEX_BINDING)) {
+    throw new AuthzError(`Unknown memory domain: ${requestedIndex}`, 400);
+  }
+
+  if (!allowed.includes(requestedIndex)) {
+    throw new AuthzError(`Principal is not allowed to search memory domain: ${requestedIndex}`, 403, {
+      principal_id: principal.principal_id,
+      allowed_domains: allowed
+    });
+  }
+
+  return [requestedIndex];
+}
+
+// ─── v1 Memory API ────────────────────────────────────────────────────────────
+
+function handleMemorySelf(principal) {
+  return Response.json({
+    principal_id: principal.principal_id,
+    class: principal.class,
+    capabilities: principal.capabilities,
+    memory_domains: allowedDomains(principal)
+  });
+}
+
+async function handleMemorySearch(request, env, principal, { legacy }) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError('Invalid JSON body', 400);
+  }
+
+  const query = body.query;
+  const index = body.index || 'knowledge';
+  const topK  = sanitizeTopK(body.top_k ?? body.topK ?? DEFAULT_TOP_K);
+
+  if (!query) {
+    return jsonError('query is required', 400);
+  }
+
+  const domains = resolveSearchDomains(index, principal);
+
+  let embeddingResponse;
+  try {
+    embeddingResponse = await env.AI.run(EMBEDDING_MODEL, { text: [query] });
+  } catch (e) {
+    return jsonError(`Embedding failed: ${e.message}`, 500);
+  }
+
+  const queryVector = embeddingResponse.data?.[0];
+  if (!queryVector) {
+    return jsonError('Embedding returned no vector', 500);
+  }
+
+  const combined = [];
+  const errors = [];
+
+  for (const domain of domains) {
+    const bindingName = INDEX_BINDING[domain];
+    const matrixIndex = env[bindingName];
+
+    if (!matrixIndex) {
+      errors.push({ index: domain, error: `No binding found for index: ${domain}` });
+      continue;
+    }
+
+    try {
+      const queryResult = await matrixIndex.query(queryVector, {
+        topK,
+        returnMetadata: 'all'
+      });
+
+      for (const match of queryResult.matches || []) {
+        combined.push({ ...match, resolved_index: domain });
+      }
+    } catch (e) {
+      errors.push({ index: domain, error: `Matrix query failed: ${e.message}` });
+    }
+  }
+
+  const sortedMatches = combined
+    .sort((a, b) => b.score - a.score);
+
+  const filteredMatches = sortedMatches
+    .filter(m => m.score >= RETRIEVAL_THRESHOLD)
+    .slice(0, topK);
+
+  const payload = {
+    query,
+    index,
+    searched_indexes: domains,
+    threshold: RETRIEVAL_THRESHOLD,
+    total_raw: combined.length,
+    above_threshold: filteredMatches.length,
+    principal_id: principal.principal_id,
+    errors,
+    results: filteredMatches.map(formatVectorMatch)
+  };
+
+  if (legacy) return Response.json(payload);
+
+  return Response.json({
+    ...payload,
+    api: '/v1/memory/search'
+  });
+}
+
+function formatVectorMatch(m) {
+  const metadata = m.metadata || {};
+  return {
+    score:    Number(m.score.toFixed(4)),
+    file:     metadata.file,
+    path:     metadata.path,
+    sha256:   metadata.sha256,
+    section:  metadata.section_title,
+    status:   metadata.status,
+    preview:  metadata.preview,
+    index:    metadata.index || m.resolved_index,
+    citation: metadata.path && metadata.sha256 ? `${metadata.path}#${metadata.sha256}` : null
+  };
+}
+
+function sanitizeTopK(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_TOP_K;
+  return Math.min(parsed, MAX_TOP_K);
+}
+
+// ─── Mandate API ──────────────────────────────────────────────────────────────
+
+async function handleMandateDraft(request, principal) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError('Invalid JSON body', 400);
+  }
+
+  const draft = buildMandateDraft(body, principal);
+  return Response.json({
+    status: 'drafted',
+    mandate: draft,
+    note: 'Draft only. Nothing was dispatched.'
+  });
+}
+
+async function handleMandateDispatch(request, env, principal) {
+  ensureD1(env);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError('Invalid JSON body', 400);
+  }
+
+  const mandate = buildMandateDraft(body, principal);
+  const recipients = sanitizeRecipients(body.recipients || body.recipient_ids || []);
+
+  if (recipients.length === 0) {
+    return jsonError('At least one recipient is required', 400);
+  }
+
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    mandate.mandate_id,
+    mandate.title,
+    mandate.body,
+    principal.principal_id,
+    now,
+    mandate.expires_at,
+    'dispatched'
+  ).run();
+
+  for (const recipient of recipients) {
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO mandate_recipients (mandate_id, recipient_id, acknowledged_at)
+      VALUES (?, ?, NULL)
+    `).bind(mandate.mandate_id, recipient).run();
+  }
+
+  return Response.json({
+    status: 'dispatched',
+    mandate_id: mandate.mandate_id,
+    recipients,
+    created_by: principal.principal_id,
+    created_at: now,
+    expires_at: mandate.expires_at
+  });
+}
+
+async function handleMandateInbox(env, principal) {
+  ensureD1(env);
+
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(`
+    SELECT
+      m.mandate_id,
+      m.title,
+      m.body,
+      m.created_by,
+      m.created_at,
+      m.expires_at,
+      m.state,
+      r.acknowledged_at
+    FROM mandate_recipients r
+    JOIN mandates m ON m.mandate_id = r.mandate_id
+    WHERE r.recipient_id = ?
+      AND m.state IN ('dispatched', 'active')
+      AND m.expires_at > ?
+    ORDER BY m.created_at DESC
+    LIMIT 50
+  `).bind(principal.principal_id, now).all();
+
+  return Response.json({
+    principal_id: principal.principal_id,
+    mandates: result.results || []
+  });
+}
+
+async function handleMandateAcknowledge(env, principal, mandateId) {
+  ensureD1(env);
+
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(`
+    UPDATE mandate_recipients
+    SET acknowledged_at = ?
+    WHERE mandate_id = ?
+      AND recipient_id = ?
+  `).bind(now, mandateId, principal.principal_id).run();
+
+  const changed = result.meta?.changes || 0;
+  if (changed === 0) {
+    return jsonError('Mandate not found for this principal', 404);
+  }
+
+  return Response.json({
+    status: 'acknowledged',
+    mandate_id: mandateId,
+    principal_id: principal.principal_id,
+    acknowledged_at: now
+  });
+}
+
+async function handleRouterStatus(env, principal) {
+  const payload = {
+    status: 'alive',
+    principal_id: principal.principal_id,
+    d1_bound: Boolean(env.DB),
+    memory_domains: Object.keys(INDEX_BINDING),
+    mandate_tables: 'unknown'
+  };
+
+  if (env.DB) {
+    try {
+      await env.DB.prepare('SELECT 1 FROM mandates LIMIT 1').first();
+      payload.mandate_tables = 'available';
+    } catch (e) {
+      payload.mandate_tables = 'missing_or_unmigrated';
+      payload.mandate_error = e.message;
+    }
+  }
+
+  return Response.json(payload);
+}
+
+function buildMandateDraft(body, principal) {
+  const title = String(body.title || '').trim();
+  const mandateBody = String(body.body || body.instructions || '').trim();
+
+  if (!title) {
+    throw new AuthzError('title is required', 400);
+  }
+
+  if (!mandateBody) {
+    throw new AuthzError('body or instructions is required', 400);
+  }
+
+  const expiresAt = body.expires_at || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  return {
+    mandate_id: body.mandate_id || crypto.randomUUID(),
+    title,
+    body: mandateBody,
+    created_by: principal.principal_id,
+    created_at: new Date().toISOString(),
+    expires_at: expiresAt,
+    state: 'draft'
+  };
+}
+
+function sanitizeRecipients(recipients) {
+  if (!Array.isArray(recipients)) return [];
+  return [...new Set(
+    recipients
+      .map(r => String(r).trim().toLowerCase())
+      .filter(r => /^[a-z0-9_-]{2,64}$/.test(r))
+  )];
+}
+
+function ensureD1(env) {
+  if (!env.DB) {
+    throw new AuthzError('D1 binding DB is required for mandate routes', 503);
+  }
+}
+
+// ─── Hash Helper ──────────────────────────────────────────────────────────────
 
 async function handleHash(request) {
   let body;
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return jsonError('Invalid JSON body', 400);
   }
 
   const { content } = body;
-
   if (!content) {
-    return Response.json({ error: 'content is required' }, { status: 400 });
+    return jsonError('content is required', 400);
   }
 
-  let target       = content;
+  let target = content;
   let hadFrontmatter = false;
 
   try {
-    const parsed   = parseFrontmatter(content);
-    target         = parsed.body;
+    const parsed = parseFrontmatter(content);
+    target = parsed.body;
     hadFrontmatter = true;
   } catch {
     // No frontmatter — hash the whole normalized content.
@@ -146,21 +602,19 @@ async function handleHash(request) {
 
 // ─── Ingest Handler (EQUILIBRIUM GATE) ───────────────────────────────────────
 
-async function handleIngest(request, env) {
+async function handleIngest(request, env, principal) {
   let body;
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return jsonError('Invalid JSON body', 400);
   }
 
   const { file_name, content, index_override } = body;
 
   if (!file_name || !content) {
-    return Response.json({ error: 'file_name and content are required' }, { status: 400 });
+    return jsonError('file_name and content are required', 400);
   }
-
-  // ─── DETERMINISTIC GATE ───────────────────────────────────────────────────
 
   let frontmatter     = {};
   let bodyContent     = content;
@@ -191,7 +645,6 @@ async function handleIngest(request, env) {
     validationError = `Only canon and sealed documents may be ingested. Status is: ${frontmatter.status}`;
   }
 
-  // FIX: await async hash — was getRandomValues (random!), now SHA-256
   let computedHash = null;
   if (!validationError) {
     computedHash = await computeBodyHash(bodyContent);
@@ -221,20 +674,25 @@ async function handleIngest(request, env) {
     return Response.json(errorPayload, { status: 422 });
   }
 
-  // ─── GATE PASSED ──────────────────────────────────────────────────────────
-
   const sections = parseMarkdownSections(bodyContent);
 
   if (sections.length === 0) {
-    return Response.json({ error: 'No parseable sections found in content' }, { status: 400 });
+    return jsonError('No parseable sections found in content', 400);
   }
 
   const results = [];
   const errors  = [];
 
   for (const section of sections) {
-
     const indexKey    = index_override || routeSection(section.title);
+
+    try {
+      resolveSearchDomains(indexKey, principal);
+    } catch (e) {
+      errors.push({ section: section.title, error: e.message });
+      continue;
+    }
+
     const bindingName = INDEX_BINDING[indexKey];
     const matrixIndex = env[bindingName];
 
@@ -273,7 +731,8 @@ async function handleIngest(request, env) {
           ingested_at:    new Date().toISOString(),
           document_id:    frontmatter.id,
           document_title: frontmatter.title,
-          created:        frontmatter.created
+          created:        frontmatter.created,
+          ingested_by:    principal.principal_id
         }
       }]);
     } catch (e) {
@@ -300,86 +759,13 @@ async function handleIngest(request, env) {
     sections_ingested: results.length,
     errors_count:      errors.length,
     validation:        'passed',
+    principal_id:      principal.principal_id,
     results,
     errors
   });
 }
 
-// ─── Query Handler ────────────────────────────────────────────────────────────
-
-async function handleQuery(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
-
-  const { query, index = 'knowledge', top_k = 5 } = body;
-
-  if (!query) {
-    return Response.json({ error: 'query is required' }, { status: 400 });
-  }
-
-  const bindingName = INDEX_BINDING[index];
-  const matrixIndex = env[bindingName];
-
-  if (!matrixIndex) {
-    return Response.json({ error: `Unknown index: ${index}` }, { status: 400 });
-  }
-
-  let embeddingResponse;
-  try {
-    embeddingResponse = await env.AI.run(EMBEDDING_MODEL, {
-      text: [query]
-    });
-  } catch (e) {
-    return Response.json({ error: `Embedding failed: ${e.message}` }, { status: 500 });
-  }
-
-  const queryVector = embeddingResponse.data[0];
-
-  let queryResult;
-  try {
-    // FIX: V2 Vectorize requires the string enum 'all'.
-    // Boolean true silently returns no metadata → citations become
-    // undefined#undefined → no valid Well citations.
-    queryResult = await matrixIndex.query(queryVector, {
-      topK:           top_k,
-      returnMetadata: 'all'
-    });
-  } catch (e) {
-    return Response.json({ error: `Matrix query failed: ${e.message}` }, { status: 500 });
-  }
-
-  const allMatches      = queryResult.matches || [];
-  const filteredMatches = allMatches.filter(m => m.score >= RETRIEVAL_THRESHOLD);
-
-  return Response.json({
-    query,
-    index,
-    threshold:       RETRIEVAL_THRESHOLD,
-    total_raw:       allMatches.length,
-    above_threshold: filteredMatches.length,
-    results: filteredMatches.map(m => ({
-      score:    Number(m.score.toFixed(4)),
-      file:     m.metadata?.file,
-      path:     m.metadata?.path,
-      sha256:   m.metadata?.sha256,
-      section:  m.metadata?.section_title,
-      status:   m.metadata?.status,
-      preview:  m.metadata?.preview,
-      index:    m.metadata?.index,
-      citation: `${m.metadata?.path}#${m.metadata?.sha256}`
-    }))
-  });
-}
-
 // ─── Frontmatter Parser ───────────────────────────────────────────────────────
-// FIX: both delimiters use trimEnd().startsWith('---')
-// Handles ----- (five dashes) used in equilibrium.md and well-canon-spec.md
-// Opening: permissive — catches ---, -----, --- etc.
-// Closing: same — finds first delimiter line after opening
 
 function parseFrontmatter(content) {
   const lines = content.split('\n');
@@ -413,8 +799,6 @@ function parseFrontmatter(content) {
   return { frontmatter, body };
 }
 
-// ─── Minimal YAML Parser ──────────────────────────────────────────────────────
-
 function parseYAML(yamlText) {
   const result = {};
   const lines  = yamlText.split('\n');
@@ -435,7 +819,7 @@ function parseYAML(yamlText) {
     } else if (value === 'false') {
       result[key] = false;
     } else if (value.startsWith('[') && value.endsWith(']')) {
-      result[key] = value.slice(1, -1).split(',').map(v => v.trim());
+      result[key] = value.slice(1, -1).split(',').map(v => v.trim()).filter(Boolean);
     } else if (value.startsWith('"') && value.endsWith('"')) {
       result[key] = value.slice(1, -1);
     } else {
@@ -445,10 +829,6 @@ function parseYAML(yamlText) {
 
   return result;
 }
-
-// ─── Body Hash Computation (Layer 0 Integrity) ───────────────────────────────
-// FIX: was crypto.getRandomValues (random every call) → now crypto.subtle.digest
-// FIX: async — must be awaited in handleIngest
 
 async function computeBodyHash(body) {
   const normalized = body
@@ -463,8 +843,6 @@ async function computeBodyHash(body) {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 }
-
-// ─── Markdown Section Parser ──────────────────────────────────────────────────
 
 function parseMarkdownSections(content) {
   const lines    = content.split('\n');
@@ -497,8 +875,6 @@ function parseMarkdownSections(content) {
   return sections;
 }
 
-// ─── Section Router ───────────────────────────────────────────────────────────
-
 function routeSection(title) {
   const t = title.toLowerCase();
 
@@ -509,4 +885,8 @@ function routeSection(title) {
   }
 
   return 'knowledge';
+}
+
+function jsonError(error, status = 400, details = undefined) {
+  return Response.json({ error, details }, { status });
 }
