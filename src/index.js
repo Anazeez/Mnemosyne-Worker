@@ -4,25 +4,6 @@
  * Worker:  mnemosyne-worker
  * Role:    Governed vector memory, identity authorization, and mandate dispatch
  * Model:   @cf/baai/bge-large-en-v1.5  (1024 dims, cosine)
- *
- * Layer 0 (canon) remains deterministic. Layer 1 (Vectorize/D1) remains shadow.
- * Identity and authorization now sit above memory access:
- *   Action Key → Principal → Capabilities → Allowed memory domains → Vector search
- *
- * Legacy routes remain available:
- *   GET  /ping
- *   POST /hash
- *   POST /ingest
- *   POST /query
- *
- * v1 governed API routes:
- *   GET  /v1/memory/self
- *   POST /v1/memory/search
- *   GET  /v1/mandates/inbox
- *   POST /v1/mandates/{id}/acknowledge
- *   POST /v1/router/mandates/draft
- *   POST /v1/router/mandates/dispatch
- *   GET  /v1/router/status
  */
 
 // ─── Routing Table ────────────────────────────────────────────────────────────
@@ -38,7 +19,8 @@ const INDEX_BINDING = {
   knowledge: 'MATRIX_KNOWLEDGE',
   agents:    'MATRIX_AGENTS',
   skills:    'MATRIX_SKILLS',
-  files:     'MATRIX_FILES'
+  files:     'MATRIX_FILES',
+  library:   'MATRIX_LIBRARY' // Added for educational books
 };
 
 const EMBEDDING_MODEL     = '@cf/baai/bge-large-en-v1.5';
@@ -453,10 +435,10 @@ async function handleMandateDispatch(request, env, principal) {
   }
 
   const mandate = buildMandateDraft(body, principal);
-const recipients = resolveMandateRecipients(env, principal);
+  const recipients = resolveMandateRecipients(env, principal);
   if (recipients.length === 0) {
-return jsonError('No eligible mandate recipients found', 400); 
- }
+    return jsonError('No eligible mandate recipients found', 400); 
+  }
 
   const now = new Date().toISOString();
 
@@ -589,6 +571,7 @@ function buildMandateDraft(body, principal) {
     state: 'draft'
   };
 }
+
 function resolveMandateRecipients(env, principal) {
   let records = env.MATRIX_PRINCIPAL_KEYS || env.MNEMOSYNE_PRINCIPAL_KEYS;
   if (!records) return [];
@@ -617,6 +600,7 @@ function resolveMandateRecipients(env, principal) {
       .map(p => p.principal_id)
   )];
 }
+
 function sanitizeRecipients(recipients) {
   if (!Array.isArray(recipients)) return [];
   return [...new Set(
