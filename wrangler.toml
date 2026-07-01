@@ -20,3 +20,7 @@ index_name = "mnemosyne-skills"
 [[vectorize]]
 binding    = "MATRIX_FILES"
 index_name = "mnemosyne-files"
+
+[[vectorize]]
+binding = "MATRIX_LIBRARY"
+index_name = "matrix-library"
