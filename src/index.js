@@ -134,6 +134,48 @@ export default {
         return handleRouterStatus(env, principal);
       }
 
+      // ─── NEW: Persona Mesh Exchange HTTP Handlers ───
+      
+      // Handles dispatching versions from peer nodes
+      if (url.pathname === '/v1/exchanges/dispatch' && method === 'POST') {
+         let payload;
+         try {
+           payload = await request.json();
+         } catch {
+           return jsonError('Invalid JSON format', 400);
+         }
+         
+         const { recipient_persona, chapter_context, state_version, payload_data } = payload;
+         ensureD1(env);
+         
+         const mandateId = crypto.randomUUID();
+         const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+         
+         await env.DB.prepare(`
+           INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+         `).bind(
+           mandateId,
+           `Mesh Exchange [Chapter ${chapter_context} | v${state_version}]`,
+           `Target: ${recipient_persona}\nData: ${payload_data}`,
+           principal.principal_id,
+           new Date().toISOString(),
+           defaultExpiration,
+           'archived'
+         ).run();
+         
+         return Response.json({ status: "Exchange submitted to the tracking ledger." });
+      }
+
+      // Handles the Mnemosyne Portal pulling the telemetry dashboard
+      if (url.pathname === '/v1/exchanges/history' && method === 'GET') {
+         ensureD1(env);
+         const { results } = await env.DB.prepare(
+           "SELECT * FROM mandates WHERE title LIKE 'Mesh Exchange%' ORDER BY created_at DESC LIMIT 20"
+         ).all();
+         return Response.json({ telemetry: results });
+      }
+
       return new Response('Not found', { status: 404 });
     } catch (e) {
       if (e instanceof AuthzError) {
@@ -144,30 +186,51 @@ export default {
     }
   },
 
-  // 2. Asynchronous Push Email Handler (Queue Producer)
+  // 2. Asynchronous Push Email Handler (Queue Producer + Email Mirroring)
   async email(message, env, ctx) {
     const sender = message.from;
-    const subject = message.headers.get("subject") || "No Subject";
+    const recipient = message.to;
+    const subject = message.headers.get("subject") || "Automated Mesh Exchange";
     const rawBody = await new Response(message.raw).text();
 
     ctx.waitUntil(
       (async () => {
         try {
-          if (!env.MATRIX_EMAIL_QUEUE) {
-            throw new Error("MATRIX_EMAIL_QUEUE binding is missing on your worker config");
+          // Offload to Matrix Queue Buffer (if active)
+          if (env.MATRIX_EMAIL_QUEUE) {
+            await env.MATRIX_EMAIL_QUEUE.send({
+              sender,
+              subject,
+              rawBody,
+              timestamp: new Date().toISOString()
+            });
+            console.log(`[Queue Pipeline] Buffered incoming email from ${sender}`);
           }
 
-          // Offload payload immediately to the safety buffer queue
-          await env.MATRIX_EMAIL_QUEUE.send({
-            sender,
-            subject,
-            rawBody,
-            timestamp: new Date().toISOString()
-          });
+          // Direct D1 Fallback Logging for immediate tracking
+          if (env.DB) {
+             const mandateId = crypto.randomUUID();
+             const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+             await env.DB.prepare(`
+               INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+             `).bind(
+               mandateId,
+               `Mail Exchange: ${subject}`,
+               `From: ${sender} | To: ${recipient}\n\n${rawBody}`,
+               sender,
+               new Date().toISOString(),
+               defaultExpiration,
+               'archived'
+             ).run();
+          }
 
-          console.log(`[Queue Pipeline] Successfully buffered incoming email from ${sender}`);
+          // MIRROR TO ARCHITECTUS:
+          // NOTE: Update 'your.real.email@gmail.com' in the line below with your actual verified destination address!
+          await message.forward("your.real.email@gmail.com");
+
         } catch (err) {
-          console.error(`[Queue Producer Exception]: ${err.message}`);
+          console.error(`[Email Intercept Exception]: ${err.message}`);
         }
       })()
     );
