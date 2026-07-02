@@ -20,19 +20,17 @@ const INDEX_BINDING = {
   agents:    'MATRIX_AGENTS',
   skills:    'MATRIX_SKILLS',
   files:     'MATRIX_FILES',
-  library:   'MATRIX_LIBRARY' // Added for educational books
+  library:   'MATRIX_LIBRARY' 
 };
 
 const EMBEDDING_MODEL     = '@cf/baai/bge-large-en-v1.5';
 const RETRIEVAL_THRESHOLD = 0.65;
 const DEFAULT_TOP_K       = 5;
 const MAX_TOP_K           = 25;
-
 const REQUIRED_FRONTMATTER_FIELDS = [
   'id', 'title', 'created', 'status',
   'sha256', 'parents', 'sources', 'tags', 'schema'
 ];
-
 const VALID_STATUS_VALUES = ['intake', 'canon', 'sealed'];
 
 const CAPABILITY = {
@@ -53,9 +51,10 @@ const LEGACY_ARCHITECT_PRINCIPAL = {
   memory_domains: ['*']
 };
 
-// ─── Main Handler ─────────────────────────────────────────────────────────────
+// ─── Main Export ─────────────────────────────────────────────────────────────
 
 export default {
+  // HTTP Fetch Handler
   async fetch(request, env) {
     const url    = new URL(request.url);
     const method = request.method;
@@ -71,7 +70,8 @@ export default {
         threshold:   RETRIEVAL_THRESHOLD,
         equilibrium: 'enforced',
         identity:    'enabled',
-        mandates:    Boolean(env.DB) ? 'd1-enabled' : 'd1-not-bound'
+        mandates:    Boolean(env.DB) ? 'd1-enabled' : 'd1-not-bound',
+        email_route: Boolean(env.MATRIX_MAIL) ? 'active-event-driven' : 'missing-binding'
       });
     }
 
@@ -141,6 +141,43 @@ export default {
       console.error('Unhandled worker error:', e);
       return jsonError('Internal worker error', 500);
     }
+  },
+
+  // Asynchronous Push Email Handler
+  async email(message, env, ctx) {
+    const sender = message.from;
+    const subject = message.headers.get("subject") || "No Subject";
+    const rawBody = await new Response(message.raw).text();
+
+    ctx.waitUntil(
+      (async () => {
+        try {
+          ensureD1(env);
+          
+          const mandateId = crypto.randomUUID();
+          const now = new Date().toISOString();
+          const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+          // Auto-insert incoming email as a dispatched mandate
+          await env.DB.prepare(`
+            INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            mandateId,
+            `Email via ${sender}: ${subject}`,
+            rawBody,
+            sender,
+            now,
+            defaultExpiration,
+            'dispatched'
+          ).run();
+
+          console.log(`[Email Pipeline] Mandate ${mandateId} auto-ingested from ${sender}`);
+        } catch (err) {
+          console.error(`[Email Pipeline Exception]: ${err.message}`);
+        }
+      })()
+    );
   }
 };
 
@@ -156,7 +193,6 @@ class AuthzError extends Error {
 
 function authenticateRequest(request, env) {
   const authKey = request.headers.get('X-Matrix-Key') || request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
-
   if (!authKey) {
     return { ok: false, status: 401, error: 'Missing action key' };
   }
@@ -191,7 +227,6 @@ function principalFromScopedKey(authKey, env) {
       item?.key === authKey ||
       item?.action_key === authKey
     );
-
     return unwrapPrincipalRecord(record);
   }
 
@@ -349,7 +384,6 @@ async function handleMemorySearch(request, env, principal, { legacy }) {
         topK,
         returnMetadata: 'all'
       });
-
       for (const match of queryResult.matches || []) {
         combined.push({ ...match, resolved_index: domain });
       }
@@ -358,9 +392,7 @@ async function handleMemorySearch(request, env, principal, { legacy }) {
     }
   }
 
-  const sortedMatches = combined
-    .sort((a, b) => b.score - a.score);
-
+  const sortedMatches = combined.sort((a, b) => b.score - a.score);
   const filteredMatches = sortedMatches
     .filter(m => m.score >= RETRIEVAL_THRESHOLD)
     .slice(0, topK);
@@ -437,7 +469,7 @@ async function handleMandateDispatch(request, env, principal) {
   const mandate = buildMandateDraft(body, principal);
   const recipients = resolveMandateRecipients(env, principal);
   if (recipients.length === 0) {
-    return jsonError('No eligible mandate recipients found', 400); 
+    return jsonError('No eligible mandate recipients found', 400);
   }
 
   const now = new Date().toISOString();
@@ -560,7 +592,6 @@ function buildMandateDraft(body, principal) {
   }
 
   const expiresAt = body.expires_at || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
   return {
     mandate_id: body.mandate_id || crypto.randomUUID(),
     title,
@@ -639,7 +670,7 @@ async function handleHash(request) {
     target = parsed.body;
     hadFrontmatter = true;
   } catch {
-    // No frontmatter — hash the whole normalized content.
+    // No frontmatter
   }
 
   const sha256 = await computeBodyHash(target);
@@ -664,7 +695,6 @@ async function handleIngest(request, env, principal) {
   }
 
   const { file_name, content, index_override } = body;
-
   if (!file_name || !content) {
     return jsonError('file_name and content are required', 400);
   }
@@ -713,7 +743,6 @@ async function handleIngest(request, env, principal) {
       status:    'VALIDATION_FAILED',
       timestamp: new Date().toISOString()
     };
-
     try {
       await fetch('https://pulse-alarm-engine.izeesub.workers.dev/webhook/ingest-failure', {
         method:  'POST',
@@ -728,17 +757,14 @@ async function handleIngest(request, env, principal) {
   }
 
   const sections = parseMarkdownSections(bodyContent);
-
   if (sections.length === 0) {
     return jsonError('No parseable sections found in content', 400);
   }
 
   const results = [];
   const errors  = [];
-
   for (const section of sections) {
     const indexKey    = index_override || routeSection(section.title);
-
     try {
       resolveSearchDomains(indexKey, principal);
     } catch (e) {
@@ -748,7 +774,6 @@ async function handleIngest(request, env, principal) {
 
     const bindingName = INDEX_BINDING[indexKey];
     const matrixIndex = env[bindingName];
-
     if (!matrixIndex) {
       errors.push({ section: section.title, error: `No binding found for index: ${indexKey}` });
       continue;
@@ -767,7 +792,6 @@ async function handleIngest(request, env, principal) {
     const vector       = embeddingResponse.data[0];
     const safeFileName = file_name.replace(/[^a-zA-Z0-9]/g, '_');
     const id           = `${safeFileName}_s${String(section.number).padStart(3, '0')}`;
-
     try {
       await matrixIndex.upsert([{
         id,
@@ -822,7 +846,6 @@ async function handleIngest(request, env, principal) {
 
 function parseFrontmatter(content) {
   const lines = content.split('\n');
-
   if (!lines[0]?.trimEnd().startsWith('---')) {
     throw new Error('No frontmatter delimiter found (missing opening ---)');
   }
@@ -841,7 +864,6 @@ function parseFrontmatter(content) {
 
   const frontmatterText = lines.slice(1, endIndex).join('\n');
   const body            = lines.slice(endIndex + 1).join('\n');
-
   let frontmatter = {};
   try {
     frontmatter = parseYAML(frontmatterText);
@@ -855,7 +877,6 @@ function parseFrontmatter(content) {
 function parseYAML(yamlText) {
   const result = {};
   const lines  = yamlText.split('\n');
-
   for (const line of lines) {
     if (!line.trim() || line.trim().startsWith('#')) continue;
 
@@ -864,7 +885,6 @@ function parseYAML(yamlText) {
 
     const key   = match[1];
     let   value = match[2].trim();
-
     if (value === 'null') {
       result[key] = null;
     } else if (value === 'true') {
@@ -884,10 +904,7 @@ function parseYAML(yamlText) {
 }
 
 async function computeBodyHash(body) {
-  const normalized = body
-    .replace(/\r\n/g, '\n')
-    .trim();
-
+  const normalized = body.replace(/\r\n/g, '\n').trim();
   const encoder    = new TextEncoder();
   const data       = encoder.encode(normalized);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -902,10 +919,8 @@ function parseMarkdownSections(content) {
   const sections = [];
   let current    = null;
   let number     = 0;
-
   for (const line of lines) {
     const isHeading = /^#{1,3}\s/.test(line);
-
     if (isHeading) {
       if (current && current.content.replace(/#+\s.*/, '').trim().length > 20) {
         sections.push(current);
