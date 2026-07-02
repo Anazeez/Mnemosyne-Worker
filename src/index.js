@@ -51,10 +51,10 @@ const LEGACY_ARCHITECT_PRINCIPAL = {
   memory_domains: ['*']
 };
 
-// ─── Main Export ─────────────────────────────────────────────────────────────
+// ─── Main Export (Entry Points) ──────────────────────────────────────────────
 
 export default {
-  // HTTP Fetch Handler
+  // 1. HTTP Fetch Handler
   async fetch(request, env) {
     const url    = new URL(request.url);
     const method = request.method;
@@ -71,7 +71,8 @@ export default {
         equilibrium: 'enforced',
         identity:    'enabled',
         mandates:    Boolean(env.DB) ? 'd1-enabled' : 'd1-not-bound',
-        email_route: Boolean(env.MATRIX_MAIL) ? 'active-event-driven' : 'missing-binding'
+        email_route: Boolean(env.MATRIX_MAIL) ? 'active-event-driven' : 'missing-binding',
+        queue_state: Boolean(env.MATRIX_EMAIL_QUEUE) ? 'buffered-pipeline-active' : 'no-queue-binding'
       });
     }
 
@@ -143,7 +144,7 @@ export default {
     }
   },
 
-  // Asynchronous Push Email Handler
+  // 2. Asynchronous Push Email Handler (Queue Producer)
   async email(message, env, ctx) {
     const sender = message.from;
     const subject = message.headers.get("subject") || "No Subject";
@@ -152,32 +153,59 @@ export default {
     ctx.waitUntil(
       (async () => {
         try {
-          ensureD1(env);
-          
-          const mandateId = crypto.randomUUID();
-          const now = new Date().toISOString();
-          const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          if (!env.MATRIX_EMAIL_QUEUE) {
+            throw new Error("MATRIX_EMAIL_QUEUE binding is missing on your worker config");
+          }
 
-          // Auto-insert incoming email as a dispatched mandate
-          await env.DB.prepare(`
-            INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).bind(
-            mandateId,
-            `Email via ${sender}: ${subject}`,
-            rawBody,
+          // Offload payload immediately to the safety buffer queue
+          await env.MATRIX_EMAIL_QUEUE.send({
             sender,
-            now,
-            defaultExpiration,
-            'dispatched'
-          ).run();
+            subject,
+            rawBody,
+            timestamp: new Date().toISOString()
+          });
 
-          console.log(`[Email Pipeline] Mandate ${mandateId} auto-ingested from ${sender}`);
+          console.log(`[Queue Pipeline] Successfully buffered incoming email from ${sender}`);
         } catch (err) {
-          console.error(`[Email Pipeline Exception]: ${err.message}`);
+          console.error(`[Queue Producer Exception]: ${err.message}`);
         }
       })()
     );
+  },
+
+  // 3. Queue Consumer Handler (Drains buffer asynchronously into D1)
+  async queue(batch, env, ctx) {
+    ensureD1(env);
+
+    for (const message of batch.messages) {
+      const { sender, subject, rawBody, timestamp } = message.body;
+      
+      try {
+        const mandateId = crypto.randomUUID();
+        const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+        // Safe sequence write into D1 database without blocking routing runtime
+        await env.DB.prepare(`
+          INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          mandateId,
+          `Queue Email via ${sender}: ${subject}`,
+          rawBody,
+          sender,
+          timestamp,
+          defaultExpiration,
+          'dispatched'
+        ).run();
+
+        // Commit message deletion from queue
+        message.ack();
+        console.log(`[Queue Consumer] Successfully stored mandate ${mandateId} from queue payload.`);
+      } catch (err) {
+        console.error(`[Queue Consumer Exception] Failed processing queue slot: ${err.message}`);
+        // No acknowledgment means Cloudflare handles automated safe redelivery
+      }
+    }
   }
 };
 
