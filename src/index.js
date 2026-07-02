@@ -2,8 +2,16 @@
  * Project Mnemosyne — Mnemosyne's Matrix (EQUILIBRIUM-COMPLIANT)
  * ─────────────────────────────────────────────────────────────────────────────
  * Worker:  mnemosyne-worker
- * Role:    Governed vector memory, identity authorization, and mandate dispatch
+ * Role:    Governed vector memory, identity authorization, mandate dispatch,
+ *          and buffered persona-mesh ingress.
  * Model:   @cf/baai/bge-large-en-v1.5  (1024 dims, cosine)
+ *
+ * Exchange transport:
+ * - Mandates remain the formal actionable channel.
+ * - Exchanges remain the asynchronous material / handoff channel.
+ * - Email ingress is buffered by MATRIX_EMAIL_QUEUE when bound.
+ * - Inline queue payloads are capped below Cloudflare's 128 KB message limit.
+ * - Oversized payloads are placed in MATRIX_ARTIFACTS (R2) and queued by pointer.
  */
 
 // ─── Routing Table ────────────────────────────────────────────────────────────
@@ -20,13 +28,14 @@ const INDEX_BINDING = {
   agents:    'MATRIX_AGENTS',
   skills:    'MATRIX_SKILLS',
   files:     'MATRIX_FILES',
-  library:   'MATRIX_LIBRARY' 
+  library:   'MATRIX_LIBRARY'
 };
 
-const EMBEDDING_MODEL     = '@cf/baai/bge-large-en-v1.5';
+const EMBEDDING_MODEL = '@cf/baai/bge-large-en-v1.5';
 const RETRIEVAL_THRESHOLD = 0.65;
-const DEFAULT_TOP_K       = 5;
-const MAX_TOP_K           = 25;
+const DEFAULT_TOP_K = 5;
+const MAX_TOP_K = 25;
+const MAX_INLINE_QUEUE_BYTES = 64_000;
 const REQUIRED_FRONTMATTER_FIELDS = [
   'id', 'title', 'created', 'status',
   'sha256', 'parents', 'sources', 'tags', 'schema'
@@ -34,14 +43,18 @@ const REQUIRED_FRONTMATTER_FIELDS = [
 const VALID_STATUS_VALUES = ['intake', 'canon', 'sealed'];
 
 const CAPABILITY = {
-  MEMORY_SEARCH:      'memory.search',
-  MEMORY_INGEST:      'memory.ingest',
-  HASH:               'memory.hash',
-  MANDATES_READ:      'mandates.read',
-  MANDATES_ACK:       'mandates.ack',
-  MANDATES_DRAFT:     'mandates.draft',
-  MANDATES_DISPATCH:  'mandates.dispatch',
-  ROUTER_STATUS:      'router.status'
+  MEMORY_SEARCH:          'memory.search',
+  MEMORY_INGEST:          'memory.ingest',
+  HASH:                   'memory.hash',
+  MANDATES_READ:          'mandates.read',
+  MANDATES_ACK:           'mandates.ack',
+  MANDATES_DRAFT:         'mandates.draft',
+  MANDATES_DISPATCH:      'mandates.dispatch',
+  ROUTER_STATUS:          'router.status',
+  EXCHANGES_DISPATCH:     'exchanges.dispatch',
+  EXCHANGES_INBOX:        'exchanges.inbox',
+  EXCHANGES_HISTORY:      'exchanges.history',
+  EXCHANGES_ARTIFACT_READ:'exchanges.artifact.read'
 };
 
 const LEGACY_ARCHITECT_PRINCIPAL = {
@@ -56,23 +69,24 @@ const LEGACY_ARCHITECT_PRINCIPAL = {
 export default {
   // 1. HTTP Fetch Handler
   async fetch(request, env) {
-    const url    = new URL(request.url);
+    const url = new URL(request.url);
     const method = request.method;
 
     if (url.pathname === '/ping' && method === 'GET') {
       return Response.json({
-        status:      'alive',
-        project:     'Project Mnemosyne',
-        worker:      'mnemosyne-worker',
-        api:         'v1-governed-memory',
-        matrix:      Object.keys(INDEX_BINDING),
-        model:       EMBEDDING_MODEL,
-        threshold:   RETRIEVAL_THRESHOLD,
+        status: 'alive',
+        project: 'Project Mnemosyne',
+        worker: 'mnemosyne-worker',
+        api: 'v1-governed-memory',
+        matrix: Object.keys(INDEX_BINDING),
+        model: EMBEDDING_MODEL,
+        threshold: RETRIEVAL_THRESHOLD,
         equilibrium: 'enforced',
-        identity:    'enabled',
-        mandates:    Boolean(env.DB) ? 'd1-enabled' : 'd1-not-bound',
+        identity: 'enabled',
+        mandates: Boolean(env.DB) ? 'd1-enabled' : 'd1-not-bound',
         email_route: Boolean(env.MATRIX_MAIL) ? 'active-event-driven' : 'missing-binding',
-        queue_state: Boolean(env.MATRIX_EMAIL_QUEUE) ? 'buffered-pipeline-active' : 'no-queue-binding'
+        queue_state: Boolean(env.MATRIX_EMAIL_QUEUE) ? 'buffered-pipeline-active' : 'no-queue-binding',
+        artifacts: Boolean(env.MATRIX_ARTIFACTS) ? 'r2-enabled' : 'inline-only'
       });
     }
 
@@ -134,46 +148,27 @@ export default {
         return handleRouterStatus(env, principal);
       }
 
-      // ─── NEW: Persona Mesh Exchange HTTP Handlers ───
-      
-      // Handles dispatching versions from peer nodes
+      // ─── Persona Mesh Exchange HTTP Handlers ───────────────────────────────
+
       if (url.pathname === '/v1/exchanges/dispatch' && method === 'POST') {
-         let payload;
-         try {
-           payload = await request.json();
-         } catch {
-           return jsonError('Invalid JSON format', 400);
-         }
-         
-         const { recipient_persona, chapter_context, state_version, payload_data } = payload;
-         ensureD1(env);
-         
-         const mandateId = crypto.randomUUID();
-         const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-         
-         await env.DB.prepare(`
-           INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-         `).bind(
-           mandateId,
-           `Mesh Exchange [Chapter ${chapter_context} | v${state_version}]`,
-           `Target: ${recipient_persona}\nData: ${payload_data}`,
-           principal.principal_id,
-           new Date().toISOString(),
-           defaultExpiration,
-           'archived'
-         ).run();
-         
-         return Response.json({ status: "Exchange submitted to the tracking ledger." });
+        requireCapability(principal, CAPABILITY.EXCHANGES_DISPATCH);
+        return handleExchangeDispatch(request, env, principal);
       }
 
-      // Handles the Mnemosyne Portal pulling the telemetry dashboard
+      if (url.pathname === '/v1/exchanges/inbox' && method === 'GET') {
+        requireCapability(principal, CAPABILITY.EXCHANGES_INBOX);
+        return handleExchangeInbox(env, principal);
+      }
+
       if (url.pathname === '/v1/exchanges/history' && method === 'GET') {
-         ensureD1(env);
-         const { results } = await env.DB.prepare(
-           "SELECT * FROM mandates WHERE title LIKE 'Mesh Exchange%' ORDER BY created_at DESC LIMIT 20"
-         ).all();
-         return Response.json({ telemetry: results });
+        requireCapability(principal, CAPABILITY.EXCHANGES_HISTORY);
+        return handleExchangeHistory(env, principal);
+      }
+
+      const artifactMatch = url.pathname.match(/^\/v1\/exchanges\/([^/]+)\/artifact$/);
+      if (artifactMatch && method === 'GET') {
+        requireCapability(principal, CAPABILITY.EXCHANGES_ARTIFACT_READ);
+        return handleExchangeArtifact(env, principal, artifactMatch[1]);
       }
 
       return new Response('Not found', { status: 404 });
@@ -186,87 +181,68 @@ export default {
     }
   },
 
-  // 2. Asynchronous Push Email Handler (Queue Producer + Email Mirroring)
+  // 2. External Email Ingress
   async email(message, env, ctx) {
-    const sender = message.from;
-    const recipient = message.to;
-    const subject = message.headers.get("subject") || "Automated Mesh Exchange";
-    const rawBody = await new Response(message.raw).text();
+    const sender = String(message.from || '').trim().toLowerCase() || 'unknown';
+    const recipient = String(message.to || '').trim().toLowerCase();
+    const recipientPersona = deriveRecipientPersona(recipient);
+    const subject = message.headers.get('subject') || 'Automated Mesh Exchange';
+    const exchangeId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
 
-    ctx.waitUntil(
-      (async () => {
-        try {
-          // Offload to Matrix Queue Buffer (if active)
-          if (env.MATRIX_EMAIL_QUEUE) {
-            await env.MATRIX_EMAIL_QUEUE.send({
-              sender,
-              subject,
-              rawBody,
-              timestamp: new Date().toISOString()
-            });
-            console.log(`[Queue Pipeline] Buffered incoming email from ${sender}`);
-          }
+    try {
+      const ingress = await prepareEmailIngressPayload(message, env, {
+        exchange_id: exchangeId,
+        sender,
+        recipient,
+        recipient_persona: recipientPersona,
+        subject,
+        created_at: createdAt
+      });
 
-          // Direct D1 Fallback Logging for immediate tracking
-          if (env.DB) {
-             const mandateId = crypto.randomUUID();
-             const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-             await env.DB.prepare(`
-               INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-             `).bind(
-               mandateId,
-               `Mail Exchange: ${subject}`,
-               `From: ${sender} | To: ${recipient}\n\n${rawBody}`,
-               sender,
-               new Date().toISOString(),
-               defaultExpiration,
-               'archived'
-             ).run();
-          }
+      if (env.MATRIX_EMAIL_QUEUE) {
+        // Queue is the primary buffer. Do not fall through to D1 on a queue-backed path.
+        await env.MATRIX_EMAIL_QUEUE.send(ingress);
+        console.log(`[Queue Pipeline] Buffered exchange ${exchangeId} for ${recipientPersona}`);
+      } else {
+        // Direct D1 mode is only a no-queue fallback.
+        ensureD1(env);
+        await archiveExchangeRecord(env, buildExchangeRecordFromIngress(ingress, 'direct'));
+        console.log(`[Direct Ingress] Stored exchange ${exchangeId} for ${recipientPersona}`);
+      }
+    } catch (err) {
+      console.error(`[Email Intercept Exception]: ${err.message}`);
+      throw err;
+    }
 
-          // MIRROR TO ARCHITECTUS:
-          // NOTE: Update 'Izeesub@gmail.com' in the line below with your actual verified destination address!
-          await message.forward("izeesub@gmail.com");
-
-        } catch (err) {
-          console.error(`[Email Intercept Exception]: ${err.message}`);
-        }
-      })()
-    );
+    const mirrorDestination = env.MATRIX_MAIL_FORWARD_TO || 'izeesub@gmail.com';
+    if (mirrorDestination && message.canBeForwarded) {
+      ctx.waitUntil(
+        message.forward(mirrorDestination).catch(err => {
+          console.error(`[Email Mirror Exception]: ${err.message}`);
+        })
+      );
+    }
   },
 
-  // 3. Queue Consumer Handler (Drains buffer asynchronously into D1)
-  async queue(batch, env, ctx) {
+  // 3. Queue Consumer Handler (drains buffered email ingress into D1)
+  async queue(batch, env) {
     ensureD1(env);
 
     for (const message of batch.messages) {
-      const { sender, subject, rawBody, timestamp } = message.body;
-      
       try {
-        const mandateId = crypto.randomUUID();
-        const defaultExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        const ingress = normalizeQueuedIngress(message.body, message.id);
+        await archiveExchangeRecord(env, buildExchangeRecordFromIngress(ingress, 'queue'));
 
-        // Safe sequence write into D1 database without blocking routing runtime
-        await env.DB.prepare(`
-          INSERT INTO mandates (mandate_id, title, body, created_by, created_at, expires_at, state)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          mandateId,
-          `Queue Email via ${sender}: ${subject}`,
-          rawBody,
-          sender,
-          timestamp,
-          defaultExpiration,
-          'dispatched'
-        ).run();
-
-        // Commit message deletion from queue
+        // Explicit acknowledgement only after a successful, idempotent D1 write.
         message.ack();
-        console.log(`[Queue Consumer] Successfully stored mandate ${mandateId} from queue payload.`);
+        console.log(`[Queue Consumer] Stored exchange ${ingress.exchange_id} for ${ingress.recipient_persona}`);
       } catch (err) {
-        console.error(`[Queue Consumer Exception] Failed processing queue slot: ${err.message}`);
-        // No acknowledgment means Cloudflare handles automated safe redelivery
+        console.error(`[Queue Consumer Exception] Failed queue slot ${message.id}: ${err.message}`);
+
+        // A caught exception would otherwise let the batch complete successfully.
+        // Explicit retry preserves the message for Cloudflare retry / DLQ handling.
+        message.retry();
       }
     }
   }
@@ -438,7 +414,7 @@ async function handleMemorySearch(request, env, principal, { legacy }) {
 
   const query = body.query;
   const index = body.index || 'knowledge';
-  const topK  = sanitizeTopK(body.top_k ?? body.topK ?? DEFAULT_TOP_K);
+  const topK = sanitizeTopK(body.top_k ?? body.topK ?? DEFAULT_TOP_K);
 
   if (!query) {
     return jsonError('query is required', 400);
@@ -511,14 +487,14 @@ async function handleMemorySearch(request, env, principal, { legacy }) {
 function formatVectorMatch(m) {
   const metadata = m.metadata || {};
   return {
-    score:    Number(m.score.toFixed(4)),
-    file:     metadata.file,
-    path:     metadata.path,
-    sha256:   metadata.sha256,
-    section:  metadata.section_title,
-    status:   metadata.status,
-    preview:  metadata.preview,
-    index:    metadata.index || m.resolved_index,
+    score: Number(m.score.toFixed(4)),
+    file: metadata.file,
+    path: metadata.path,
+    sha256: metadata.sha256,
+    section: metadata.section_title,
+    status: metadata.status,
+    preview: metadata.preview,
+    index: metadata.index || m.resolved_index,
     citation: metadata.path && metadata.sha256 ? `${metadata.path}#${metadata.sha256}` : null
   };
 }
@@ -653,6 +629,8 @@ async function handleRouterStatus(env, principal) {
     status: 'alive',
     principal_id: principal.principal_id,
     d1_bound: Boolean(env.DB),
+    artifacts_bound: Boolean(env.MATRIX_ARTIFACTS),
+    email_queue_bound: Boolean(env.MATRIX_EMAIL_QUEUE),
     memory_domains: Object.keys(INDEX_BINDING),
     mandate_tables: 'unknown'
   };
@@ -734,8 +712,456 @@ function sanitizeRecipients(recipients) {
 
 function ensureD1(env) {
   if (!env.DB) {
-    throw new AuthzError('D1 binding DB is required for mandate routes', 503);
+    throw new AuthzError('D1 binding DB is required for mandate and exchange routes', 503);
   }
+}
+
+// ─── Persona Mesh Exchange API ────────────────────────────────────────────────
+
+async function handleExchangeDispatch(request, env, principal) {
+  ensureD1(env);
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonError('Invalid JSON body', 400);
+  }
+
+  const recipientPersona = normalizePersonaRecipient(payload.recipient_persona);
+  const chapterContext = Number(payload.chapter_context);
+  const stateVersion = String(payload.state_version || '').trim();
+  const payloadData = String(payload.payload_data || '').trim();
+
+  if (!Number.isInteger(chapterContext) || chapterContext < 1) {
+    return jsonError('chapter_context must be a positive integer', 400);
+  }
+
+  if (!stateVersion) {
+    return jsonError('state_version is required', 400);
+  }
+
+  if (!payloadData) {
+    return jsonError('payload_data is required', 400);
+  }
+
+  const exchangeId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const payloadDescriptor = await prepareTextExchangePayload(env, {
+    exchange_id: exchangeId,
+    recipient_persona: recipientPersona,
+    source: 'api',
+    payload_data: payloadData,
+    content_type: String(payload.content_type || 'text/plain; charset=utf-8')
+  });
+
+  const record = {
+    mandate_id: exchangeId,
+    title: `Mesh Exchange [${recipientPersona} | Chapter ${chapterContext} | v${stateVersion}]`,
+    body: buildExchangeLedgerBody({
+      sender: principal.principal_id,
+      recipient: recipientPersona,
+      recipient_address: String(payload.recipient_persona || '').trim(),
+      source: 'api',
+      payload: payloadDescriptor
+    }),
+    created_by: principal.principal_id,
+    created_at: createdAt,
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    state: 'archived'
+  };
+
+  await archiveExchangeRecord(env, record);
+
+  return Response.json({
+    status: 'submitted',
+    exchange_id: exchangeId,
+    recipient_persona: recipientPersona,
+    created_by: principal.principal_id,
+    created_at: createdAt,
+    payload_mode: payloadDescriptor.mode,
+    artifact_key: payloadDescriptor.artifact_key || null
+  });
+}
+
+async function handleExchangeInbox(env, principal) {
+  ensureD1(env);
+
+  const result = await env.DB.prepare(`
+    SELECT
+      mandate_id AS exchange_id,
+      title,
+      body,
+      created_by AS sender,
+      created_at,
+      expires_at,
+      state
+    FROM mandates
+    WHERE state = 'archived'
+      AND (
+        title LIKE 'Mesh Exchange%'
+        OR title LIKE 'Mail Exchange%'
+        OR title LIKE 'Queue Exchange%'
+      )
+      AND (
+        instr(body, ?) > 0
+        OR instr(body, ?) > 0
+      )
+    ORDER BY created_at DESC
+    LIMIT 50
+  `).bind(
+    `Recipient Persona: ${principal.principal_id}`,
+    `Target: ${principal.principal_id}`
+  ).all();
+
+  return Response.json({
+    principal_id: principal.principal_id,
+    exchanges: result.results || []
+  });
+}
+
+async function handleExchangeHistory(env, principal) {
+  ensureD1(env);
+
+  const result = await env.DB.prepare(`
+    SELECT
+      mandate_id AS exchange_id,
+      title,
+      body,
+      created_by AS sender,
+      created_at,
+      expires_at,
+      state
+    FROM mandates
+    WHERE state = 'archived'
+      AND (
+        title LIKE 'Mesh Exchange%'
+        OR title LIKE 'Mail Exchange%'
+        OR title LIKE 'Queue Exchange%'
+      )
+    ORDER BY created_at DESC
+    LIMIT 50
+  `).all();
+
+  return Response.json({
+    principal_id: principal.principal_id,
+    telemetry: result.results || []
+  });
+}
+
+async function handleExchangeArtifact(env, principal, exchangeId) {
+  ensureD1(env);
+
+  if (!env.MATRIX_ARTIFACTS) {
+    return jsonError('Artifact storage is not configured', 503);
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT mandate_id, title, body, created_by, created_at, state
+    FROM mandates
+    WHERE mandate_id = ?
+      AND state = 'archived'
+    LIMIT 1
+  `).bind(exchangeId).first();
+
+  if (!record || !isExchangeTitle(record.title)) {
+    return jsonError('Exchange artifact not found', 404);
+  }
+
+  const recipient = readLedgerField(record.body, 'Recipient Persona') || readLedgerField(record.body, 'Target');
+  const artifactKey = readLedgerField(record.body, 'Artifact Key');
+
+  if (!artifactKey) {
+    return jsonError('This exchange has no external artifact', 404);
+  }
+
+  const mayReadAnyExchange = principal.class === 'orchestrator' || principal.class === 'root';
+  if (!mayReadAnyExchange && recipient !== principal.principal_id) {
+    return jsonError('Exchange artifact is not addressed to this principal', 403);
+  }
+
+  const object = await env.MATRIX_ARTIFACTS.get(artifactKey);
+  if (!object) {
+    return jsonError('Artifact object is missing', 404);
+  }
+
+  const contentType = object.httpMetadata?.contentType || 'application/octet-stream';
+  const fileName = artifactKey.split('/').pop() || 'exchange-artifact';
+
+  return new Response(object.body, {
+    headers: {
+      'Content-Type': contentType,
+      'Content-Disposition': `attachment; filename="${sanitizeDownloadFileName(fileName)}"`,
+      'X-Exchange-Id': exchangeId,
+      'X-Artifact-Key': artifactKey
+    }
+  });
+}
+
+async function prepareEmailIngressPayload(message, env, envelope) {
+  const payloadSize = Number(message.rawSize || 0);
+
+  if (payloadSize <= MAX_INLINE_QUEUE_BYTES) {
+    const rawBody = await new Response(message.raw).text();
+    return {
+      ...envelope,
+      source: 'email',
+      payload_mode: 'inline',
+      payload_size: byteLength(rawBody),
+      raw_body: rawBody,
+      artifact_key: null,
+      artifact_content_type: null
+    };
+  }
+
+  if (!env.MATRIX_ARTIFACTS) {
+    message.setReject(
+      'Incoming artifact exceeds inline queue capacity. Configure MATRIX_ARTIFACTS or send an artifact reference.'
+    );
+    throw new Error('Oversized email requires MATRIX_ARTIFACTS R2 binding');
+  }
+
+  const artifactKey = buildArtifactKey('email', envelope.exchange_id, 'eml');
+  await env.MATRIX_ARTIFACTS.put(artifactKey, message.raw, {
+    httpMetadata: {
+      contentType: 'message/rfc822'
+    },
+    customMetadata: {
+      source: 'email',
+      sender: envelope.sender,
+      recipient: envelope.recipient_persona,
+      exchange_id: envelope.exchange_id,
+      created_at: envelope.created_at
+    }
+  });
+
+  return {
+    ...envelope,
+    source: 'email',
+    payload_mode: 'artifact',
+    payload_size: payloadSize,
+    raw_body: '',
+    artifact_key: artifactKey,
+    artifact_content_type: 'message/rfc822'
+  };
+}
+
+async function prepareTextExchangePayload(env, {
+  exchange_id,
+  recipient_persona,
+  source,
+  payload_data,
+  content_type
+}) {
+  const payloadSize = byteLength(payload_data);
+
+  if (payloadSize <= MAX_INLINE_QUEUE_BYTES) {
+    return {
+      mode: 'inline',
+      payload_size: payloadSize,
+      data: payload_data,
+      artifact_key: null,
+      artifact_content_type: null
+    };
+  }
+
+  if (!env.MATRIX_ARTIFACTS) {
+    throw new AuthzError(
+      'Payload exceeds inline exchange capacity. Configure MATRIX_ARTIFACTS or send an artifact reference.',
+      413
+    );
+  }
+
+  const artifactKey = buildArtifactKey(source, exchange_id, 'txt');
+  await env.MATRIX_ARTIFACTS.put(artifactKey, payload_data, {
+    httpMetadata: {
+      contentType
+    },
+    customMetadata: {
+      source,
+      recipient: recipient_persona,
+      exchange_id
+    }
+  });
+
+  return {
+    mode: 'artifact',
+    payload_size: payloadSize,
+    data: '',
+    artifact_key: artifactKey,
+    artifact_content_type: content_type
+  };
+}
+
+function normalizeQueuedIngress(payload, fallbackExchangeId) {
+  const source = String(payload?.source || 'email');
+  if (source !== 'email') {
+    throw new Error(`Unsupported queue payload source: ${source}`);
+  }
+
+  const recipient = String(payload?.recipient || '').trim().toLowerCase();
+  const recipientPersona = String(
+    payload?.recipient_persona || deriveRecipientPersona(recipient)
+  ).trim().toLowerCase() || 'unmapped';
+  const payloadMode = payload?.payload_mode === 'artifact' ? 'artifact' : 'inline';
+
+  return {
+    exchange_id: String(payload?.exchange_id || fallbackExchangeId),
+    sender: String(payload?.sender || 'unknown').trim().toLowerCase() || 'unknown',
+    recipient,
+    recipient_persona: recipientPersona,
+    subject: String(payload?.subject || 'Automated Mesh Exchange'),
+    created_at: payload?.created_at || payload?.timestamp || new Date().toISOString(),
+    source,
+    payload_mode: payloadMode,
+    payload_size: Number(payload?.payload_size || byteLength(String(payload?.raw_body || ''))),
+    raw_body: payloadMode === 'inline' ? String(payload?.raw_body ?? payload?.rawBody ?? '') : '',
+    artifact_key: payloadMode === 'artifact' ? String(payload?.artifact_key || '') : '',
+    artifact_content_type: payloadMode === 'artifact'
+      ? String(payload?.artifact_content_type || 'application/octet-stream')
+      : null
+  };
+}
+
+function buildExchangeRecordFromIngress(ingress, transport = 'queue') {
+  const prefix = ingress.source === 'email'
+    ? (transport === 'direct' ? 'Mail Exchange' : 'Queue Exchange')
+    : 'Mesh Exchange';
+  const title = ingress.source === 'email'
+    ? `${prefix} [${ingress.recipient_persona}]: ${ingress.subject}`
+    : `${prefix} [${ingress.recipient_persona}]`;
+
+  return {
+    mandate_id: ingress.exchange_id,
+    title,
+    body: buildExchangeLedgerBody({
+      sender: ingress.sender,
+      recipient: ingress.recipient_persona,
+      recipient_address: ingress.recipient,
+      source: ingress.source,
+      payload: {
+        mode: ingress.payload_mode,
+        payload_size: ingress.payload_size,
+        data: ingress.raw_body,
+        artifact_key: ingress.artifact_key,
+        artifact_content_type: ingress.artifact_content_type
+      }
+    }),
+    created_by: ingress.sender,
+    created_at: ingress.created_at,
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    state: 'archived'
+  };
+}
+
+function buildExchangeLedgerBody({
+  sender,
+  recipient,
+  recipient_address,
+  source,
+  payload
+}) {
+  const lines = [
+    `Sender: ${sender || 'unknown'}`,
+    `Recipient Address: ${recipient_address || 'unknown'}`,
+    `Recipient Persona: ${recipient || 'unmapped'}`,
+    `Source: ${source || 'unknown'}`,
+    `Payload Mode: ${payload.mode}`,
+    `Payload Size: ${Number(payload.payload_size || 0)} bytes`
+  ];
+
+  if (payload.mode === 'artifact') {
+    lines.push(`Artifact Key: ${payload.artifact_key}`);
+    lines.push(`Artifact Content Type: ${payload.artifact_content_type || 'application/octet-stream'}`);
+    lines.push('');
+    lines.push('Payload stored in MATRIX_ARTIFACTS. Retrieve it through the exchange artifact route.');
+    return lines.join('\n');
+  }
+
+  lines.push('');
+  lines.push(payload.data || '');
+  return lines.join('\n');
+}
+
+async function archiveExchangeRecord(env, record) {
+  ensureD1(env);
+
+  return env.DB.prepare(`
+    INSERT OR IGNORE INTO mandates (
+      mandate_id,
+      title,
+      body,
+      created_by,
+      created_at,
+      expires_at,
+      state
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    record.mandate_id,
+    record.title,
+    record.body,
+    record.created_by,
+    record.created_at,
+    record.expires_at,
+    record.state
+  ).run();
+}
+
+function deriveRecipientPersona(address) {
+  const localPart = String(address || '')
+    .trim()
+    .toLowerCase()
+    .split('@')[0]
+    .split('+')[0]
+    .replace(/^@/, '');
+
+  return /^[a-z0-9][a-z0-9_-]{1,63}$/.test(localPart)
+    ? localPart
+    : 'unmapped';
+}
+
+function normalizePersonaRecipient(value) {
+  const recipient = deriveRecipientPersona(value);
+
+  if (recipient === 'unmapped') {
+    throw new AuthzError(
+      'recipient_persona must be a valid persona handle or mailbox address',
+      400
+    );
+  }
+
+  return recipient;
+}
+
+function buildArtifactKey(source, exchangeId, extension) {
+  return `exchanges/${source}/${exchangeId}/payload.${extension}`;
+}
+
+function readLedgerField(body, fieldName) {
+  const prefix = `${fieldName}:`;
+  const line = String(body || '')
+    .split('\n')
+    .find(item => item.startsWith(prefix));
+
+  return line ? line.slice(prefix.length).trim() : null;
+}
+
+function isExchangeTitle(title) {
+  const value = String(title || '');
+  return value.startsWith('Mesh Exchange') ||
+    value.startsWith('Mail Exchange') ||
+    value.startsWith('Queue Exchange');
+}
+
+function byteLength(value) {
+  return new TextEncoder().encode(String(value || '')).byteLength;
+}
+
+function sanitizeDownloadFileName(value) {
+  return String(value || 'exchange-artifact')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 160);
 }
 
 // ─── Hash Helper ──────────────────────────────────────────────────────────────
@@ -790,14 +1216,14 @@ async function handleIngest(request, env, principal) {
     return jsonError('file_name and content are required', 400);
   }
 
-  let frontmatter     = {};
-  let bodyContent     = content;
+  let frontmatter = {};
+  let bodyContent = content;
   let validationError = null;
 
   try {
     const parsed = parseFrontmatter(content);
-    frontmatter  = parsed.frontmatter;
-    bodyContent  = parsed.body;
+    frontmatter = parsed.frontmatter;
+    bodyContent = parsed.body;
   } catch (e) {
     validationError = `Failed to parse frontmatter: ${e.message}`;
   }
@@ -829,16 +1255,16 @@ async function handleIngest(request, env, principal) {
 
   if (validationError) {
     const errorPayload = {
-      file:      file_name,
-      error:     validationError,
-      status:    'VALIDATION_FAILED',
+      file: file_name,
+      error: validationError,
+      status: 'VALIDATION_FAILED',
       timestamp: new Date().toISOString()
     };
     try {
       await fetch('https://pulse-alarm-engine.izeesub.workers.dev/webhook/ingest-failure', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(errorPayload)
+        body: JSON.stringify(errorPayload)
       }).catch(() => {});
     } catch (e) {
       console.error('Webhook failed:', e.message);
@@ -853,9 +1279,9 @@ async function handleIngest(request, env, principal) {
   }
 
   const results = [];
-  const errors  = [];
+  const errors = [];
   for (const section of sections) {
-    const indexKey    = index_override || routeSection(section.title);
+    const indexKey = index_override || routeSection(section.title);
     try {
       resolveSearchDomains(indexKey, principal);
     } catch (e) {
@@ -880,27 +1306,27 @@ async function handleIngest(request, env, principal) {
       continue;
     }
 
-    const vector       = embeddingResponse.data[0];
+    const vector = embeddingResponse.data[0];
     const safeFileName = file_name.replace(/[^a-zA-Z0-9]/g, '_');
-    const id           = `${safeFileName}_s${String(section.number).padStart(3, '0')}`;
+    const id = `${safeFileName}_s${String(section.number).padStart(3, '0')}`;
     try {
       await matrixIndex.upsert([{
         id,
-        values:   vector,
+        values: vector,
         metadata: {
-          file:           file_name,
-          path:           file_name,
-          sha256:         frontmatter.sha256,
+          file: file_name,
+          path: file_name,
+          sha256: frontmatter.sha256,
           section_number: String(section.number),
-          section_title:  section.title,
-          status:         frontmatter.status,
-          index:          indexKey,
-          preview:        section.content.slice(0, 500),
-          ingested_at:    new Date().toISOString(),
-          document_id:    frontmatter.id,
+          section_title: section.title,
+          status: frontmatter.status,
+          index: indexKey,
+          preview: section.content.slice(0, 500),
+          ingested_at: new Date().toISOString(),
+          document_id: frontmatter.id,
           document_title: frontmatter.title,
-          created:        frontmatter.created,
-          ingested_by:    principal.principal_id
+          created: frontmatter.created,
+          ingested_by: principal.principal_id
         }
       }]);
     } catch (e) {
@@ -911,23 +1337,23 @@ async function handleIngest(request, env, principal) {
     results.push({
       id,
       section: section.title,
-      index:   indexKey,
-      chars:   section.content.length,
-      hash:    frontmatter.sha256,
-      status:  frontmatter.status
+      index: indexKey,
+      chars: section.content.length,
+      hash: frontmatter.sha256,
+      status: frontmatter.status
     });
   }
 
   return Response.json({
-    file:              file_name,
-    status:            frontmatter.status,
-    document_id:       frontmatter.id,
-    sha256:            frontmatter.sha256,
-    sections_found:    sections.length,
+    file: file_name,
+    status: frontmatter.status,
+    document_id: frontmatter.id,
+    sha256: frontmatter.sha256,
+    sections_found: sections.length,
     sections_ingested: results.length,
-    errors_count:      errors.length,
-    validation:        'passed',
-    principal_id:      principal.principal_id,
+    errors_count: errors.length,
+    validation: 'passed',
+    principal_id: principal.principal_id,
     results,
     errors
   });
@@ -954,7 +1380,7 @@ function parseFrontmatter(content) {
   }
 
   const frontmatterText = lines.slice(1, endIndex).join('\n');
-  const body            = lines.slice(endIndex + 1).join('\n');
+  const body = lines.slice(endIndex + 1).join('\n');
   let frontmatter = {};
   try {
     frontmatter = parseYAML(frontmatterText);
@@ -967,15 +1393,15 @@ function parseFrontmatter(content) {
 
 function parseYAML(yamlText) {
   const result = {};
-  const lines  = yamlText.split('\n');
+  const lines = yamlText.split('\n');
   for (const line of lines) {
     if (!line.trim() || line.trim().startsWith('#')) continue;
 
     const match = line.match(/^(\w+):\s*(.*)$/);
     if (!match) continue;
 
-    const key   = match[1];
-    let   value = match[2].trim();
+    const key = match[1];
+    let value = match[2].trim();
     if (value === 'null') {
       result[key] = null;
     } else if (value === 'true') {
@@ -996,8 +1422,8 @@ function parseYAML(yamlText) {
 
 async function computeBodyHash(body) {
   const normalized = body.replace(/\r\n/g, '\n').trim();
-  const encoder    = new TextEncoder();
-  const data       = encoder.encode(normalized);
+  const encoder = new TextEncoder();
+  const data = encoder.encode(normalized);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
 
   return Array.from(new Uint8Array(hashBuffer))
@@ -1006,10 +1432,10 @@ async function computeBodyHash(body) {
 }
 
 function parseMarkdownSections(content) {
-  const lines    = content.split('\n');
+  const lines = content.split('\n');
   const sections = [];
-  let current    = null;
-  let number     = 0;
+  let current = null;
+  let number = 0;
   for (const line of lines) {
     const isHeading = /^#{1,3}\s/.test(line);
     if (isHeading) {
@@ -1019,7 +1445,7 @@ function parseMarkdownSections(content) {
       number++;
       current = {
         number,
-        title:   line.replace(/^#+\s/, '').trim(),
+        title: line.replace(/^#+\s/, '').trim(),
         content: line + '\n'
       };
     } else if (current) {
