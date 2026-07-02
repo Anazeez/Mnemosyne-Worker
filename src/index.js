@@ -226,8 +226,8 @@ export default {
           }
 
           // MIRROR TO ARCHITECTUS:
-          // NOTE: Update 'your.real.email@gmail.com' in the line below with your actual verified destination address!
-          await message.forward("your.real.email@gmail.com");
+          // NOTE: Update 'Izeesub@gmail.com' in the line below with your actual verified destination address!
+          await message.forward("izeesub@gmail.com");
 
         } catch (err) {
           console.error(`[Email Intercept Exception]: ${err.message}`);
