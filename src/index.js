@@ -77,9 +77,6 @@ const CAPABILITY = Object.freeze({
   EXCHANGES_DISPATCH: "exchanges.dispatch",
   EXCHANGES_INBOX: "exchanges.inbox",
   EXCHANGES_HISTORY: "exchanges.history",
-  EXCHANGES_ARTIFACT_READ_OWN: "exchanges.artifact.read.own",
-  EXCHANGES_ARTIFACT_READ_ANY: "exchanges.artifact.read.any",
-
   REGISTRY_VIEW: "registry.view"
 });
 
