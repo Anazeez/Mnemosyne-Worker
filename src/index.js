@@ -106,6 +106,7 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
 // Portal GPTs: observation only. No inbox, dispatch, mandates, skills, or router.
 const PORTAL_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
+  CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY
 ]);
 
