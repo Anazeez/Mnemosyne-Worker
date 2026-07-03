@@ -1,16 +1,20 @@
 /**
- * Project Mnemosyne — Mnemosyne's Matrix (EQUILIBRIUM-COMPLIANT)
+ * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
  * ─────────────────────────────────────────────────────────────────────────────
  * Worker:  mnemosyne-worker
- * Role:    Governed vector memory, registered-principal authorization,
+ * Role:    Governed vector memory, role-authorized credentials,
  *          mandate dispatch, and buffered persona-mesh ingress.
  * Model:   @cf/baai/bge-large-en-v1.5  (1024 dims, cosine)
  *
- * Authority model:
- * - Capability policy is defined in this file, not trusted from key metadata.
- * - Scoped keys identify principals; PRINCIPALS determines their authority.
- * - MATRIX_AUTH_KEY is reserved for the human-owned bootstrap/root principal.
- * - Mnemosyne is observational: memory retrieval + exchange history only.
+ * Identity and authority model:
+ * - Credential records identify a GPT through credential_id.
+ * - Credential records assign authorization through principal_id (role).
+ * - ROLE_POLICIES determines capabilities; credential metadata never grants them.
+ * - credential_id is used for inboxes, exchanges, mandates, telemetry, audits,
+ *   senders, recipients, and principal-specific routing.
+ * - lineage_id and identity_aliases optionally preserve continuity across
+ *   renamed personas and framework migrations without affecting authorization.
+ * - MATRIX_AUTH_KEY remains the human-owned root/bootstrap credential.
  */
 
 // ─── Routing Table ────────────────────────────────────────────────────────────
@@ -73,6 +77,8 @@ const CAPABILITY = Object.freeze({
   EXCHANGES_DISPATCH: "exchanges.dispatch",
   EXCHANGES_INBOX: "exchanges.inbox",
   EXCHANGES_HISTORY: "exchanges.history",
+  EXCHANGES_ARTIFACT_READ_OWN: "exchanges.artifact.read.own",
+  EXCHANGES_ARTIFACT_READ_ANY: "exchanges.artifact.read.any",
 
   REGISTRY_VIEW: "registry.view"
 });
@@ -82,24 +88,29 @@ const READ_ONLY_MEMORY = Object.freeze([
   CAPABILITY.MEMORY_SEARCH
 ]);
 
-// Regular GPTs: read-only memory + skills + mandate inbox + own exchange inbox.
-const REGULAR_GPT_CAPABILITIES = Object.freeze([
+const ALL_CAPABILITIES = Object.freeze(
+  Object.values(CAPABILITY)
+);
+
+// Specialist GPTs: read-only memory, skills, mandates, their own exchange inbox,
+// and exchange artifacts specifically addressed to their credential identity.
+const SPECIALIST_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
   CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.MANDATES_READ,
   CAPABILITY.MANDATES_ACK,
-  CAPABILITY.EXCHANGES_INBOX
+  CAPABILITY.EXCHANGES_INBOX,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN
 ]);
 
-// Mnemosyne: observation only.
-// No inbox, no dispatch, no mandates, no skills, no router, no registry.
-const MNEMOSYNE_GPT_CAPABILITIES = Object.freeze([
+// Portal GPTs: observation only. No inbox, dispatch, mandates, skills, or router.
+const PORTAL_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
   CAPABILITY.EXCHANGES_HISTORY
 ]);
 
-// Legacy: operational orchestration without memory write/hash authority.
-const LEGACY_CAPABILITIES = Object.freeze([
+// Orchestrators: operational coordination without memory ingest/hash authority.
+const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
 
   CAPABILITY.SKILLS_RETRIEVAL,
@@ -116,79 +127,71 @@ const LEGACY_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY,
 
   CAPABILITY.REGISTRY_VIEW
 ]);
 
-const PRINCIPALS = Object.freeze({
-  archivist: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
+// Inspector is deliberately non-mutating until dedicated audit/repository routes
+// and capabilities are added.
+const INSPECTOR_CAPABILITIES = Object.freeze([
+  ...READ_ONLY_MEMORY,
+  CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.REGISTRY_VIEW
+]);
+
+// Roles are extensible. Add a role once here, then assign it in credential records.
+// Never add individual GPT identities here.
+const ROLE_POLICIES = Object.freeze({
+  // Root is the only role with an unrestricted domain default.
+  root: Object.freeze({
+    capabilities: ALL_CAPABILITIES,
+    memory_domains: ["*"],
+    receives_mandates: false
   }),
 
-  mnemosyne: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...MNEMOSYNE_GPT_CAPABILITIES])
+  // Operational coordination. This is the role Legacy may hold while
+  // retaining a separate identity and optional Argus lineage.
+  orchestrator: Object.freeze({
+    capabilities: ORCHESTRATOR_CAPABILITIES,
+    memory_domains: ["knowledge", "agents", "skills", "files", "library"],
+    receives_mandates: false
   }),
 
-  hearken: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
+  // Safe read-only operational inheritance baseline, including indexed
+  // project files and the Matrix library. Credentials may narrow this list.
+  specialist: Object.freeze({
+    capabilities: SPECIALIST_CAPABILITIES,
+    memory_domains: ["knowledge", "agents", "skills", "files", "library"],
+    receives_mandates: true
   }),
 
-  ariadne: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
+  // Observation-only baseline across all read-only Matrix domains.
+  portal: Object.freeze({
+    capabilities: PORTAL_CAPABILITIES,
+    memory_domains: ["knowledge", "agents", "skills", "files", "library"],
+    receives_mandates: false
   }),
 
-  atlas: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
-  }),
-
-  gem_coder: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
-  }),
-
-  haava: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
-  }),
-
-  legacy: Object.freeze({
-    class: "orchestrator",
-    capabilities: Object.freeze([...LEGACY_CAPABILITIES])
-  }),
-
-  nadeem: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
-  }),
-
-  sentinel: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
-  }),
-
-  synn: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
-  }),
-
-  vitruvius: Object.freeze({
-    class: "standard",
-    capabilities: Object.freeze([...REGULAR_GPT_CAPABILITIES])
+  // Future audit/repository role. Non-mutating until specific routes are added.
+  inspector: Object.freeze({
+    capabilities: INSPECTOR_CAPABILITIES,
+    memory_domains: ["knowledge", "agents", "skills", "files", "library"],
+    receives_mandates: false
   })
 });
 
 // Reserved only for the human-owned root/bootstrap key.
-// This is the only principal allowed to ingest or hash memory by default.
 const ARCHITECTUS_PRINCIPAL = Object.freeze({
-  principal_id: "architectus",
-  class: "root",
-  capabilities: Object.freeze(Object.values(CAPABILITY)),
-  memory_domains: Object.freeze(["*"])
+  credential_id: "architectus",
+  principal_id: "root",
+  role: "root",
+  lineage_id: "architectus",
+  identity_aliases: Object.freeze(["architectus"]),
+  capabilities: ALL_CAPABILITIES,
+  memory_domains: Object.freeze(["*"]),
+  receives_mandates: false
 });
 
 // ─── Main Export ──────────────────────────────────────────────────────────────
@@ -208,7 +211,7 @@ export default {
         model: EMBEDDING_MODEL,
         threshold: RETRIEVAL_THRESHOLD,
         equilibrium: "enforced",
-        identity: "registered-principal-policy",
+        identity: "credential-identity-role-policy",
         mandates: Boolean(env.DB) ? "d1-enabled" : "d1-not-bound",
         email_route: Boolean(env.MATRIX_MAIL) ? "active-event-driven" : "missing-binding",
         queue_state: Boolean(env.MATRIX_EMAIL_QUEUE)
@@ -333,7 +336,10 @@ export default {
       );
 
       if (artifactMatch && method === "GET") {
-        requireCapability(principal, CAPABILITY.EXCHANGES_INBOX);
+        requireAnyCapability(principal, [
+          CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
+          CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
+        ]);
 
         return handleExchangeArtifact(
           env,
@@ -461,7 +467,7 @@ function authenticateRequest(request, env) {
     };
   }
 
-  // Human-owned root/bootstrap key.
+  // Human-owned root/bootstrap credential.
   if (env.MATRIX_AUTH_KEY && authKey === env.MATRIX_AUTH_KEY) {
     return {
       ok: true,
@@ -475,7 +481,7 @@ function authenticateRequest(request, env) {
     return {
       ok: false,
       status: 401,
-      error: "Unauthorized or unregistered principal"
+      error: "Unauthorized credential or invalid role assignment"
     };
   }
 
@@ -486,9 +492,13 @@ function authenticateRequest(request, env) {
 }
 
 function principalFromScopedKey(authKey, env) {
-  let records = env.MATRIX_PRINCIPAL_KEYS || env.MNEMOSYNE_PRINCIPAL_KEYS;
+  let records =
+    env.MATRIX_PRINCIPAL_KEYS ||
+    env.MNEMOSYNE_PRINCIPAL_KEYS;
 
-  if (!records) return null;
+  if (!records) {
+    return null;
+  }
 
   if (typeof records === "string") {
     try {
@@ -515,17 +525,28 @@ function principalFromScopedKey(authKey, env) {
     record = records[authKey] || null;
   }
 
-  if (!record) return null;
+  if (!record) {
+    return null;
+  }
 
-  return resolveRegisteredPrincipal(unwrapPrincipalRecord(record));
+  return resolveCredentialPrincipal(
+    unwrapCredentialRecord(record)
+  );
 }
 
-function unwrapPrincipalRecord(record) {
-  if (!record) return null;
+function unwrapCredentialRecord(record) {
+  if (!record) {
+    return null;
+  }
 
+  // Supports prior nested record structure during migration.
   if (record.principal) {
     return {
       ...record.principal,
+
+      credential_id:
+        record.principal.credential_id ||
+        record.credential_id,
 
       memory_domains:
         record.principal.memory_domains ||
@@ -539,53 +560,153 @@ function unwrapPrincipalRecord(record) {
     key,
     action_key,
     capabilities,
-    ...principal
+    ...credential
   } = record;
 
-  // Intentionally ignores any capability list stored in environment key records.
-  // The Worker-owned PRINCIPALS registry is authoritative.
-  return principal;
+  // Credential-defined capabilities are deliberately ignored.
+  // Worker-owned ROLE_POLICIES is authoritative.
+  return credential;
 }
 
-function resolveRegisteredPrincipal(record) {
-  if (!record) return null;
+function resolveCredentialPrincipal(record) {
+  if (!record) {
+    return null;
+  }
 
-  const principalId = String(
+  const credentialId = normalizeCredentialId(
+    record.credential_id ||
+    record.identity ||
+    record.actor_id
+  );
+
+  const role = normalizeRole(
     record.principal_id ||
-    record.id ||
-    record.name ||
-    ""
-  )
-    .trim()
-    .toLowerCase();
+    record.role
+  );
 
-  const registered = PRINCIPALS[principalId];
+  if (!credentialId) {
+    console.warn("Rejected credential with missing or invalid credential_id");
+    return null;
+  }
 
-  if (!registered) {
+  if (!role || !ROLE_POLICIES[role]) {
     console.warn(
-      `Rejected unregistered principal: ${principalId || "unknown"}`
+      `Rejected credential ${credentialId}: invalid role ${role || "unknown"}`
     );
 
     return null;
   }
 
+  const policy = ROLE_POLICIES[role];
+
+  // Role policy provides the maximum safe scope. A credential may narrow it,
+  // never expand it. This prevents an omitted or overly broad key record from
+  // silently granting access outside the assigned role's inheritance boundary.
+  const memoryDomains = resolveEffectiveMemoryDomains(record, policy);
+
+  if (memoryDomains.length === 0) {
+    console.warn(
+      `Rejected credential ${credentialId}: no permitted memory domains after policy intersection`
+    );
+
+    return null;
+  }
+
+  const lineageId = normalizeCredentialId(
+    record.lineage_id ||
+    record.lineage ||
+    credentialId
+  );
+
+  const identityAliases = normalizeIdentityAliases(
+    record.identity_aliases ||
+    record.aliases ||
+    [credentialId]
+  );
+
+  return {
+    // Current operational identity: routing, inboxes, telemetry, audit, sender.
+    credential_id: credentialId,
+
+    // Current authorization role only.
+    principal_id: role,
+    role,
+
+    // Optional continuity bridge across renamed or migrated personas.
+    lineage_id: lineageId || credentialId,
+    identity_aliases: identityAliases.length > 0
+      ? identityAliases
+      : [credentialId],
+
+    // Worker-owned role authority.
+    capabilities: [...policy.capabilities],
+
+    // Effective intersection of role-safe scope and credential request.
+    memory_domains: memoryDomains,
+
+    receives_mandates: Boolean(policy.receives_mandates)
+  };
+}
+
+function resolveEffectiveMemoryDomains(record, policy) {
+  const roleDomains = normalizeStringList(policy.memory_domains);
   const requestedDomains = normalizeStringList(
     record.memory_domains ||
     record.allowed_domains ||
     record.domains
   );
 
-  const memoryDomains =
-    requestedDomains.length > 0
-      ? requestedDomains.filter(domain => domain in INDEX_BINDING)
-      : ["*"];
+  // Root may remain unrestricted by default, though a credential can still
+  // voluntarily narrow its own root domain scope.
+  if (roleDomains.includes("*")) {
+    if (requestedDomains.length === 0) {
+      return ["*"];
+    }
 
-  return {
-    principal_id: principalId,
-    class: registered.class,
-    capabilities: [...registered.capabilities],
-    memory_domains: memoryDomains
-  };
+    return requestedDomains.filter(
+      domain => domain in INDEX_BINDING
+    );
+  }
+
+  // Omitted credential scope inherits the role's explicitly safe baseline.
+  if (requestedDomains.length === 0) {
+    return roleDomains.filter(
+      domain => domain in INDEX_BINDING
+    );
+  }
+
+  // Credential values may narrow scope, never widen it.
+  return requestedDomains.filter(
+    domain =>
+      roleDomains.includes(domain) &&
+      domain in INDEX_BINDING
+  );
+}
+
+function normalizeIdentityAliases(value) {
+  const aliases = normalizeStringList(value)
+    .map(normalizeCredentialId)
+    .filter(Boolean);
+
+  return [...new Set(aliases)];
+}
+
+function normalizeCredentialId(value) {
+  const credentialId = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  return /^[a-z0-9][a-z0-9_-]{1,63}$/.test(credentialId)
+    ? credentialId
+    : null;
+}
+
+function normalizeRole(value) {
+  const role = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  return role || null;
 }
 
 function normalizeStringList(value) {
@@ -613,11 +734,30 @@ function hasCapability(principal, capability) {
 function requireCapability(principal, capability) {
   if (!hasCapability(principal, capability)) {
     throw new AuthzError(
-      `Principal lacks capability: ${capability}`,
+      `Role lacks capability: ${capability}`,
       403,
       {
+        credential_id: principal.credential_id,
         principal_id: principal.principal_id,
         required: capability
+      }
+    );
+  }
+}
+
+function requireAnyCapability(principal, capabilities) {
+  const allowed = capabilities.some(capability =>
+    hasCapability(principal, capability)
+  );
+
+  if (!allowed) {
+    throw new AuthzError(
+      "Role lacks required capability",
+      403,
+      {
+        credential_id: principal.credential_id,
+        principal_id: principal.principal_id,
+        required_any_of: capabilities
       }
     );
   }
@@ -651,9 +791,10 @@ function resolveSearchDomains(requestedIndex, principal) {
 
   if (!allowed.includes(requestedIndex)) {
     throw new AuthzError(
-      `Principal is not allowed to search memory domain: ${requestedIndex}`,
+      `Credential is not allowed to search memory domain: ${requestedIndex}`,
       403,
       {
+        credential_id: principal.credential_id,
         principal_id: principal.principal_id,
         allowed_domains: allowed
       }
@@ -667,26 +808,35 @@ function resolveSearchDomains(requestedIndex, principal) {
 
 function handleMemorySelf(principal) {
   return Response.json({
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
-    class: principal.class,
+    role: principal.role,
+    lineage_id: principal.lineage_id,
+    identity_aliases: principal.identity_aliases,
+
+    // Compatibility alias for older clients that expect class.
+    class: principal.role,
+
     capabilities: principal.capabilities,
     memory_domains: allowedDomains(principal)
   });
 }
 
 function handleRegistryView(principal) {
-  const entries = Object.entries(PRINCIPALS).map(
-    ([principal_id, config]) => ({
+  const roles = Object.entries(ROLE_POLICIES).map(
+    ([principal_id, policy]) => ({
       principal_id,
-      class: config.class,
-      capabilities: [...config.capabilities]
+      capabilities: [...policy.capabilities],
+      memory_domains: [...policy.memory_domains],
+      receives_mandates: Boolean(policy.receives_mandates)
     })
   );
 
   return Response.json({
-    requested_by: principal.principal_id,
-    registry_version: "capability-policy-v1",
-    principals: entries
+    requested_by: principal.credential_id,
+    requested_by_role: principal.principal_id,
+    registry_version: "role-policy-v2",
+    roles
   });
 }
 
@@ -781,7 +931,9 @@ async function handleMemorySearch(
     threshold: RETRIEVAL_THRESHOLD,
     total_raw: combined.length,
     above_threshold: filteredMatches.length,
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
+    lineage_id: principal.lineage_id,
     errors,
     results: filteredMatches.map(formatVectorMatch)
   };
@@ -883,7 +1035,7 @@ async function handleMandateDispatch(request, env, principal) {
       mandate.mandate_id,
       mandate.title,
       mandate.body,
-      principal.principal_id,
+      principal.credential_id,
       now,
       mandate.expires_at,
       "dispatched"
@@ -907,7 +1059,8 @@ async function handleMandateDispatch(request, env, principal) {
     status: "dispatched",
     mandate_id: mandate.mandate_id,
     recipients,
-    created_by: principal.principal_id,
+    created_by: principal.credential_id,
+    created_by_role: principal.principal_id,
     created_at: now,
     expires_at: mandate.expires_at
   });
@@ -937,10 +1090,11 @@ async function handleMandateInbox(env, principal) {
     ORDER BY m.created_at DESC
     LIMIT 50
   `)
-    .bind(principal.principal_id, now)
+    .bind(principal.credential_id, now)
     .all();
 
   return Response.json({
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     mandates: result.results || []
   });
@@ -957,14 +1111,14 @@ async function handleMandateAcknowledge(env, principal, mandateId) {
     WHERE mandate_id = ?
       AND recipient_id = ?
   `)
-    .bind(now, mandateId, principal.principal_id)
+    .bind(now, mandateId, principal.credential_id)
     .run();
 
   const changed = result.meta?.changes || 0;
 
   if (changed === 0) {
     return jsonError(
-      "Mandate not found for this principal",
+      "Mandate not found for this credential identity",
       404
     );
   }
@@ -972,6 +1126,7 @@ async function handleMandateAcknowledge(env, principal, mandateId) {
   return Response.json({
     status: "acknowledged",
     mandate_id: mandateId,
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     acknowledged_at: now
   });
@@ -980,6 +1135,7 @@ async function handleMandateAcknowledge(env, principal, mandateId) {
 async function handleRouterStatus(env, principal) {
   const payload = {
     status: "alive",
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     d1_bound: Boolean(env.DB),
     artifacts_bound: Boolean(env.MATRIX_ARTIFACTS),
@@ -1030,7 +1186,8 @@ function buildMandateDraft(body, principal) {
     mandate_id: body.mandate_id || crypto.randomUUID(),
     title,
     body: mandateBody,
-    created_by: principal.principal_id,
+    created_by: principal.credential_id,
+    created_by_role: principal.principal_id,
     created_at: new Date().toISOString(),
     expires_at: expiresAt,
     state: "draft"
@@ -1038,9 +1195,13 @@ function buildMandateDraft(body, principal) {
 }
 
 function resolveMandateRecipients(env, principal) {
-  let records = env.MATRIX_PRINCIPAL_KEYS || env.MNEMOSYNE_PRINCIPAL_KEYS;
+  let records =
+    env.MATRIX_PRINCIPAL_KEYS ||
+    env.MNEMOSYNE_PRINCIPAL_KEYS;
 
-  if (!records) return [];
+  if (!records) {
+    return [];
+  }
 
   if (typeof records === "string") {
     try {
@@ -1055,31 +1216,33 @@ function resolveMandateRecipients(env, principal) {
     }
   }
 
-  const principals = Array.isArray(records)
-    ? records.map(unwrapPrincipalRecord)
-    : Object.values(records).map(unwrapPrincipalRecord);
+  const credentials = Array.isArray(records)
+    ? records.map(unwrapCredentialRecord)
+    : Object.values(records).map(unwrapCredentialRecord);
 
   return [
     ...new Set(
-      principals
+      credentials
         .filter(Boolean)
-        .map(resolveRegisteredPrincipal)
+        .map(resolveCredentialPrincipal)
         .filter(Boolean)
         .filter(
-          item => item.principal_id !== principal.principal_id
+          item =>
+            item.credential_id !== principal.credential_id
         )
-        .filter(item => item.class !== "orchestrator")
-        .filter(item => item.class !== "root")
+        .filter(item => item.receives_mandates)
         .filter(item =>
           hasCapability(item, CAPABILITY.MANDATES_READ)
         )
-        .map(item => item.principal_id)
+        .map(item => item.credential_id)
     )
   ];
 }
 
 function sanitizeRecipients(recipients) {
-  if (!Array.isArray(recipients)) return [];
+  if (!Array.isArray(recipients)) {
+    return [];
+  }
 
   return [
     ...new Set(
@@ -1152,7 +1315,7 @@ async function handleExchangeDispatch(request, env, principal) {
     mandate_id: exchangeId,
     title: `Mesh Exchange [${recipientPersona} | Chapter ${chapterContext} | v${stateVersion}]`,
     body: buildExchangeLedgerBody({
-      sender: principal.principal_id,
+      sender: principal.credential_id,
       recipient: recipientPersona,
       recipient_address: String(
         payload.recipient_persona || ""
@@ -1160,7 +1323,7 @@ async function handleExchangeDispatch(request, env, principal) {
       source: "api",
       payload: payloadDescriptor
     }),
-    created_by: principal.principal_id,
+    created_by: principal.credential_id,
     created_at: createdAt,
     expires_at: new Date(
       Date.now() + 24 * 60 * 60 * 1000
@@ -1174,7 +1337,8 @@ async function handleExchangeDispatch(request, env, principal) {
     status: "submitted",
     exchange_id: exchangeId,
     recipient_persona: recipientPersona,
-    created_by: principal.principal_id,
+    created_by: principal.credential_id,
+    created_by_role: principal.principal_id,
     created_at: createdAt,
     payload_mode: payloadDescriptor.mode,
     artifact_key: payloadDescriptor.artifact_key || null
@@ -1184,8 +1348,6 @@ async function handleExchangeDispatch(request, env, principal) {
 async function handleExchangeInbox(env, principal) {
   ensureD1(env);
 
-  // Fetch a larger candidate set, then perform strict ledger-field matching.
-  // This avoids false access caused by matching recipient text inside payload text.
   const result = await env.DB.prepare(`
     SELECT
       mandate_id AS exchange_id,
@@ -1212,11 +1374,12 @@ async function handleExchangeInbox(env, principal) {
         readLedgerField(record.body, "Recipient Persona") ||
         readLedgerField(record.body, "Target");
 
-      return recipient === principal.principal_id;
+      return recipient === principal.credential_id;
     })
     .slice(0, 50);
 
   return Response.json({
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     exchanges
   });
@@ -1246,6 +1409,7 @@ async function handleExchangeHistory(env, principal) {
   `).all();
 
   return Response.json({
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     telemetry: result.results || []
   });
@@ -1294,16 +1458,17 @@ async function handleExchangeArtifact(env, principal, exchangeId) {
     );
   }
 
-  const mayReadAnyExchange =
-    principal.class === "orchestrator" ||
-    principal.class === "root";
+  const mayReadAnyExchange = hasCapability(
+    principal,
+    CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
+  );
 
   if (
     !mayReadAnyExchange &&
-    recipient !== principal.principal_id
+    recipient !== principal.credential_id
   ) {
     return jsonError(
-      "Exchange artifact is not addressed to this principal",
+      "Exchange artifact is not addressed to this credential identity",
       403
     );
   }
@@ -1957,7 +2122,8 @@ async function handleIngest(request, env, principal) {
             document_title: frontmatter.title,
             created: frontmatter.created,
 
-            ingested_by: principal.principal_id
+            ingested_by: principal.credential_id,
+            ingested_by_role: principal.principal_id
           }
         }
       ]);
@@ -1991,6 +2157,7 @@ async function handleIngest(request, env, principal) {
     errors_count: errors.length,
 
     validation: "passed",
+    credential_id: principal.credential_id,
     principal_id: principal.principal_id,
 
     results,
@@ -2059,7 +2226,9 @@ function parseYAML(yamlText) {
 
     const match = line.match(/^(\w+):\s*(.*)$/);
 
-    if (!match) continue;
+    if (!match) {
+      continue;
+    }
 
     const key = match[1];
     let value = match[2].trim();
