@@ -103,7 +103,9 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
 const PORTAL_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
   CAPABILITY.SKILLS_RETRIEVAL,
-  CAPABILITY.EXCHANGES_HISTORY
+  CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.MEMORY_SEARCH,
+  
 ]);
 
 // Orchestrators: operational coordination without memory ingest/hash authority.
