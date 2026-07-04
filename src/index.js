@@ -5,7 +5,6 @@
  * Role:    Governed vector memory, role-authorized credentials,
  * mandate dispatch, and buffered persona-mesh ingress.
  * Model:   @cf/baai/bge-large-en-v1.5  (1024 dims, cosine)
- *
  * Identity and authority model:
  * - Credential records identify a GPT through credential_id.
  * - Credential records assign authorization through principal_id (role).
