@@ -3,7 +3,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Worker:  mnemosyne-worker
  * Role:    Governed vector memory, role-authorized credentials,
- *          mandate dispatch, and buffered persona-mesh ingress.
+ * mandate dispatch, and buffered persona-mesh ingress.
  * Model:   @cf/baai/bge-large-en-v1.5  (1024 dims, cosine)
  *
  * Identity and authority model:
@@ -11,9 +11,7 @@
  * - Credential records assign authorization through principal_id (role).
  * - ROLE_POLICIES determines capabilities; credential metadata never grants them.
  * - credential_id is used for inboxes, exchanges, mandates, telemetry, audits,
- *   senders, recipients, and principal-specific routing.
- * - lineage_id and identity_aliases optionally preserve continuity across
- *   renamed personas and framework migrations without affecting authorization.
+ * senders, recipients, and principal-specific routing.
  * - MATRIX_AUTH_KEY remains the human-owned root/bootstrap credential.
  */
 
@@ -125,10 +123,6 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
-  
-  
-
-  
 ]);
 
 // Inspector is deliberately non-mutating until dedicated audit/repository routes
@@ -149,12 +143,11 @@ const ROLE_POLICIES = Object.freeze({
     receives_mandates: false
   }),
 
-  // Operational coordination. This is the role Legacy may hold while
-  // retaining a separate identity and optional Argus lineage.
+  // Operational coordination.
   orchestrator: Object.freeze({
     capabilities: ORCHESTRATOR_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
-    receives_mandates: tr
+    receives_mandates: true
   }),
 
   // Safe read-only operational inheritance baseline, including indexed
@@ -185,8 +178,6 @@ const ARCHITECTUS_PRINCIPAL = Object.freeze({
   credential_id: "architectus",
   principal_id: "root",
   role: "root",
-  lineage_id: "architectus",
-  identity_aliases: Object.freeze(["architectus"]),
   capabilities: ALL_CAPABILITIES,
   memory_domains: Object.freeze(["*"]),
   receives_mandates: false
@@ -208,7 +199,6 @@ export default {
         matrix: Object.keys(INDEX_BINDING),
         model: EMBEDDING_MODEL,
         threshold: RETRIEVAL_THRESHOLD,
-        equilibrium: "enforced",
         identity: "credential-identity-role-policy",
         mandates: Boolean(env.DB) ? "d1-enabled" : "d1-not-bound",
         email_route: Boolean(env.MATRIX_MAIL) ? "active-event-driven" : "missing-binding",
@@ -537,23 +527,6 @@ function unwrapCredentialRecord(record) {
     return null;
   }
 
-  // Supports prior nested record structure during migration.
-  if (record.principal) {
-    return {
-      ...record.principal,
-
-      credential_id:
-        record.principal.credential_id ||
-        record.credential_id,
-
-      memory_domains:
-        record.principal.memory_domains ||
-        record.principal.allowed_domains ||
-        record.memory_domains ||
-        record.allowed_domains
-    };
-  }
-
   const {
     key,
     action_key,
@@ -561,8 +534,6 @@ function unwrapCredentialRecord(record) {
     ...credential
   } = record;
 
-  // Credential-defined capabilities are deliberately ignored.
-  // Worker-owned ROLE_POLICIES is authoritative.
   return credential;
 }
 
@@ -572,14 +543,11 @@ function resolveCredentialPrincipal(record) {
   }
 
   const credentialId = normalizeCredentialId(
-    record.credential_id ||
-    record.identity ||
-    record.actor_id
+    record.credential_id || record.identity
   );
 
   const role = normalizeRole(
-    record.principal_id ||
-    record.role
+    record.principal_id || record.role
   );
 
   if (!credentialId) {
@@ -591,57 +559,25 @@ function resolveCredentialPrincipal(record) {
     console.warn(
       `Rejected credential ${credentialId}: invalid role ${role || "unknown"}`
     );
-
     return null;
   }
 
   const policy = ROLE_POLICIES[role];
-
-  // Role policy provides the maximum safe scope. A credential may narrow it,
-  // never expand it. This prevents an omitted or overly broad key record from--- realleh?
-  // silently granting access outside the assigned role's inheritance boundary.
   const memoryDomains = resolveEffectiveMemoryDomains(record, policy);
 
   if (memoryDomains.length === 0) {
     console.warn(
       `Rejected credential ${credentialId}: no permitted memory domains after policy intersection`
     );
-
     return null;
   }
 
-  const lineageId = normalizeCredentialId(
-    record.lineage_id ||
-    record.lineage ||
-    credentialId
-  );
-
-  const identityAliases = normalizeIdentityAliases(
-    record.identity_aliases ||
-    record.aliases ||
-    [credentialId]
-  );
-
   return {
-    // Current operational identity: routing, inboxes, telemetry, audit, sender.
     credential_id: credentialId,
-
-    // Current authorization role only.
     principal_id: role,
     role,
-
-    // Optional continuity bridge across renamed or migrated personas.
-    lineage_id: lineageId || credentialId,
-    identity_aliases: identityAliases.length > 0
-      ? identityAliases
-      : [credentialId],
-
-    // Worker-owned role authority.
     capabilities: [...policy.capabilities],
-
-    // Effective intersection of role-safe scope and credential request.
     memory_domains: memoryDomains,
-
     receives_mandates: Boolean(policy.receives_mandates)
   };
 }
@@ -679,14 +615,6 @@ function resolveEffectiveMemoryDomains(record, policy) {
       roleDomains.includes(domain) &&
       domain in INDEX_BINDING
   );
-}
-
-function normalizeIdentityAliases(value) {
-  const aliases = normalizeStringList(value)
-    .map(normalizeCredentialId)
-    .filter(Boolean);
-
-  return [...new Set(aliases)];
 }
 
 function normalizeCredentialId(value) {
@@ -809,8 +737,6 @@ function handleMemorySelf(principal) {
     credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     role: principal.role,
-    lineage_id: principal.lineage_id,
-    identity_aliases: principal.identity_aliases,
 
     // Compatibility alias for older clients that expect class.
     class: principal.role,
@@ -931,7 +857,6 @@ async function handleMemorySearch(
     above_threshold: filteredMatches.length,
     credential_id: principal.credential_id,
     principal_id: principal.principal_id,
-    lineage_id: principal.lineage_id,
     errors,
     results: filteredMatches.map(formatVectorMatch)
   };
