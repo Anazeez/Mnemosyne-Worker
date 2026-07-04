@@ -66,6 +66,8 @@ const CAPABILITY = Object.freeze({
   MANDATES_ACK: "mandates.ack",
   MANDATES_DRAFT: "mandates.draft",
   MANDATES_DISPATCH: "mandates.dispatch",
+  EXCHANGES_ARTIFACT_READ_OWN: "exchanges.artifact.read.own",
+  EXCHANGES_ARTIFACT_READ_ANY: "exchanges.artifact.read.any",
 
   CONTRACTS_DRAFT: "contracts.draft",
 
@@ -96,6 +98,7 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.MANDATES_ACK,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_REPLY,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
 ]);
 
 // Portal GPTs: observation only. No inbox, dispatch, mandates, skills, or router.
