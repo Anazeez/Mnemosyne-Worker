@@ -115,7 +115,6 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.SKILLS_RETRIEVAL,
 
   CAPABILITY.MANDATES_READ,
-  CAPABILITY.MANDATES_ACK,
   CAPABILITY.MANDATES_DRAFT,
   CAPABILITY.MANDATES_DISPATCH,
 
@@ -129,7 +128,7 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   
   
 
-  CAPABILITY.REGISTRY_VIEW
+  
 ]);
 
 // Inspector is deliberately non-mutating until dedicated audit/repository routes
@@ -155,7 +154,7 @@ const ROLE_POLICIES = Object.freeze({
   orchestrator: Object.freeze({
     capabilities: ORCHESTRATOR_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
-    receives_mandates: false
+    receives_mandates: tr
   }),
 
   // Safe read-only operational inheritance baseline, including indexed
@@ -599,7 +598,7 @@ function resolveCredentialPrincipal(record) {
   const policy = ROLE_POLICIES[role];
 
   // Role policy provides the maximum safe scope. A credential may narrow it,
-  // never expand it. This prevents an omitted or overly broad key record from
+  // never expand it. This prevents an omitted or overly broad key record from--- realleh?
   // silently granting access outside the assigned role's inheritance boundary.
   const memoryDomains = resolveEffectiveMemoryDomains(record, policy);
 
