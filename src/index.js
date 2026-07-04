@@ -130,10 +130,11 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
 // and capabilities are added.
 const INSPECTOR_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
+  CAPABILITY.SKILLS_RETRIEVAL,
+  CAPABILITY.HISTORY_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
   CAPABILITY.REGISTRY_VIEW
 ]);
-
 // Roles are extensible. Add a role once here, then assign it in credential records.
 // Never add individual GPT identities here.
 const ROLE_POLICIES = Object.freeze({
