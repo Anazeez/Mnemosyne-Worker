@@ -113,20 +113,16 @@ const PORTAL_CAPABILITIES = Object.freeze([
 // Orchestrators: operational coordination without memory ingest/hash authority.
 const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
-
   CAPABILITY.SKILLS_RETRIEVAL,
-
   CAPABILITY.MANDATES_READ,
   CAPABILITY.MANDATES_DRAFT,
   CAPABILITY.MANDATES_DISPATCH,
-
   CAPABILITY.CONTRACTS_DRAFT,
-
   CAPABILITY.ROUTER_STATUS,
-
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
 ]);
 
 // Inspector is deliberately non-mutating until dedicated audit/repository routes
