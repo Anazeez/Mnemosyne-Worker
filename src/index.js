@@ -7,8 +7,6 @@
  * Model: @cf/baai/bge-large-en-v1.5 (1024 dims, cosine) 
  */
 
-import yaml from 'js-yaml'; // Phase 1: Robust Frontmatter Parsing
-
 // ─── Routing Table & Constants ───────────────────────────────────────
 const INDEX_BINDING = { 
   knowledge: "MATRIX_KNOWLEDGE", 
@@ -23,7 +21,6 @@ const RETRIEVAL_THRESHOLD = 0.65;
 const DEFAULT_TOP_K = 5; 
 const MAX_TOP_K = 25; 
 const MAX_INLINE_QUEUE_BYTES = 64_000; 
-const ARCHITECTUS_EXCHANGE_RECIPIENT = "architectus";
 
 const REQUIRED_FRONTMATTER_FIELDS = [ 
   "id", "title", "created", "status", "sha256", "parents", "sources", "tags", "schema" 
@@ -228,7 +225,6 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Phase 3: Organic Memory Decay Trigger
     console.log(`Cron triggered memory decay at ${event.cron}`);
     ctx.waitUntil(decayMemory(env));
   }
@@ -871,9 +867,8 @@ async function handleIngest(request, env, principal, ctx) {
   const sections = parseMarkdownSections(bodyContent); 
   if (sections.length === 0) return jsonError("No parseable sections found in content", 400);
   
-  // ◣ Execute section embeddings and AI routing concurrently
+  // Execute section embeddings and AI routing concurrently
   const sectionPromises = sections.map(async (section) => { 
-    // Phase 2 Upgrade: AI-driven semantic routing instead of static routeSection()
     const indexKey = index_override || await semanticRoute(env, section.title, section.content); 
     
     try { resolveSearchDomains(indexKey, principal); } 
@@ -923,7 +918,7 @@ async function handleIngest(request, env, principal, ctx) {
   });
 }
 
-// ─── Phase 1 Upgrade: Robust Frontmatter Parser ──────────────────────
+// ─── Zero-Dependency Custom Parser ───────────────────────────────────
 function parseFrontmatter(content) { 
   const lines = content.split("\n"); 
   if (!lines[0]?.trimEnd().startsWith("---")) throw new Error("No frontmatter delimiter found");
@@ -934,15 +929,27 @@ function parseFrontmatter(content) {
   } 
   if (endIndex === -1) throw new Error("No closing frontmatter delimiter");
 
-  return { frontmatter: parseYAML(lines.slice(1, endIndex).join("\n")), body: lines.slice(endIndex + 1).join("\n") };
+  return { frontmatter: parseCustomYAML(lines.slice(1, endIndex).join("\n")), body: lines.slice(endIndex + 1).join("\n") };
 }
 
-function parseYAML(yamlText) { 
-  try {
-    return yaml.load(yamlText) || {};
-  } catch (error) {
-    throw new Error(`YAML parsing failed: ${error.message}`);
+function parseCustomYAML(yamlText) { 
+  const result = {};
+  const lines = yamlText.split('\n');
+  for (const line of lines) {
+    const match = line.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
+    if (match) {
+      const key = match[1].trim();
+      let value = match[2].trim();
+      
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      } else if (value.startsWith('[') && value.endsWith(']')) {
+        value = value.slice(1, -1).split(',').map(item => item.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+      }
+      result[key] = value;
+    }
   }
+  return result;
 }
 
 async function computeBodyHash(body) { 
@@ -970,18 +977,10 @@ function jsonError(error, status = 400, details = undefined) {
   return Response.json({ error, details }, { status }); 
 }
 
-// ─── Phase 3 Upgrade: Organic Memory Decay ───────────────────────────
+// ─── Phase 3: Organic Memory Decay ───────────────────────────────────
 async function decayMemory(env) {
   console.log("[Organic Matrix] Initiating memory decay scan...");
-  
-  // Note: This function serves as the structural implementation of Phase 3. 
-  // It relies on vector space metadata. Since Cloudflare Vectorize does not 
-  // natively support bulk searching by 'last_accessed' date yet, we log the 
-  // architectural intent to alter status from 'canon' to 'archived' for untouched records.
-  
   const decayThresholdDays = 180;
   const cutoffDate = new Date(Date.now() - decayThresholdDays * 24 * 60 * 60 * 1000).toISOString();
-  
   console.log(`[Organic Matrix] Identifying vectors untouched since ${cutoffDate} to archive.`);
-  // Future execution block for D1 state updates linking vector IDs to metadata
 }
