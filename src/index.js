@@ -86,17 +86,20 @@ const CAPABILITY = Object.freeze({
   MANDATES_ACK: "mandates.ack",
   MANDATES_DRAFT: "mandates.draft",
   MANDATES_DISPATCH: "mandates.dispatch",
+
   EXCHANGES_ARTIFACT_READ_OWN: "exchanges.artifact.read.own",
   EXCHANGES_ARTIFACT_READ_ANY: "exchanges.artifact.read.any",
 
   CONTRACTS_DRAFT: "contracts.draft",
 
   ROUTER_STATUS: "router.status",
+
   EXCHANGES_ACK: "exchanges.ack",
   EXCHANGES_DISPATCH: "exchanges.dispatch",
   EXCHANGES_REPLY: "exchanges.reply",
   EXCHANGES_INBOX: "exchanges.inbox",
   EXCHANGES_HISTORY: "exchanges.history",
+
   REGISTRY_VIEW: "registry.view"
 });
 
@@ -155,39 +158,31 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.REGISTRY_VIEW
 ]);
 
-// Roles are extensible. Add a role once here, then assign it in credential records.
-// Never add individual GPT identities here.
 const ROLE_POLICIES = Object.freeze({
-  // Root is the only role with an unrestricted domain default.
   root: Object.freeze({
     capabilities: ALL_CAPABILITIES,
     memory_domains: ["*"],
     receives_mandates: false
   }),
 
-  // Operational coordination.
   orchestrator: Object.freeze({
     capabilities: ORCHESTRATOR_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
     receives_mandates: true
   }),
 
-  // Safe read-only operational inheritance baseline, including indexed
-  // project files and the Matrix library. Credentials may narrow this list.
   specialist: Object.freeze({
     capabilities: SPECIALIST_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
     receives_mandates: true
   }),
 
-  // Observation-only baseline across all read-only Matrix domains.
   portal: Object.freeze({
     capabilities: PORTAL_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
     receives_mandates: false
   }),
 
-  // Future audit/repository role. Non-mutating until specific routes are added.
   inspector: Object.freeze({
     capabilities: INSPECTOR_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
@@ -195,7 +190,6 @@ const ROLE_POLICIES = Object.freeze({
   })
 });
 
-// Reserved only for the human-owned root/bootstrap key.
 const ARCHITECTUS_PRINCIPAL = Object.freeze({
   credential_id: "architectus",
   principal_id: "root",
@@ -223,7 +217,9 @@ export default {
         threshold: RETRIEVAL_THRESHOLD,
         identity: "credential-identity-role-policy",
         mandates: Boolean(env.DB) ? "d1-enabled" : "d1-not-bound",
-        email_route: Boolean(env.MATRIX_MAIL) ? "active-event-driven" : "missing-binding",
+        email_route: Boolean(env.MATRIX_MAIL)
+          ? "active-event-driven"
+          : "missing-binding",
         queue_state: Boolean(env.MATRIX_EMAIL_QUEUE)
           ? "buffered-pipeline-active"
           : "no-queue-binding",
@@ -341,7 +337,7 @@ export default {
       );
 
       if (exchangeAcknowledgeMatch && method === "POST") {
-        requireCapability(principal, CAPABILITY.EXCHANGES_REPLY);
+        requireCapability(principal, CAPABILITY.EXCHANGES_ACK);
 
         return handleExchangeAcknowledge(
           env,
@@ -382,8 +378,6 @@ export default {
       return jsonError("Internal worker error", 500);
     }
   },
-
-  // ─── External Email Ingress ────────────────────────────────────────────────
 
   async email(message, env, ctx) {
     const sender = String(message.from || "").trim().toLowerCase() || "unknown";
@@ -438,8 +432,6 @@ export default {
     }
   },
 
-  // ─── Queue Consumer ────────────────────────────────────────────────────────
-
   async queue(batch, env) {
     ensureD1(env);
 
@@ -491,7 +483,6 @@ function authenticateRequest(request, env) {
     };
   }
 
-  // Human-owned root/bootstrap credential.
   if (env.MATRIX_AUTH_KEY && authKey === env.MATRIX_AUTH_KEY) {
     return {
       ok: true,
@@ -626,8 +617,6 @@ function resolveEffectiveMemoryDomains(record, policy) {
     record.domains
   );
 
-  // Root may remain unrestricted by default, though a credential can still
-  // voluntarily narrow its own root domain scope.
   if (roleDomains.includes("*")) {
     if (requestedDomains.length === 0) {
       return ["*"];
@@ -638,14 +627,12 @@ function resolveEffectiveMemoryDomains(record, policy) {
     );
   }
 
-  // Omitted credential scope inherits the role's explicitly safe baseline.
   if (requestedDomains.length === 0) {
     return roleDomains.filter(
       domain => domain in INDEX_BINDING
     );
   }
 
-  // Credential values may narrow scope, never widen it.
   return requestedDomains.filter(
     domain =>
       roleDomains.includes(domain) &&
@@ -773,10 +760,7 @@ function handleMemorySelf(principal) {
     credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     role: principal.role,
-
-    // Compatibility alias for older clients that expect class.
     class: principal.role,
-
     capabilities: principal.capabilities,
     memory_domains: allowedDomains(principal)
   });
@@ -816,6 +800,7 @@ async function handleMemorySearch(
 
   const query = body.query;
   const index = forcedIndex || body.index || "knowledge";
+
   const topK = sanitizeTopK(
     body.top_k ?? body.topK ?? DEFAULT_TOP_K
   );
@@ -1233,7 +1218,6 @@ function validateSourceBoundSkillPacket({
     .trim()
     .toLowerCase();
 
-  // Ordinary exchanges remain supported.
   if (mediaType !== "application/json") {
     return;
   }
@@ -1249,7 +1233,6 @@ function validateSourceBoundSkillPacket({
     );
   }
 
-  // Only skill handoffs require source bindings.
   if (packet.event !== "skill_handoff") {
     return;
   }
