@@ -17,10 +17,30 @@
 // ─── Routing Table ────────────────────────────────────────────────────────────
 
 const SECTION_ROUTING = {
-  agents: ["names", "roles", "specialist", "destination", "registry", "haava", "boundary"],
-  knowledge: ["identity", "layer", "protocols", "handoff", "runtime", "automation", "doctrine"],
-  skills: ["skill", "capability", "ledger"],
-  files: ["artifact", "output", "session", "upload"]
+  agents: [
+    "names", "roles", "specialist", "destination",
+    "registry", "haava", "boundary"
+  ],
+
+  knowledge: [
+    "identity", "layer", "protocols", "handoff",
+    "runtime", "automation", "doctrine"
+  ],
+
+  skills: [
+    "skill", "capability", "ledger"
+  ],
+
+  files: [
+    "artifact", "output", "session", "upload"
+  ],
+
+  library: [
+    "book", "books", "pdf", "document", "documents",
+    "source", "sources", "corpus", "well",
+    "ingestion", "parse", "parser", "chunk",
+    "manifest", "sha256", "path", "citation"
+  ]
 };
 
 const INDEX_BINDING = {
@@ -98,7 +118,7 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.MANDATES_ACK,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_REPLY,
-  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN
 ]);
 
 // Portal GPTs: observation only. No inbox, dispatch, mandates, skills, or router.
@@ -106,8 +126,7 @@ const PORTAL_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
   CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.MEMORY_SEARCH,
-  
+  CAPABILITY.MEMORY_SEARCH
 ]);
 
 // Orchestrators: operational coordination without memory ingest/hash authority.
@@ -134,6 +153,7 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_HISTORY,
   CAPABILITY.REGISTRY_VIEW
 ]);
+
 // Roles are extensible. Add a role once here, then assign it in credential records.
 // Never add individual GPT identities here.
 const ROLE_POLICIES = Object.freeze({
@@ -313,6 +333,20 @@ export default {
       if (url.pathname === "/v1/exchanges/inbox" && method === "GET") {
         requireCapability(principal, CAPABILITY.EXCHANGES_INBOX);
         return handleExchangeInbox(env, principal);
+      }
+
+      const exchangeAcknowledgeMatch = url.pathname.match(
+        /^\/v1\/exchanges\/([^/]+)\/acknowledge$/
+      );
+
+      if (exchangeAcknowledgeMatch && method === "POST") {
+        requireCapability(principal, CAPABILITY.EXCHANGES_REPLY);
+
+        return handleExchangeAcknowledge(
+          env,
+          principal,
+          exchangeAcknowledgeMatch[1]
+        );
       }
 
       if (url.pathname === "/v1/exchanges/history" && method === "GET") {
@@ -1188,6 +1222,149 @@ function ensureD1(env) {
 
 // ─── Persona Mesh Exchange API ────────────────────────────────────────────────
 
+function validateSourceBoundSkillPacket({
+  recipientPersona,
+  payloadData,
+  contentType
+}) {
+  const mediaType = String(contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+
+  // Ordinary exchanges remain supported.
+  if (mediaType !== "application/json") {
+    return;
+  }
+
+  let packet;
+
+  try {
+    packet = JSON.parse(payloadData);
+  } catch {
+    throw new AuthzError(
+      "JSON exchange payload is invalid.",
+      400
+    );
+  }
+
+  // Only skill handoffs require source bindings.
+  if (packet.event !== "skill_handoff") {
+    return;
+  }
+
+  const packetRecipient = String(packet.recipient || "")
+    .trim()
+    .toLowerCase();
+
+  if (packetRecipient !== recipientPersona) {
+    throw new AuthzError(
+      "Skill packet recipient must match recipient_persona.",
+      400,
+      {
+        packet_recipient: packetRecipient || null,
+        recipient_persona: recipientPersona
+      }
+    );
+  }
+
+  if (!String(packet.skill_name || "").trim()) {
+    throw new AuthzError(
+      "Skill packet requires skill_name.",
+      400
+    );
+  }
+
+  if (!Array.isArray(packet.evidence) || packet.evidence.length === 0) {
+    throw new AuthzError(
+      "Skill packet requires at least one evidence item.",
+      400
+    );
+  }
+
+  for (const [index, evidence] of packet.evidence.entries()) {
+    if (!evidence || typeof evidence !== "object") {
+      throw new AuthzError(
+        `Evidence item ${index} is invalid.`,
+        400
+      );
+    }
+
+    const path = String(evidence.path || "").trim();
+    const sha256 = String(evidence.sha256 || "").trim();
+
+    if (!path) {
+      throw new AuthzError(
+        `Evidence item ${index} is missing path.`,
+        400
+      );
+    }
+
+    if (!/^[a-f0-9]{64}$/i.test(sha256)) {
+      throw new AuthzError(
+        `Evidence item ${index} requires a valid SHA-256 hash.`,
+        400
+      );
+    }
+  }
+}
+
+function resolveExchangeRecipient(env, recipientPersona) {
+  if (recipientPersona === ARCHITECTUS_PRINCIPAL.credential_id) {
+    return ARCHITECTUS_PRINCIPAL;
+  }
+
+  let records =
+    env.MATRIX_PRINCIPAL_KEYS ||
+    env.MNEMOSYNE_PRINCIPAL_KEYS;
+
+  if (!records) {
+    throw new AuthzError(
+      "No credential registry is configured.",
+      503
+    );
+  }
+
+  if (typeof records === "string") {
+    try {
+      records = JSON.parse(records);
+    } catch {
+      throw new AuthzError(
+        "Credential registry is invalid JSON.",
+        503
+      );
+    }
+  }
+
+  const credentials = Array.isArray(records)
+    ? records.map(unwrapCredentialRecord)
+    : Object.values(records).map(unwrapCredentialRecord);
+
+  const recipient = credentials
+    .filter(Boolean)
+    .map(resolveCredentialPrincipal)
+    .filter(Boolean)
+    .find(
+      item => item.credential_id === recipientPersona
+    );
+
+  if (!recipient) {
+    throw new AuthzError(
+      `Recipient persona is not registered: ${recipientPersona}`,
+      404
+    );
+  }
+
+  if (!hasCapability(recipient, CAPABILITY.EXCHANGES_INBOX)) {
+    throw new AuthzError(
+      `Recipient cannot receive exchanges: ${recipientPersona}`,
+      400
+    );
+  }
+
+  return recipient;
+}
+
 async function handleExchangeDispatch(request, env, principal) {
   ensureD1(env);
 
@@ -1203,9 +1380,18 @@ async function handleExchangeDispatch(request, env, principal) {
     payload.recipient_persona
   );
 
+  const recipient = resolveExchangeRecipient(
+    env,
+    recipientPersona
+  );
+
   const chapterContext = Number(payload.chapter_context);
   const stateVersion = String(payload.state_version || "").trim();
   const payloadData = String(payload.payload_data || "").trim();
+
+  const contentType = String(
+    payload.content_type || "text/plain; charset=utf-8"
+  );
 
   if (!Number.isInteger(chapterContext) || chapterContext < 1) {
     return jsonError(
@@ -1222,6 +1408,12 @@ async function handleExchangeDispatch(request, env, principal) {
     return jsonError("payload_data is required", 400);
   }
 
+  validateSourceBoundSkillPacket({
+    recipientPersona,
+    payloadData,
+    contentType
+  });
+
   const exchangeId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
 
@@ -1230,28 +1422,36 @@ async function handleExchangeDispatch(request, env, principal) {
     recipient_persona: recipientPersona,
     source: "api",
     payload_data: payloadData,
-    content_type: String(
-      payload.content_type || "text/plain; charset=utf-8"
-    )
+    content_type: contentType
   });
 
   const record = {
     mandate_id: exchangeId,
-    title: `Mesh Exchange [${recipientPersona} | Chapter ${chapterContext} | v${stateVersion}]`,
+
+    title:
+      `Mesh Exchange [` +
+      `${recipientPersona} | Chapter ${chapterContext} | ` +
+      `v${stateVersion}]`,
+
     body: buildExchangeLedgerBody({
       sender: principal.credential_id,
       recipient: recipientPersona,
+
       recipient_address: String(
         payload.recipient_persona || ""
       ).trim(),
+
       source: "api",
       payload: payloadDescriptor
     }),
+
     created_by: principal.credential_id,
     created_at: createdAt,
+
     expires_at: new Date(
       Date.now() + 24 * 60 * 60 * 1000
     ).toISOString(),
+
     state: "archived"
   };
 
@@ -1260,10 +1460,14 @@ async function handleExchangeDispatch(request, env, principal) {
   return Response.json({
     status: "submitted",
     exchange_id: exchangeId,
+
     recipient_persona: recipientPersona,
+    recipient_credential_id: recipient.credential_id,
+
     created_by: principal.credential_id,
     created_by_role: principal.principal_id,
     created_at: createdAt,
+
     payload_mode: payloadDescriptor.mode,
     artifact_key: payloadDescriptor.artifact_key || null
   });
@@ -1287,6 +1491,7 @@ async function handleExchangeInbox(env, principal) {
         title LIKE "Mesh Exchange%"
         OR title LIKE "Mail Exchange%"
         OR title LIKE "Queue Exchange%"
+        OR title LIKE "Mesh Receipt%"
       )
     ORDER BY created_at DESC
     LIMIT 250
@@ -1309,6 +1514,126 @@ async function handleExchangeInbox(env, principal) {
   });
 }
 
+async function handleExchangeAcknowledge(
+  env,
+  principal,
+  exchangeId
+) {
+  ensureD1(env);
+
+  const exchange = await env.DB.prepare(`
+    SELECT
+      mandate_id,
+      title,
+      body,
+      created_by,
+      created_at,
+      state
+    FROM mandates
+    WHERE mandate_id = ?
+      AND state = "archived"
+    LIMIT 1
+  `)
+    .bind(exchangeId)
+    .first();
+
+  if (!exchange || !isExchangeTitle(exchange.title)) {
+    return jsonError("Exchange not found", 404);
+  }
+
+  const recipient =
+    readLedgerField(exchange.body, "Recipient Persona") ||
+    readLedgerField(exchange.body, "Target");
+
+  if (recipient !== principal.credential_id) {
+    return jsonError(
+      "Exchange is not addressed to this credential identity",
+      403
+    );
+  }
+
+  const sender = String(exchange.created_by || "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalizeCredentialId(sender)) {
+    return jsonError(
+      "Original sender is not a valid Matrix credential identity",
+      400
+    );
+  }
+
+  const receiptTitle =
+    `Mesh Receipt [${sender} | ${exchangeId}]`;
+
+  const existingReceipt = await env.DB.prepare(`
+    SELECT mandate_id
+    FROM mandates
+    WHERE title = ?
+      AND state = "archived"
+    LIMIT 1
+  `)
+    .bind(receiptTitle)
+    .first();
+
+  if (existingReceipt) {
+    return Response.json({
+      status: "already_acknowledged",
+      exchange_id: exchangeId,
+      receipt_exchange_id: existingReceipt.mandate_id
+    });
+  }
+
+  const receiptExchangeId = crypto.randomUUID();
+  const acknowledgedAt = new Date().toISOString();
+
+  const receiptPayload = JSON.stringify({
+    event: "exchange_receipt",
+    status: "acknowledged",
+    acknowledged_exchange_id: exchangeId,
+    acknowledged_by: principal.credential_id,
+    acknowledged_at: acknowledgedAt
+  });
+
+  const payloadDescriptor = await prepareTextExchangePayload(env, {
+    exchange_id: receiptExchangeId,
+    recipient_persona: sender,
+    source: "receipt",
+    payload_data: receiptPayload,
+    content_type: "application/json"
+  });
+
+  await archiveExchangeRecord(env, {
+    mandate_id: receiptExchangeId,
+    title: receiptTitle,
+
+    body: buildExchangeLedgerBody({
+      sender: principal.credential_id,
+      recipient: sender,
+      recipient_address: sender,
+      source: "receipt",
+      payload: payloadDescriptor
+    }),
+
+    created_by: principal.credential_id,
+    created_at: acknowledgedAt,
+
+    expires_at: new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    ).toISOString(),
+
+    state: "archived"
+  });
+
+  return Response.json({
+    status: "acknowledged",
+    exchange_id: exchangeId,
+    receipt_exchange_id: receiptExchangeId,
+    acknowledged_by: principal.credential_id,
+    acknowledged_at: acknowledgedAt
+  });
+}
+
 async function handleExchangeHistory(env, principal) {
   ensureD1(env);
 
@@ -1327,6 +1652,7 @@ async function handleExchangeHistory(env, principal) {
         title LIKE "Mesh Exchange%"
         OR title LIKE "Mail Exchange%"
         OR title LIKE "Queue Exchange%"
+        OR title LIKE "Mesh Receipt%"
       )
     ORDER BY created_at DESC
     LIMIT 50
@@ -1782,7 +2108,8 @@ function isExchangeTitle(title) {
   return (
     value.startsWith("Mesh Exchange") ||
     value.startsWith("Mail Exchange") ||
-    value.startsWith("Queue Exchange")
+    value.startsWith("Queue Exchange") ||
+    value.startsWith("Mesh Receipt")
   );
 }
 
