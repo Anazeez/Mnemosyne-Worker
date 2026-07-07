@@ -1191,6 +1191,8 @@ async function handleDashboardOverview(env) {
     pendingResult?.count || 0
   );
 
+  payload.attention_count = payload.pending_acknowledgements;
+
   return Response.json(payload);
 }
 function buildMandateDraft(body, principal) {
