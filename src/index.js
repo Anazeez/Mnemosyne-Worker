@@ -330,6 +330,10 @@ export default {
         requireCapability(principal, CAPABILITY.ROUTER_STATUS);
         return handleRouterStatus(env, principal);
       }
+      if (url.pathname === "/v1/dashboard/overview" && method === "GET") {
+        requireCapability(principal, CAPABILITY.DASHBOARD_OVERVIEW);
+        return handleDashboardOverview(env);
+      }
 
       // ─── Persona Mesh Exchanges ────────────────────────────────────────────
 
@@ -1118,7 +1122,77 @@ async function handleRouterStatus(env, principal) {
 
   return Response.json(payload);
 }
+async function handleDashboardOverview(env) {
+  const generatedAt = new Date().toISOString();
 
+  const payload = {
+    generated_at: generatedAt,
+    worker: "alive",
+    d1: env.DB ? "enabled" : "disabled",
+    queue: env.MATRIX_EMAIL_QUEUE ? "active" : "inactive",
+    email_route: env.MATRIX_MAIL ? "active" : "inactive",
+    artifacts: env.MATRIX_ARTIFACTS ? "r2-enabled" : "inline-only",
+    recent_movement: [],
+    pending_acknowledgements: 0,
+    attention_count: 0
+  };
+
+  if (!env.DB) {
+    return Response.json(payload);
+  }
+
+  const cutoff = new Date(
+    Date.now() - 72 * 60 * 60 * 1000
+  ).toISOString();
+
+  const [movementResult, pendingResult] = await Promise.all([
+    env.DB.prepare(`
+      SELECT mandate_id AS exchange_id, title, created_at
+      FROM mandates
+      WHERE state = "archived"
+        AND created_at >= ?
+        AND (
+          title LIKE "Mesh Exchange%"
+          OR title LIKE "Mesh Receipt%"
+        )
+      ORDER BY created_at DESC
+      LIMIT 20
+    `)
+      .bind(cutoff)
+      .all(),
+
+    env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM mandate_recipients r
+      JOIN mandates m ON m.mandate_id = r.mandate_id
+      WHERE m.state IN ("dispatched", "active")
+        AND m.expires_at > ?
+        AND r.acknowledged_at IS NULL
+    `)
+      .bind(generatedAt)
+      .first()
+  ]);
+
+  payload.recent_movement = (movementResult.results || []).map(record => {
+    const acknowledged = String(record.title).startsWith("Mesh Receipt");
+
+    return {
+      id: record.exchange_id,
+      kind: acknowledged ? "receipt" : "exchange",
+      title: acknowledged
+        ? "Exchange acknowledged"
+        : "Exchange dispatched",
+      occurred_at: record.created_at,
+      status: acknowledged ? "completed" : "pending"
+    };
+  });
+
+  payload.pending_acknowledgements = Number(
+    pendingResult?.count || 0
+  );
+
+  return Response.json(payload);
+}
 function buildMandateDraft(body, principal) {
   const title = String(body.title || "").trim();
 
