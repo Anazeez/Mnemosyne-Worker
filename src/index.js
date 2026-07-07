@@ -100,7 +100,8 @@ const CAPABILITY = Object.freeze({
   EXCHANGES_INBOX: "exchanges.inbox",
   EXCHANGES_HISTORY: "exchanges.history",
 
-  REGISTRY_VIEW: "registry.view"
+  REGISTRY_VIEW: "registry.view",
+  DASHBOARD_OVERVIEW: "dashboard.overview"
 });
 
 const READ_ONLY_MEMORY = Object.freeze([
@@ -158,6 +159,10 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.REGISTRY_VIEW
 ]);
 
+const DASHBOARD_CAPABILITIES = Object.freeze([
+  CAPABILITY.DASHBOARD_OVERVIEW
+]);
+
 const ROLE_POLICIES = Object.freeze({
   root: Object.freeze({
     capabilities: ALL_CAPABILITIES,
@@ -180,6 +185,12 @@ const ROLE_POLICIES = Object.freeze({
   portal: Object.freeze({
     capabilities: PORTAL_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
+    receives_mandates: false
+  }),
+
+  dashboard: Object.freeze({
+    capabilities: DASHBOARD_CAPABILITIES,
+    memory_domains: [],
     receives_mandates: false
   }),
 
@@ -592,7 +603,11 @@ function resolveCredentialPrincipal(record) {
   const policy = ROLE_POLICIES[role];
   const memoryDomains = resolveEffectiveMemoryDomains(record, policy);
 
-  if (memoryDomains.length === 0) {
+  const requiresMemoryDomain =
+    policy.capabilities.includes(CAPABILITY.MEMORY_READ) ||
+    policy.capabilities.includes(CAPABILITY.MEMORY_SEARCH);
+
+  if (requiresMemoryDomain && memoryDomains.length === 0) {
     console.warn(
       `Rejected credential ${credentialId}: no permitted memory domains after policy intersection`
     );
