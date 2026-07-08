@@ -2732,7 +2732,7 @@ async function handleAriadneCoreOpenAITest(request, env) {
     );
   }
 
-  const model = env.OPENAI_MODEL || "gpt-4.1-mini";
+  const model = env.OPENAI_MODEL || "gpt-4o-mini";
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
