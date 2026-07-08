@@ -217,6 +217,14 @@ export default {
     const url = new URL(request.url);
     const method = request.method;
 
+if (
+  method === "GET" &&
+  url.pathname === "/api/ariadne/core/openai-test"
+) {
+  return handleAriadneCoreOpenAITest(request, env);
+}
+
+
     if (url.pathname === "/ping" && method === "GET") {
       return Response.json({
         status: "alive",
@@ -2692,5 +2700,81 @@ function jsonError(error, status = 400, details = undefined) {
     {
       status
     }
+    
+
+    
   );
+  
+}
+function jsonError(error, status = 400, details = undefined) {
+  return Response.json(
+    {
+      error,
+      details
+    },
+    {
+      status
+    }
+  );
+}
+
+async function handleAriadneCoreOpenAITest(request, env) {
+  const principal = await validateMatrixPrincipal(request, env, {
+    requiredCapability: "ariadne.core.openai_test"
+  });
+
+  if (!principal.ok) {
+    return Response.json(
+      { ok: false, status: 401, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return Response.json(
+      { ok: false, status: 500, error: "OPENAI_API_KEY is not configured" },
+      { status: 500 }
+    );
+  }
+
+  const model = env.OPENAI_MODEL || "gpt-4.1-mini";
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      input: "Reply with exactly: Ariadne connected."
+    })
+  });
+
+  if (!response.ok) {
+    return Response.json(
+      {
+        ok: false,
+        status: response.status,
+        error: "OpenAI request failed"
+      },
+      { status: 502 }
+    );
+  }
+
+  const data = await response.json();
+
+  const output =
+    data.output_text ??
+    data.output?.[0]?.content?.[0]?.text ??
+    "";
+
+  return Response.json(
+    {
+      ok: true,
+      status: 200,
+      output
+    },
+    { status: 200 }
+  ); 
 }
