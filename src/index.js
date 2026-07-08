@@ -2706,21 +2706,13 @@ function jsonError(error, status = 400, details = undefined) {
   );
   
 }
-function jsonError(error, status = 400, details = undefined) {
-  return Response.json(
-    {
-      error,
-      details
-    },
-    {
-      status
-    }
-  );
+ {
+  
 }
 
 async function handleAriadneCoreOpenAITest(request, env) {
   const principal = await validateMatrixPrincipal(request, env, {
-    requiredCapability: "ariadne.core.openai_test"
+   action: "ariadne.core.openai_test"
   });
 
   if (!principal.ok) {
