@@ -228,6 +228,10 @@ if (
 }
 
 
+    if (url.pathname === "/api/ariadne/core/logs" && method === "GET") {
+      return handleAriadneCoreLogs(request, env);
+    }
+
     if (url.pathname === "/api/ariadne/core/status" && method === "GET") {
       return handleAriadneCoreStatus(request, env);
     }
@@ -3001,6 +3005,78 @@ function handleAriadneCoreStatus(request, env) {
       "POST /api/ariadne/core/intake",
       "GET /api/ariadne/core/status"
     ]
+  });
+}
+
+
+async function handleAriadneCoreLogs(request, env) {
+  const auth = authenticateRequest(request, env);
+
+  if (!auth.ok) {
+    return jsonError(auth.error, auth.status);
+  }
+
+  const principal = auth.principal;
+
+  try {
+    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+  } catch (error) {
+    if (error instanceof AuthzError) {
+      return jsonError(error.message, error.status, error.details);
+    }
+    throw error;
+  }
+
+  const logs = [
+    {
+      event: "service_started",
+      service: "ariadne.core",
+      status: "online"
+    },
+    {
+      event: "openai",
+      configured: Boolean(env.OPENAI_API_KEY),
+      model: env.OPENAI_MODEL || "gpt-3.5-turbo"
+    },
+    {
+      event: "intake",
+      review_first: true,
+      mutation_allowed: false
+    }
+  ];
+
+  if (env.DB) {
+    try {
+      const recent = await env.DB.prepare(`
+        SELECT
+          mandate_id,
+          title,
+          created_at,
+          created_by
+        FROM mandates
+        ORDER BY created_at DESC
+        LIMIT 10
+      `).all();
+
+      logs.push({
+        event: "recent_activity",
+        records: recent.results || []
+      });
+    } catch (error) {
+      logs.push({
+        event: "database",
+        status: "unavailable",
+        error: error.message
+      });
+    }
+  }
+
+  return jsonOk({
+    ok: true,
+    service: "ariadne.core",
+    generated_at: new Date().toISOString(),
+    requested_by: principal.credential_id,
+    logs
   });
 }
 
