@@ -228,6 +228,10 @@ if (
 }
 
 
+    if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
+      return handleAriadneCoreReview(request, env);
+    }
+
     if (url.pathname === "/api/ariadne/core/logs" && method === "GET") {
       return handleAriadneCoreLogs(request, env);
     }
@@ -3078,5 +3082,149 @@ async function handleAriadneCoreLogs(request, env) {
     requested_by: principal.credential_id,
     logs
   });
+}
+
+
+async function handleAriadneCoreReview(request, env) {
+  const auth = authenticateRequest(request, env);
+
+  if (!auth.ok) {
+    return jsonError(auth.error, auth.status);
+  }
+
+  const principal = auth.principal;
+  requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+
+  let body;
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("invalid_json", 400);
+  }
+
+  const title = cleanString(body && body.title);
+  const content = cleanString(body && body.content);
+  const currentLocation = cleanString(body && body.currentLocation);
+
+  const metadata =
+    body && body.metadata && typeof body.metadata === "object"
+      ? body.metadata
+      : {};
+
+  if (!body || body.reviewFirst !== true) {
+    return jsonError("review_first_required", 400);
+  }
+
+  if (!title || !content) {
+    return jsonError("missing_required_fields", 400, {
+      required: ["title", "content"]
+    });
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return jsonError("missing_openai_api_key", 500);
+  }
+
+  const model = env.OPENAI_MODEL || "gpt-3.5-turbo";
+
+  const openaiResult = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + env.OPENAI_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: model,
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are Ariadne Core Review. Return JSON only. Review existing Obsidian notes. Do not mutate, move, rename, delete, or claim any change occurred. Produce review-first recommendations only."
+        },
+        {
+          role: "user",
+          content:
+            "Review this existing note and return only valid JSON with exactly these keys: summary, quality, ambiguities, missingInformation, duplicateRisk, suggestedTags, suggestedLinks, suggestedDestination, confidence, warnings.\n\n" +
+            "Rules:\n" +
+            "- summary must be a string.\n" +
+            "- quality must be a string.\n" +
+            "- ambiguities must be an array of strings.\n" +
+            "- missingInformation must be an array of strings.\n" +
+            "- duplicateRisk must be a string.\n" +
+            "- suggestedTags must be an array of strings.\n" +
+            "- suggestedLinks must be an array of strings.\n" +
+            "- suggestedDestination must be a string.\n" +
+            "- confidence must be a number between 0 and 1.\n" +
+            "- warnings must be an array of strings.\n" +
+            "- Do not invent unsupported facts.\n\n" +
+            JSON.stringify({
+              title,
+              content,
+              currentLocation,
+              metadata,
+              reviewFirst: true
+            })
+        }
+      ]
+    })
+  });
+
+  let openaiPayload;
+
+  try {
+    openaiPayload = await openaiResult.json();
+  } catch {
+    return jsonError("openai_invalid_json", 502);
+  }
+
+  if (!openaiResult.ok) {
+    return jsonError("openai_request_failed", 502, {
+      status: openaiResult.status,
+      details: openaiPayload
+    });
+  }
+
+  const messageContent =
+    openaiPayload &&
+    openaiPayload.choices &&
+    openaiPayload.choices[0] &&
+    openaiPayload.choices[0].message &&
+    openaiPayload.choices[0].message.content;
+
+  const review = parseJsonObject(messageContent);
+
+  if (!isValidAriadneReview(review)) {
+    return jsonError("invalid_openai_output", 502, {
+      raw: messageContent
+    });
+  }
+
+  return jsonOk({
+    ok: true,
+    reviewFirst: true,
+    mutated: false,
+    review
+  });
+}
+
+function isValidAriadneReview(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    typeof value.summary === "string" &&
+    typeof value.quality === "string" &&
+    isStringArray(value.ambiguities) &&
+    isStringArray(value.missingInformation) &&
+    typeof value.duplicateRisk === "string" &&
+    isStringArray(value.suggestedTags) &&
+    isStringArray(value.suggestedLinks) &&
+    typeof value.suggestedDestination === "string" &&
+    typeof value.confidence === "number" &&
+    value.confidence >= 0 &&
+    value.confidence <= 1 &&
+    isStringArray(value.warnings)
+  );
 }
 
