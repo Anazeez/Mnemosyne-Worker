@@ -505,6 +505,20 @@ function authenticateRequest(request, env) {
     };
   }
 
+  if (env.MATRIX_DASHBOARD_KEY && authKey === env.MATRIX_DASHBOARD_KEY) {
+    return {
+      ok: true,
+      principal: {
+        credential_id: "command-center",
+        principal_id: "dashboard",
+        role: "dashboard",
+        capabilities: [...DASHBOARD_CAPABILITIES],
+        memory_domains: [],
+        receives_mandates: false
+      }
+    };
+  }
+
   const principal = principalFromScopedKey(authKey, env);
 
   if (!principal) {
