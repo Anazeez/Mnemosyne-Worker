@@ -2747,15 +2747,18 @@ async function handleAriadneCoreOpenAITest(request, env) {
   });
 
   if (!response.ok) {
-    return Response.json(
-      {
-        ok: false,
-        status: response.status,
-        error: "OpenAI request failed"
-      },
-      { status: 502 }
-    );
-  }
+  const errorText = await response.text();
+
+  return Response.json(
+    {
+      ok: false,
+      status: response.status,
+      error: "OpenAI request failed",
+      openai_error: errorText
+    },
+    { status: 502 }
+  );
+}
 
   const data = await response.json();
 
