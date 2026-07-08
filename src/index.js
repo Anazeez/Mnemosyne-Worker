@@ -228,6 +228,10 @@ if (
 }
 
 
+    if (url.pathname === "/api/ariadne/core/status" && method === "GET") {
+      return handleAriadneCoreStatus(request, env);
+    }
+
     if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
       return handleAriadneCoreIntake(request, env);
     }
@@ -2955,6 +2959,48 @@ function jsonOk(payload, status) {
     headers: {
       "Content-Type": "application/json"
     }
+  });
+}
+
+
+function handleAriadneCoreStatus(request, env) {
+  const auth = authenticateRequest(request, env);
+
+  if (!auth.ok) {
+    return jsonError(auth.error, auth.status);
+  }
+
+  const principal = auth.principal;
+
+  try {
+    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+  } catch (error) {
+    if (error instanceof AuthzError) {
+      return jsonError(error.message, error.status, error.details);
+    }
+
+    throw error;
+  }
+
+  return jsonOk({
+    ok: true,
+    service: "ariadne.core",
+    mode: "review-first",
+    intakeEnabled: true,
+    openaiConfigured: Boolean(env.OPENAI_API_KEY),
+    openaiModel: env.OPENAI_MODEL || "gpt-3.5-turbo",
+    vaultMutationAllowed: false,
+    dashboardAuthority: "read-only",
+    requestedBy: {
+      credential_id: principal.credential_id,
+      principal_id: principal.principal_id,
+      role: principal.role
+    },
+    endpoints: [
+      "GET /api/ariadne/core/openai-test",
+      "POST /api/ariadne/core/intake",
+      "GET /api/ariadne/core/status"
+    ]
   });
 }
 
