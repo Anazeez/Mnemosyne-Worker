@@ -101,6 +101,7 @@ const CAPABILITY = Object.freeze({
   EXCHANGES_HISTORY: "exchanges.history",
 
   REGISTRY_VIEW: "registry.view",
+  ARIADNE_CORE_OPENAI_TEST: "ariadne.core.openai_test",
   DASHBOARD_OVERVIEW: "dashboard.overview"
 });
 
@@ -146,6 +147,7 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
 ]);
 
@@ -2700,26 +2702,26 @@ function jsonError(error, status = 400, details = undefined) {
     {
       status
     }
-    
-
-    
   );
-  
-}
- {
-  
 }
 
 async function handleAriadneCoreOpenAITest(request, env) {
-  const principal = await validateMatrixPrincipal(request, env, {
-   action: "ariadne.core.openai_test"
-  });
+  const auth = authenticateRequest(request, env);
 
-  if (!principal.ok) {
-    return Response.json(
-      { ok: false, status: 401, error: "Unauthorized" },
-      { status: 401 }
-    );
+  if (!auth.ok) {
+    return jsonError(auth.error, auth.status);
+  }
+
+  const principal = auth.principal;
+
+  try {
+    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+  } catch (error) {
+    if (error instanceof AuthzError) {
+      return jsonError(error.message, error.status, error.details);
+    }
+
+    throw error;
   }
 
   if (!env.OPENAI_API_KEY) {
@@ -2768,5 +2770,5 @@ async function handleAriadneCoreOpenAITest(request, env) {
       output
     },
     { status: 200 }
-  ); 
+  );
 }
