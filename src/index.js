@@ -228,6 +228,10 @@ if (
 }
 
 
+    if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
+      return handleAriadneCoreIntake(request, env);
+    }
+
     if (url.pathname === "/ping" && method === "GET") {
       return Response.json({
         status: "alive",
@@ -2732,7 +2736,7 @@ async function handleAriadneCoreOpenAITest(request, env) {
     );
   }
 
-  const model = env.OPENAI_MODEL || "gpt-4o-mini";
+  const model = env.OPENAI_MODEL || "gpt-3.5-turbo";
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -2776,3 +2780,181 @@ async function handleAriadneCoreOpenAITest(request, env) {
     { status: 200 }
   );
 }
+
+
+async function handleAriadneCoreIntake(request, env) {
+  const auth = authenticateRequest(request, env);
+
+  if (!auth.ok) {
+    return jsonError(auth.error, auth.status);
+  }
+
+  const principal = auth.principal;
+  requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+
+  let body;
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("invalid_json", 400);
+  }
+
+  const title = cleanString(body && body.title);
+  const content = cleanString(body && body.content);
+  const source = cleanString(body && body.source);
+
+  const metadata =
+    body && body.metadata && typeof body.metadata === "object"
+      ? body.metadata
+      : {};
+
+  if (!body || body.reviewFirst !== true) {
+    return jsonError("review_first_required", 400);
+  }
+
+  if (!title || !content) {
+    return jsonError("missing_required_fields", 400, {
+      required: ["title", "content"]
+    });
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return jsonError("missing_openai_api_key", 500);
+  }
+
+  const model = env.OPENAI_MODEL || "gpt-3.5-turbo";
+
+  const openaiResult = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + env.OPENAI_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: model,
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are Ariadne Core Intake. Return JSON only. Generate a review-first proposal. Do not mutate Obsidian. Do not move files. Do not rename files. Do not delete files. Do not claim any file or vault change occurred."
+        },
+        {
+          role: "user",
+          content:
+            "Review this intake item and return only valid JSON with exactly these keys: classification, summary, proposedDestination, proposedTags, proposedLinks, warnings.\n\n" +
+            "Rules:\n" +
+            "- classification must be a string.\n" +
+            "- summary must be a string.\n" +
+            "- proposedDestination must be a string and proposal-only.\n" +
+            "- proposedTags must be an array of strings.\n" +
+            "- proposedLinks must be an array of strings.\n" +
+            "- warnings must be an array of strings.\n" +
+            "- Do not invent unsupported facts.\n" +
+            "- Mark uncertainty in warnings.\n\n" +
+            JSON.stringify({
+              title: title,
+              content: content,
+              source: source,
+              metadata: metadata,
+              reviewFirst: true
+            })
+        }
+      ]
+    })
+  });
+
+  let openaiPayload;
+
+  try {
+    openaiPayload = await openaiResult.json();
+  } catch {
+    return jsonError("openai_invalid_json", 502);
+  }
+
+  if (!openaiResult.ok) {
+    return jsonError("openai_request_failed", 502, {
+      status: openaiResult.status,
+      details: openaiPayload
+    });
+  }
+
+  const messageContent =
+    openaiPayload &&
+    openaiPayload.choices &&
+    openaiPayload.choices[0] &&
+    openaiPayload.choices[0].message &&
+    openaiPayload.choices[0].message.content;
+
+  const proposal = parseJsonObject(messageContent);
+
+  if (!isValidAriadneIntakeProposal(proposal)) {
+    return jsonError("invalid_openai_output", 502, {
+      raw: messageContent
+    });
+  }
+
+  return jsonOk({
+    ok: true,
+    reviewFirst: true,
+    mutated: false,
+    proposal: {
+      classification: proposal.classification,
+      summary: proposal.summary,
+      proposedDestination: proposal.proposedDestination,
+      proposedTags: proposal.proposedTags,
+      proposedLinks: proposal.proposedLinks,
+      warnings: proposal.warnings
+    }
+  });
+}
+
+function cleanString(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim();
+}
+
+function parseJsonObject(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isStringArray(value) {
+  return Array.isArray(value) && value.every(function (item) {
+    return typeof item === "string";
+  });
+}
+
+function isValidAriadneIntakeProposal(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    typeof value.classification === "string" &&
+    typeof value.summary === "string" &&
+    typeof value.proposedDestination === "string" &&
+    isStringArray(value.proposedTags) &&
+    isStringArray(value.proposedLinks) &&
+    isStringArray(value.warnings)
+  );
+}
+
+function jsonOk(payload, status) {
+  return new Response(JSON.stringify(payload), {
+    status: status || 200,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
+}
+
