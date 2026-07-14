@@ -1,0 +1,7 @@
+role_id: orchestrator
+capability_id: ariadne.core.openai_test
+baseline_state: absent
+proposed_state: granted
+authority_basis: docs/superpowers/specs/2026-07-14-mnemosyne-worker-clean-baseline-design.md#privilege-standing
+security_effect: permits orchestrators to invoke proposed external-provider review routes
+approval_required: true

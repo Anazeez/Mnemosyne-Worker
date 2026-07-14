@@ -1,0 +1,35 @@
+evidence_map_version: worker-evidence-v1
+repository: Anazeez/Mnemosyne-Worker
+baseline_commit: a60fc378665b19b23146bdd1eb4c104b38daea25
+verified_at: "2026-07-14T16:50:42Z"
+verification_method: static-inspection
+assertions:
+  - assertion_id: worker-main-source
+    classification: observed
+    source_repository: Anazeez/Mnemosyne-Worker
+    source_commit: a60fc378665b19b23146bdd1eb4c104b38daea25
+    source_path: src/index.js
+    sha256: f37a129faf356790f16d9ba0f871ea4d36d9da67a9b276da8a59dec155aadb4c
+    algorithm: sha256
+    normalization: raw-bytes
+  - assertion_id: worker-main-configuration
+    classification: observed
+    source_repository: Anazeez/Mnemosyne-Worker
+    source_commit: a60fc378665b19b23146bdd1eb4c104b38daea25
+    source_path: wrangler.toml
+    sha256: 1367f52ad65007342d95a86773119a99a1d266833be2e133565d4ff160201c16
+    algorithm: sha256
+    normalization: raw-bytes
+  - assertion_id: worker-main-readme
+    classification: observed
+    source_repository: Anazeez/Mnemosyne-Worker
+    source_commit: a60fc378665b19b23146bdd1eb4c104b38daea25
+    source_path: README.md
+    sha256: d0aa116873bda2a1fe7b0acb8fabad68b8ed1d7b252cf6efadcd5c86ea6c7092
+    algorithm: sha256
+    normalization: raw-bytes
+standing:
+  canonical: false
+  active: false
+  deployment_authorized: false
+  note: observed evidence does not grant authority or activation

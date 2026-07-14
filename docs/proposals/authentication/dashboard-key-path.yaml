@@ -1,0 +1,8 @@
+authentication_path_id: dashboard-environment-key
+role_id: dashboard
+baseline_state: absent
+proposed_state: reviewable
+authority_basis: docs/superpowers/specs/2026-07-14-mnemosyne-worker-clean-baseline-design.md#privilege-standing
+security_effect: maps a separate environment-held credential to the proposed dashboard role
+approval_required: true
+active: false

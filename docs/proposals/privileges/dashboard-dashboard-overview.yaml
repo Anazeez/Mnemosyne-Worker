@@ -1,0 +1,7 @@
+role_id: dashboard
+capability_id: dashboard.overview
+baseline_state: absent
+proposed_state: granted
+authority_basis: docs/superpowers/specs/2026-07-14-mnemosyne-worker-clean-baseline-design.md#privilege-standing
+security_effect: creates a new read-only aggregate dashboard principal
+approval_required: true
