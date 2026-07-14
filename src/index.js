@@ -100,7 +100,9 @@ const CAPABILITY = Object.freeze({
   EXCHANGES_INBOX: "exchanges.inbox",
   EXCHANGES_HISTORY: "exchanges.history",
 
-  REGISTRY_VIEW: "registry.view"
+  REGISTRY_VIEW: "registry.view",
+  ARIADNE_CORE_OPENAI_TEST: "ariadne.core.openai_test",
+  DASHBOARD_OVERVIEW: "dashboard.overview"
 });
 
 const READ_ONLY_MEMORY = Object.freeze([
@@ -108,9 +110,36 @@ const READ_ONLY_MEMORY = Object.freeze([
   CAPABILITY.MEMORY_SEARCH
 ]);
 
-const ALL_CAPABILITIES = Object.freeze(
-  Object.values(CAPABILITY)
-);
+const BASELINE_ROOT_CAPABILITIES = Object.freeze([
+  CAPABILITY.MEMORY_READ,
+  CAPABILITY.MEMORY_SEARCH,
+  CAPABILITY.MEMORY_INGEST,
+  CAPABILITY.MEMORY_HASH,
+  CAPABILITY.SKILLS_RETRIEVAL,
+  CAPABILITY.HISTORY_RETRIEVAL,
+  CAPABILITY.MANDATES_READ,
+  CAPABILITY.MANDATES_ACK,
+  CAPABILITY.MANDATES_DRAFT,
+  CAPABILITY.MANDATES_DISPATCH,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY,
+  CAPABILITY.CONTRACTS_DRAFT,
+  CAPABILITY.ROUTER_STATUS,
+  CAPABILITY.EXCHANGES_ACK,
+  CAPABILITY.EXCHANGES_DISPATCH,
+  CAPABILITY.EXCHANGES_REPLY,
+  CAPABILITY.EXCHANGES_INBOX,
+  CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.REGISTRY_VIEW
+]);
+
+// Proposed grants are explicit so adding a capability identifier cannot
+// silently expand root authority through Object.values(CAPABILITY).
+const ROOT_CAPABILITIES = Object.freeze([
+  ...BASELINE_ROOT_CAPABILITIES,
+  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
+  CAPABILITY.DASHBOARD_OVERVIEW
+]);
 
 // Specialist GPTs: read-only memory, skills, mandates, their own exchange inbox,
 // and exchange artifacts specifically addressed to their credential identity.
@@ -122,6 +151,7 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_ACK,
   CAPABILITY.EXCHANGES_REPLY,
+  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN
 ]);
 
@@ -145,6 +175,7 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
 ]);
 
@@ -158,9 +189,13 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.REGISTRY_VIEW
 ]);
 
+const DASHBOARD_CAPABILITIES = Object.freeze([
+  CAPABILITY.DASHBOARD_OVERVIEW
+]);
+
 const ROLE_POLICIES = Object.freeze({
   root: Object.freeze({
-    capabilities: ALL_CAPABILITIES,
+    capabilities: ROOT_CAPABILITIES,
     memory_domains: ["*"],
     receives_mandates: false
   }),
@@ -183,6 +218,12 @@ const ROLE_POLICIES = Object.freeze({
     receives_mandates: false
   }),
 
+  dashboard: Object.freeze({
+    capabilities: DASHBOARD_CAPABILITIES,
+    memory_domains: [],
+    receives_mandates: false
+  }),
+
   inspector: Object.freeze({
     capabilities: INSPECTOR_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
@@ -194,7 +235,7 @@ const ARCHITECTUS_PRINCIPAL = Object.freeze({
   credential_id: "architectus",
   principal_id: "root",
   role: "root",
-  capabilities: ALL_CAPABILITIES,
+  capabilities: ROOT_CAPABILITIES,
   memory_domains: Object.freeze(["*"]),
   receives_mandates: false
 });
@@ -592,7 +633,11 @@ function resolveCredentialPrincipal(record) {
   const policy = ROLE_POLICIES[role];
   const memoryDomains = resolveEffectiveMemoryDomains(record, policy);
 
-  if (memoryDomains.length === 0) {
+  const requiresMemoryDomain =
+    policy.capabilities.includes(CAPABILITY.MEMORY_READ) ||
+    policy.capabilities.includes(CAPABILITY.MEMORY_SEARCH);
+
+  if (requiresMemoryDomain && memoryDomains.length === 0) {
     console.warn(
       `Rejected credential ${credentialId}: no permitted memory domains after policy intersection`
     );

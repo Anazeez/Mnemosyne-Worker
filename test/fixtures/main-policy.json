@@ -1,0 +1,72 @@
+{
+  "baseline_commit": "a60fc378665b19b23146bdd1eb4c104b38daea25",
+  "roles": [
+    {
+      "principal_id": "root",
+      "capabilities": [
+        "memory.read", "memory.search", "memory.ingest", "memory.hash",
+        "skills.retrieval", "history.retrieval", "mandates.read", "mandates.ack",
+        "mandates.draft", "mandates.dispatch", "exchanges.artifact.read.own",
+        "exchanges.artifact.read.any", "contracts.draft", "router.status",
+        "exchanges.ack", "exchanges.dispatch", "exchanges.reply", "exchanges.inbox",
+        "exchanges.history", "registry.view"
+      ],
+      "memory_domains": ["*"],
+      "receives_mandates": false
+    },
+    {
+      "principal_id": "orchestrator",
+      "capabilities": [
+        "memory.read", "memory.search", "skills.retrieval", "mandates.read",
+        "mandates.draft", "mandates.dispatch", "contracts.draft", "router.status",
+        "exchanges.dispatch", "exchanges.inbox", "exchanges.history",
+        "exchanges.artifact.read.any"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": true
+    },
+    {
+      "principal_id": "specialist",
+      "capabilities": [
+        "memory.read", "memory.search", "skills.retrieval", "mandates.read",
+        "mandates.ack", "exchanges.inbox", "exchanges.ack", "exchanges.reply",
+        "exchanges.artifact.read.own"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": true
+    },
+    {
+      "principal_id": "portal",
+      "capabilities": [
+        "memory.read", "memory.search", "skills.retrieval", "exchanges.history",
+        "memory.search"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": false
+    },
+    {
+      "principal_id": "inspector",
+      "capabilities": [
+        "memory.read", "memory.search", "skills.retrieval", "history.retrieval",
+        "exchanges.history", "registry.view"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": false
+    }
+  ],
+  "proposed_grants": [
+    ["root", "ariadne.core.openai_test"],
+    ["root", "dashboard.overview"],
+    ["orchestrator", "ariadne.core.openai_test"],
+    ["specialist", "ariadne.core.openai_test"],
+    ["dashboard", "dashboard.overview"]
+  ],
+  "preserved_absences": [
+    ["portal", "ariadne.core.openai_test"],
+    ["portal", "dashboard.overview"],
+    ["inspector", "ariadne.core.openai_test"],
+    ["inspector", "dashboard.overview"],
+    ["dashboard", "ariadne.core.openai_test"]
+  ],
+  "missing_permission_semantics": "not-an-explicit-prohibition"
+}
