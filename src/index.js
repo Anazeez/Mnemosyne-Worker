@@ -279,6 +279,11 @@ export default {
     const principal = auth.principal;
 
     try {
+      if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreIntake(request, env);
+      }
+
       if (url.pathname === "/hash" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_HASH);
         return handleHash(request);
@@ -2689,4 +2694,160 @@ function jsonError(error, status = 400, details = undefined) {
       status
     }
   );
+}
+
+async function handleAriadneCoreIntake(request, env) {
+  let body;
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("invalid_json", 400);
+  }
+
+  if (!body || body.reviewFirst !== true) {
+    return jsonError("review_first_required", 400);
+  }
+
+  const title = cleanBoundedString(body.title, 300);
+  const content = cleanBoundedString(body.content, 100_000);
+  const source = cleanBoundedString(body.source, 200);
+  const metadata = body.metadata && typeof body.metadata === "object"
+    ? body.metadata
+    : {};
+
+  if (!title || !content) {
+    return jsonError("missing_required_fields", 400, {
+      required: ["title", "content"]
+    });
+  }
+
+  const provider = await requestProviderChat(env, {
+    system:
+      "Return JSON only. Produce a review-first proposal. Do not mutate, move, rename, or delete files. Do not claim any vault change occurred.",
+    input: {
+      title,
+      content,
+      source,
+      metadata,
+      reviewFirst: true
+    },
+    fields: [
+      "classification",
+      "summary",
+      "proposedDestination",
+      "proposedTags",
+      "proposedLinks",
+      "warnings"
+    ]
+  });
+
+  if (!provider.ok) {
+    return jsonError(provider.error, provider.status);
+  }
+
+  const proposal = parseJsonObject(provider.content);
+  if (!isValidAriadneIntakeProposal(proposal)) {
+    return jsonError("invalid_provider_output", 502);
+  }
+
+  return Response.json({
+    ok: true,
+    reviewFirst: true,
+    mutated: false,
+    proposal
+  });
+}
+
+async function requestProviderChat(env, { system, input, fields }) {
+  if (!env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
+    return { ok: false, error: "provider_unavailable", status: 503 };
+  }
+
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: `Return exactly these JSON fields: ${fields.join(", ")}.\n\n${JSON.stringify(input)}`
+          }
+        ]
+      })
+    });
+  } catch {
+    return { ok: false, error: "provider_unavailable", status: 502 };
+  }
+
+  if (!response.ok) {
+    return { ok: false, error: "provider_unavailable", status: 502 };
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, error: "invalid_provider_response", status: 502 };
+  }
+
+  const content = payload?.choices?.[0]?.message?.content;
+  return typeof content === "string"
+    ? { ok: true, content }
+    : { ok: false, error: "invalid_provider_response", status: 502 };
+}
+
+function cleanBoundedString(value, maximumLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().slice(0, maximumLength);
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isStringArray(value) {
+  return Array.isArray(value) && value.every(item => typeof item === "string");
+}
+
+function hasExactKeys(value, keys) {
+  return value &&
+    Object.keys(value).sort().join("\n") === [...keys].sort().join("\n");
+}
+
+function isValidAriadneIntakeProposal(value) {
+  const keys = [
+    "classification",
+    "summary",
+    "proposedDestination",
+    "proposedTags",
+    "proposedLinks",
+    "warnings"
+  ];
+
+  return hasExactKeys(value, keys) &&
+    typeof value.classification === "string" &&
+    typeof value.summary === "string" &&
+    typeof value.proposedDestination === "string" &&
+    isStringArray(value.proposedTags) &&
+    isStringArray(value.proposedLinks) &&
+    isStringArray(value.warnings);
 }
