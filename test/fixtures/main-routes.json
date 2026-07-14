@@ -1,0 +1,33 @@
+{
+  "baseline_commit": "a60fc378665b19b23146bdd1eb4c104b38daea25",
+  "main_routes": [
+    ["GET", "/ping"],
+    ["POST", "/hash"],
+    ["POST", "/ingest"],
+    ["POST", "/query"],
+    ["GET", "/v1/memory/self"],
+    ["POST", "/v1/memory/search"],
+    ["POST", "/v1/skills/retrieval"],
+    ["GET", "/v1/registry"],
+    ["GET", "/v1/mandates/inbox"],
+    ["POST", "/v1/mandates/:id/acknowledge"],
+    ["POST", "/v1/router/mandates/draft"],
+    ["POST", "/v1/router/mandates/dispatch"],
+    ["GET", "/v1/router/status"],
+    ["POST", "/v1/exchanges/dispatch"],
+    ["GET", "/v1/exchanges/inbox"],
+    ["POST", "/v1/exchanges/:id/acknowledge"],
+    ["GET", "/v1/exchanges/history"],
+    ["GET", "/v1/exchanges/:id/artifact"]
+  ],
+  "proposed_routes": [
+    ["GET", "/v1/dashboard/overview"],
+    ["POST", "/api/ariadne/core/intake"],
+    ["POST", "/api/ariadne/core/review"],
+    ["GET", "/api/ariadne/core/status"],
+    ["GET", "/api/ariadne/core/openai-test"]
+  ],
+  "excluded_routes": [
+    ["GET", "/api/ariadne/core/logs"]
+  ]
+}
