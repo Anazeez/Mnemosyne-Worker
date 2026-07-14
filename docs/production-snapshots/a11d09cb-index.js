@@ -100,9 +100,7 @@ const CAPABILITY = Object.freeze({
   EXCHANGES_INBOX: "exchanges.inbox",
   EXCHANGES_HISTORY: "exchanges.history",
 
-  REGISTRY_VIEW: "registry.view",
-  ARIADNE_CORE_OPENAI_TEST: "ariadne.core.openai_test",
-  DASHBOARD_OVERVIEW: "dashboard.overview"
+  REGISTRY_VIEW: "registry.view"
 });
 
 const READ_ONLY_MEMORY = Object.freeze([
@@ -124,7 +122,6 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_ACK,
   CAPABILITY.EXCHANGES_REPLY,
-  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN
 ]);
 
@@ -148,7 +145,6 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
 ]);
 
@@ -160,10 +156,6 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.HISTORY_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
   CAPABILITY.REGISTRY_VIEW
-]);
-
-const DASHBOARD_CAPABILITIES = Object.freeze([
-  CAPABILITY.DASHBOARD_OVERVIEW
 ]);
 
 const ROLE_POLICIES = Object.freeze({
@@ -191,12 +183,6 @@ const ROLE_POLICIES = Object.freeze({
     receives_mandates: false
   }),
 
-  dashboard: Object.freeze({
-    capabilities: DASHBOARD_CAPABILITIES,
-    memory_domains: [],
-    receives_mandates: false
-  }),
-
   inspector: Object.freeze({
     capabilities: INSPECTOR_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
@@ -219,30 +205,6 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const method = request.method;
-
-if (
-  method === "GET" &&
-  url.pathname === "/api/ariadne/core/openai-test"
-) {
-  return handleAriadneCoreOpenAITest(request, env);
-}
-
-
-    if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
-      return handleAriadneCoreReview(request, env);
-    }
-
-    if (url.pathname === "/api/ariadne/core/logs" && method === "GET") {
-      return handleAriadneCoreLogs(request, env);
-    }
-
-    if (url.pathname === "/api/ariadne/core/status" && method === "GET") {
-      return handleAriadneCoreStatus(request, env);
-    }
-
-    if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
-      return handleAriadneCoreIntake(request, env);
-    }
 
     if (url.pathname === "/ping" && method === "GET") {
       return Response.json({
@@ -356,10 +318,6 @@ if (
       if (url.pathname === "/v1/router/status" && method === "GET") {
         requireCapability(principal, CAPABILITY.ROUTER_STATUS);
         return handleRouterStatus(env, principal);
-      }
-      if (url.pathname === "/v1/dashboard/overview" && method === "GET") {
-        requireCapability(principal, CAPABILITY.DASHBOARD_OVERVIEW);
-        return handleDashboardOverview(env);
       }
 
       // ─── Persona Mesh Exchanges ────────────────────────────────────────────
@@ -532,20 +490,6 @@ function authenticateRequest(request, env) {
     };
   }
 
-  if (env.MATRIX_DASHBOARD_KEY && authKey === env.MATRIX_DASHBOARD_KEY) {
-    return {
-      ok: true,
-      principal: {
-        credential_id: "command-center",
-        principal_id: "dashboard",
-        role: "dashboard",
-        capabilities: [...DASHBOARD_CAPABILITIES],
-        memory_domains: [],
-        receives_mandates: false
-      }
-    };
-  }
-
   const principal = principalFromScopedKey(authKey, env);
 
   if (!principal) {
@@ -648,11 +592,7 @@ function resolveCredentialPrincipal(record) {
   const policy = ROLE_POLICIES[role];
   const memoryDomains = resolveEffectiveMemoryDomains(record, policy);
 
-  const requiresMemoryDomain =
-    policy.capabilities.includes(CAPABILITY.MEMORY_READ) ||
-    policy.capabilities.includes(CAPABILITY.MEMORY_SEARCH);
-
-  if (requiresMemoryDomain && memoryDomains.length === 0) {
+  if (memoryDomains.length === 0) {
     console.warn(
       `Rejected credential ${credentialId}: no permitted memory domains after policy intersection`
     );
@@ -1163,79 +1103,7 @@ async function handleRouterStatus(env, principal) {
 
   return Response.json(payload);
 }
-async function handleDashboardOverview(env) {
-  const generatedAt = new Date().toISOString();
 
-  const payload = {
-    generated_at: generatedAt,
-    worker: "alive",
-    d1: env.DB ? "enabled" : "disabled",
-    queue: env.MATRIX_EMAIL_QUEUE ? "active" : "inactive",
-    email_route: env.MATRIX_MAIL ? "active" : "inactive",
-    artifacts: env.MATRIX_ARTIFACTS ? "r2-enabled" : "inline-only",
-    recent_movement: [],
-    pending_acknowledgements: 0,
-    attention_count: 0
-  };
-
-  if (!env.DB) {
-    return Response.json(payload);
-  }
-
-  const cutoff = new Date(
-    Date.now() - 72 * 60 * 60 * 1000
-  ).toISOString();
-
-  const [movementResult, pendingResult] = await Promise.all([
-    env.DB.prepare(`
-      SELECT mandate_id AS exchange_id, title, created_at
-      FROM mandates
-      WHERE state = "archived"
-        AND created_at >= ?
-        AND (
-          title LIKE "Mesh Exchange%"
-          OR title LIKE "Mesh Receipt%"
-        )
-      ORDER BY created_at DESC
-      LIMIT 20
-    `)
-      .bind(cutoff)
-      .all(),
-
-    env.DB.prepare(`
-      SELECT COUNT(*) AS count
-      FROM mandate_recipients r
-      JOIN mandates m ON m.mandate_id = r.mandate_id
-      WHERE m.state IN ("dispatched", "active")
-        AND m.expires_at > ?
-        AND r.acknowledged_at IS NULL
-    `)
-      .bind(generatedAt)
-      .first()
-  ]);
-
-  payload.recent_movement = (movementResult.results || []).map(record => {
-    const acknowledged = String(record.title).startsWith("Mesh Receipt");
-
-    return {
-      id: record.exchange_id,
-      kind: acknowledged ? "receipt" : "exchange",
-      title: acknowledged
-        ? "Exchange acknowledged"
-        : "Exchange dispatched",
-      occurred_at: record.created_at,
-      status: acknowledged ? "completed" : "pending"
-    };
-  });
-
-  payload.pending_acknowledgements = Number(
-    pendingResult?.count || 0
-  );
-
-  payload.attention_count = payload.pending_acknowledgements;
-
-  return Response.json(payload);
-}
 function buildMandateDraft(body, principal) {
   const title = String(body.title || "").trim();
 
@@ -2719,520 +2587,5 @@ function jsonError(error, status = 400, details = undefined) {
     {
       status
     }
-  );
-}
-
-async function handleAriadneCoreOpenAITest(request, env) {
-  const auth = authenticateRequest(request, env);
-
-  if (!auth.ok) {
-    return jsonError(auth.error, auth.status);
-  }
-
-  const principal = auth.principal;
-
-  try {
-    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
-  } catch (error) {
-    if (error instanceof AuthzError) {
-      return jsonError(error.message, error.status, error.details);
-    }
-
-    throw error;
-  }
-
-  if (!env.OPENAI_API_KEY) {
-    return Response.json(
-      { ok: false, status: 500, error: "OPENAI_API_KEY is not configured" },
-      { status: 500 }
-    );
-  }
-
-  const model = env.OPENAI_MODEL || "gpt-3.5-turbo";
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      input: "Reply with exactly: Ariadne connected."
-    })
-  });
-
-  if (!response.ok) {
-  const errorText = await response.text();
-
-  return Response.json(
-    {
-      ok: false,
-      status: response.status,
-      error: "OpenAI request failed",
-      openai_error: errorText
-    },
-    { status: 502 }
-  );
-}
-
-  const data = await response.json();
-
-  const output =
-    data.output_text ??
-    data.output?.[0]?.content?.[0]?.text ??
-    "";
-
-  return Response.json(
-    {
-      ok: true,
-      status: 200,
-      output
-    },
-    { status: 200 }
-  );
-}
-
-
-async function handleAriadneCoreIntake(request, env) {
-  const auth = authenticateRequest(request, env);
-
-  if (!auth.ok) {
-    return jsonError(auth.error, auth.status);
-  }
-
-  const principal = auth.principal;
-
-  try {
-    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
-  } catch (error) {
-    if (error instanceof AuthzError) {
-      return jsonError(error.message, error.status, error.details);
-    }
-
-    throw error;
-  }
-
-  let body;
-
-  try {
-    body = await request.json();
-  } catch {
-    return jsonError("invalid_json", 400);
-  }
-
-  const title = cleanString(body && body.title);
-  const content = cleanString(body && body.content);
-  const source = cleanString(body && body.source);
-
-  const metadata =
-    body && body.metadata && typeof body.metadata === "object"
-      ? body.metadata
-      : {};
-
-  if (!body || body.reviewFirst !== true) {
-    return jsonError("review_first_required", 400);
-  }
-
-  if (!title || !content) {
-    return jsonError("missing_required_fields", 400, {
-      required: ["title", "content"]
-    });
-  }
-
-  if (!env.OPENAI_API_KEY) {
-    return jsonError("missing_openai_api_key", 500);
-  }
-
-  const model = env.OPENAI_MODEL || "gpt-3.5-turbo";
-
-  const openaiResult = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + env.OPENAI_API_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: model,
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are Ariadne Core Intake. Return JSON only. Generate a review-first proposal. Do not mutate Obsidian. Do not move files. Do not rename files. Do not delete files. Do not claim any file or vault change occurred."
-        },
-        {
-          role: "user",
-          content:
-            "Review this intake item and return only valid JSON with exactly these keys: classification, summary, proposedDestination, proposedTags, proposedLinks, warnings.\n\n" +
-            "Rules:\n" +
-            "- classification must be a string.\n" +
-            "- summary must be a string.\n" +
-            "- proposedDestination must be a string and proposal-only.\n" +
-            "- proposedTags must be an array of strings.\n" +
-            "- proposedLinks must be an array of strings.\n" +
-            "- warnings must be an array of strings.\n" +
-            "- Do not invent unsupported facts.\n" +
-            "- Mark uncertainty in warnings.\n\n" +
-            JSON.stringify({
-              title: title,
-              content: content,
-              source: source,
-              metadata: metadata,
-              reviewFirst: true
-            })
-        }
-      ]
-    })
-  });
-
-  let openaiPayload;
-
-  try {
-    openaiPayload = await openaiResult.json();
-  } catch {
-    return jsonError("openai_invalid_json", 502);
-  }
-
-  if (!openaiResult.ok) {
-    return jsonError("openai_request_failed", 502, {
-      status: openaiResult.status,
-      details: openaiPayload
-    });
-  }
-
-  const messageContent =
-    openaiPayload &&
-    openaiPayload.choices &&
-    openaiPayload.choices[0] &&
-    openaiPayload.choices[0].message &&
-    openaiPayload.choices[0].message.content;
-
-  const proposal = parseJsonObject(messageContent);
-
-  if (!isValidAriadneIntakeProposal(proposal)) {
-    return jsonError("invalid_openai_output", 502, {
-      raw: messageContent
-    });
-  }
-
-  return jsonOk({
-    ok: true,
-    reviewFirst: true,
-    mutated: false,
-    proposal: {
-      classification: proposal.classification,
-      summary: proposal.summary,
-      proposedDestination: proposal.proposedDestination,
-      proposedTags: proposal.proposedTags,
-      proposedLinks: proposal.proposedLinks,
-      warnings: proposal.warnings
-    }
-  });
-}
-
-function cleanString(value) {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  return value.trim();
-}
-
-function parseJsonObject(value) {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-function isStringArray(value) {
-  return Array.isArray(value) && value.every(function (item) {
-    return typeof item === "string";
-  });
-}
-
-function isValidAriadneIntakeProposal(value) {
-  return (
-    value &&
-    typeof value === "object" &&
-    typeof value.classification === "string" &&
-    typeof value.summary === "string" &&
-    typeof value.proposedDestination === "string" &&
-    isStringArray(value.proposedTags) &&
-    isStringArray(value.proposedLinks) &&
-    isStringArray(value.warnings)
-  );
-}
-
-function jsonOk(payload, status) {
-  return new Response(JSON.stringify(payload), {
-    status: status || 200,
-    headers: {
-      "Content-Type": "application/json"
-    }
-  });
-}
-
-
-function handleAriadneCoreStatus(request, env) {
-  const auth = authenticateRequest(request, env);
-
-  if (!auth.ok) {
-    return jsonError(auth.error, auth.status);
-  }
-
-  const principal = auth.principal;
-
-  try {
-    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
-  } catch (error) {
-    if (error instanceof AuthzError) {
-      return jsonError(error.message, error.status, error.details);
-    }
-
-    throw error;
-  }
-
-  return jsonOk({
-    ok: true,
-    service: "ariadne.core",
-    mode: "review-first",
-    intakeEnabled: true,
-    openaiConfigured: Boolean(env.OPENAI_API_KEY),
-    openaiModel: env.OPENAI_MODEL || "gpt-3.5-turbo",
-    vaultMutationAllowed: false,
-    dashboardAuthority: "read-only",
-    requestedBy: {
-      credential_id: principal.credential_id,
-      principal_id: principal.principal_id,
-      role: principal.role
-    },
-    endpoints: [
-      "GET /api/ariadne/core/openai-test",
-      "POST /api/ariadne/core/intake",
-      "GET /api/ariadne/core/status"
-    ]
-  });
-}
-
-
-async function handleAriadneCoreLogs(request, env) {
-  const auth = authenticateRequest(request, env);
-
-  if (!auth.ok) {
-    return jsonError(auth.error, auth.status);
-  }
-
-  const principal = auth.principal;
-
-  try {
-    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
-  } catch (error) {
-    if (error instanceof AuthzError) {
-      return jsonError(error.message, error.status, error.details);
-    }
-    throw error;
-  }
-
-  const logs = [
-    {
-      event: "service_started",
-      service: "ariadne.core",
-      status: "online"
-    },
-    {
-      event: "openai",
-      configured: Boolean(env.OPENAI_API_KEY),
-      model: env.OPENAI_MODEL || "gpt-3.5-turbo"
-    },
-    {
-      event: "intake",
-      review_first: true,
-      mutation_allowed: false
-    }
-  ];
-
-  if (env.DB) {
-    try {
-      const recent = await env.DB.prepare(`
-        SELECT
-          mandate_id,
-          title,
-          created_at,
-          created_by
-        FROM mandates
-        ORDER BY created_at DESC
-        LIMIT 10
-      `).all();
-
-      logs.push({
-        event: "recent_activity",
-        records: recent.results || []
-      });
-    } catch (error) {
-      logs.push({
-        event: "database",
-        status: "unavailable",
-        error: error.message
-      });
-    }
-  }
-
-  return jsonOk({
-    ok: true,
-    service: "ariadne.core",
-    generated_at: new Date().toISOString(),
-    requested_by: principal.credential_id,
-    logs
-  });
-}
-
-
-async function handleAriadneCoreReview(request, env) {
-  const auth = authenticateRequest(request, env);
-
-  if (!auth.ok) {
-    return jsonError(auth.error, auth.status);
-  }
-
-  const principal = auth.principal;
-  requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
-
-  let body;
-
-  try {
-    body = await request.json();
-  } catch {
-    return jsonError("invalid_json", 400);
-  }
-
-  const title = cleanString(body && body.title);
-  const content = cleanString(body && body.content);
-  const currentLocation = cleanString(body && body.currentLocation);
-
-  const metadata =
-    body && body.metadata && typeof body.metadata === "object"
-      ? body.metadata
-      : {};
-
-  if (!body || body.reviewFirst !== true) {
-    return jsonError("review_first_required", 400);
-  }
-
-  if (!title || !content) {
-    return jsonError("missing_required_fields", 400, {
-      required: ["title", "content"]
-    });
-  }
-
-  if (!env.OPENAI_API_KEY) {
-    return jsonError("missing_openai_api_key", 500);
-  }
-
-  const model = env.OPENAI_MODEL || "gpt-3.5-turbo";
-
-  const openaiResult = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + env.OPENAI_API_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: model,
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are Ariadne Core Review. Return JSON only. Review existing Obsidian notes. Do not mutate, move, rename, delete, or claim any change occurred. Produce review-first recommendations only."
-        },
-        {
-          role: "user",
-          content:
-            "Review this existing note and return only valid JSON with exactly these keys: summary, quality, ambiguities, missingInformation, duplicateRisk, suggestedTags, suggestedLinks, suggestedDestination, confidence, warnings.\n\n" +
-            "Rules:\n" +
-            "- summary must be a string.\n" +
-            "- quality must be a string.\n" +
-            "- ambiguities must be an array of strings.\n" +
-            "- missingInformation must be an array of strings.\n" +
-            "- duplicateRisk must be a string.\n" +
-            "- suggestedTags must be an array of strings.\n" +
-            "- suggestedLinks must be an array of strings.\n" +
-            "- suggestedDestination must be a string.\n" +
-            "- confidence must be a number between 0 and 1.\n" +
-            "- warnings must be an array of strings.\n" +
-            "- Do not invent unsupported facts.\n\n" +
-            JSON.stringify({
-              title,
-              content,
-              currentLocation,
-              metadata,
-              reviewFirst: true
-            })
-        }
-      ]
-    })
-  });
-
-  let openaiPayload;
-
-  try {
-    openaiPayload = await openaiResult.json();
-  } catch {
-    return jsonError("openai_invalid_json", 502);
-  }
-
-  if (!openaiResult.ok) {
-    return jsonError("openai_request_failed", 502, {
-      status: openaiResult.status,
-      details: openaiPayload
-    });
-  }
-
-  const messageContent =
-    openaiPayload &&
-    openaiPayload.choices &&
-    openaiPayload.choices[0] &&
-    openaiPayload.choices[0].message &&
-    openaiPayload.choices[0].message.content;
-
-  const review = parseJsonObject(messageContent);
-
-  if (!isValidAriadneReview(review)) {
-    return jsonError("invalid_openai_output", 502, {
-      raw: messageContent
-    });
-  }
-
-  return jsonOk({
-    ok: true,
-    reviewFirst: true,
-    mutated: false,
-    review
-  });
-}
-
-function isValidAriadneReview(value) {
-  return (
-    value &&
-    typeof value === "object" &&
-    typeof value.summary === "string" &&
-    typeof value.quality === "string" &&
-    isStringArray(value.ambiguities) &&
-    isStringArray(value.missingInformation) &&
-    typeof value.duplicateRisk === "string" &&
-    isStringArray(value.suggestedTags) &&
-    isStringArray(value.suggestedLinks) &&
-    typeof value.suggestedDestination === "string" &&
-    typeof value.confidence === "number" &&
-    value.confidence >= 0 &&
-    value.confidence <= 1 &&
-    isStringArray(value.warnings)
   );
 }

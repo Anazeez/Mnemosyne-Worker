@@ -1,0 +1,129 @@
+{
+  "baseline_commit": "9fc4c5cc06b7455051ee089607f23b0835dbb269",
+  "ariadne_capability": "ariadne.core.openai_test",
+  "roles": [
+    {
+      "principal_id": "root",
+      "capabilities": [
+        "memory.read",
+        "memory.search",
+        "memory.ingest",
+        "memory.hash",
+        "skills.retrieval",
+        "history.retrieval",
+        "mandates.read",
+        "mandates.ack",
+        "mandates.draft",
+        "mandates.dispatch",
+        "exchanges.artifact.read.own",
+        "exchanges.artifact.read.any",
+        "contracts.draft",
+        "router.status",
+        "exchanges.ack",
+        "exchanges.dispatch",
+        "exchanges.reply",
+        "exchanges.inbox",
+        "exchanges.history",
+        "registry.view",
+        "ariadne.core.openai_test",
+        "dashboard.overview"
+      ],
+      "memory_domains": ["*"],
+      "receives_mandates": false
+    },
+    {
+      "principal_id": "orchestrator",
+      "capabilities": [
+        "memory.read",
+        "memory.search",
+        "skills.retrieval",
+        "mandates.read",
+        "mandates.draft",
+        "mandates.dispatch",
+        "contracts.draft",
+        "router.status",
+        "exchanges.dispatch",
+        "exchanges.inbox",
+        "exchanges.history",
+        "ariadne.core.openai_test",
+        "exchanges.artifact.read.any"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": true
+    },
+    {
+      "principal_id": "specialist",
+      "capabilities": [
+        "memory.read",
+        "memory.search",
+        "skills.retrieval",
+        "mandates.read",
+        "mandates.ack",
+        "exchanges.inbox",
+        "exchanges.ack",
+        "exchanges.reply",
+        "ariadne.core.openai_test",
+        "exchanges.artifact.read.own"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": true
+    },
+    {
+      "principal_id": "portal",
+      "capabilities": [
+        "memory.read",
+        "memory.search",
+        "skills.retrieval",
+        "exchanges.history",
+        "memory.search"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": false
+    },
+    {
+      "principal_id": "dashboard",
+      "capabilities": ["dashboard.overview"],
+      "memory_domains": [],
+      "receives_mandates": false
+    },
+    {
+      "principal_id": "inspector",
+      "capabilities": [
+        "memory.read",
+        "memory.search",
+        "skills.retrieval",
+        "history.retrieval",
+        "exchanges.history",
+        "registry.view"
+      ],
+      "memory_domains": ["knowledge", "agents", "skills", "files", "library"],
+      "receives_mandates": false
+    }
+  ],
+  "routes": [
+    ["GET", "/api/ariadne/core/openai-test"],
+    ["POST", "/api/ariadne/core/review"],
+    ["GET", "/api/ariadne/core/logs"],
+    ["GET", "/api/ariadne/core/status"],
+    ["POST", "/api/ariadne/core/intake"],
+    ["GET", "/ping"],
+    ["POST", "/hash"],
+    ["POST", "/ingest"],
+    ["POST", "/query"],
+    ["GET", "/v1/memory/self"],
+    ["POST", "/v1/memory/search"],
+    ["POST", "/v1/skills/retrieval"],
+    ["GET", "/v1/registry"],
+    ["GET", "/v1/mandates/inbox"],
+    ["POST", "/v1/mandates/:id/acknowledge"],
+    ["POST", "/v1/router/mandates/draft"],
+    ["POST", "/v1/router/mandates/dispatch"],
+    ["GET", "/v1/router/status"],
+    ["GET", "/v1/dashboard/overview"],
+    ["POST", "/v1/exchanges/dispatch"],
+    ["GET", "/v1/exchanges/inbox"],
+    ["POST", "/v1/exchanges/:id/acknowledge"],
+    ["GET", "/v1/exchanges/history"],
+    ["GET", "/v1/exchanges/:id/artifact"]
+  ]
+}

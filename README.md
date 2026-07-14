@@ -23,6 +23,15 @@
 | POST | `/hash` | ✓ | Compute SHA-256 before ingest |
 | POST | `/ingest` | ✓ | Validate + embed + upsert |
 | POST | `/query` | ✓ | Semantic search |
+| POST | `/api/ariadne/core/intake` | ✓ | Generate a review-first proposal without mutating vault content |
+
+### Ariadne intake contract
+
+`POST /api/ariadne/core/intake` accepts `title`, `content`, optional `source`
+and `metadata`, and the mandatory flag `reviewFirst: true`. A successful
+response always reports `reviewFirst: true` and `mutated: false`, and returns a
+proposal for human review. The route does not activate a binding or authorize
+any file, vault, or production-data mutation.
 
 ## Equilibrium Law
 
