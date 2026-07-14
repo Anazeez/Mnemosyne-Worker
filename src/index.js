@@ -294,6 +294,14 @@ export default {
         return handleAriadneCoreStatus();
       }
 
+      if (
+        url.pathname === "/api/ariadne/core/openai-test" &&
+        method === "GET"
+      ) {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreDiagnostic(env);
+      }
+
       if (url.pathname === "/hash" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_HASH);
         return handleHash(request);
@@ -2845,6 +2853,65 @@ function handleAriadneCoreStatus() {
     intakeEnabled: true,
     reviewEnabled: true,
     vaultMutationAllowed: false
+  });
+}
+
+async function handleAriadneCoreDiagnostic(env) {
+  if (!env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
+    return Response.json(
+      { ok: false, error: "diagnostic_unavailable" },
+      { status: 503 }
+    );
+  }
+
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL,
+        input: "Return exactly: connected"
+      })
+    });
+  } catch {
+    return Response.json(
+      { ok: false, error: "provider_unavailable" },
+      { status: 502 }
+    );
+  }
+
+  if (!response.ok) {
+    return Response.json(
+      { ok: false, error: "provider_unavailable" },
+      { status: 502 }
+    );
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return Response.json(
+      { ok: false, error: "provider_invalid_response" },
+      { status: 502 }
+    );
+  }
+
+  const output = payload?.output_text ?? payload?.output?.[0]?.content?.[0]?.text;
+  if (typeof output !== "string" || output.length === 0) {
+    return Response.json(
+      { ok: false, error: "provider_invalid_response" },
+      { status: 502 }
+    );
+  }
+
+  return Response.json({
+    ok: true,
+    code: "provider_reachable"
   });
 }
 
