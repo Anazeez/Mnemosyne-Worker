@@ -2802,7 +2802,16 @@ async function handleAriadneCoreIntake(request, env) {
   }
 
   const principal = auth.principal;
-  requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+
+  try {
+    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+  } catch (error) {
+    if (error instanceof AuthzError) {
+      return jsonError(error.message, error.status, error.details);
+    }
+
+    throw error;
+  }
 
   let body;
 
