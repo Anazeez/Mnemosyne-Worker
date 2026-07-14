@@ -361,6 +361,11 @@ export default {
         return handleRouterStatus(env, principal);
       }
 
+      if (url.pathname === "/v1/dashboard/overview" && method === "GET") {
+        requireCapability(principal, CAPABILITY.DASHBOARD_OVERVIEW);
+        return handleDashboardOverview(env);
+      }
+
       // ─── Persona Mesh Exchanges ────────────────────────────────────────────
 
       if (url.pathname === "/v1/exchanges/dispatch" && method === "POST") {
@@ -528,6 +533,20 @@ function authenticateRequest(request, env) {
     return {
       ok: true,
       principal: ARCHITECTUS_PRINCIPAL
+    };
+  }
+
+  if (env.MATRIX_DASHBOARD_KEY && authKey === env.MATRIX_DASHBOARD_KEY) {
+    return {
+      ok: true,
+      principal: {
+        credential_id: "command-center",
+        principal_id: "dashboard",
+        role: "dashboard",
+        capabilities: [...DASHBOARD_CAPABILITIES],
+        memory_domains: [],
+        receives_mandates: false
+      }
     };
   }
 
@@ -1147,6 +1166,43 @@ async function handleRouterStatus(env, principal) {
   }
 
   return Response.json(payload);
+}
+
+async function handleDashboardOverview(env) {
+  let pendingAcknowledgements = 0;
+  let recentActivityCount = 0;
+
+  if (env.DB) {
+    const now = new Date().toISOString();
+    const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+    const [pendingResult, recentResult] = await Promise.all([
+      env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM mandate_recipients r
+        JOIN mandates m ON m.mandate_id = r.mandate_id
+        WHERE m.state IN ("dispatched", "active")
+          AND m.expires_at > ?
+          AND r.acknowledged_at IS NULL
+      `).bind(now).first(),
+      env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM mandates
+        WHERE state = "archived"
+          AND created_at >= ?
+      `).bind(cutoff).first()
+    ]);
+
+    pendingAcknowledgements = Number(pendingResult?.count || 0);
+    recentActivityCount = Number(recentResult?.count || 0);
+  }
+
+  return Response.json({
+    ok: true,
+    pending_acknowledgements: pendingAcknowledgements,
+    recent_activity_count: recentActivityCount,
+    attention_count: pendingAcknowledgements
+  });
 }
 
 function buildMandateDraft(body, principal) {
