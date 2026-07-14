@@ -440,6 +440,13 @@ export default {
       return new Response("Not found", { status: 404 });
     } catch (error) {
       if (error instanceof AuthzError) {
+        if (url.pathname === "/api/ariadne/core/openai-test") {
+          return Response.json(
+            { ok: false, error: "forbidden" },
+            { status: error.status }
+          );
+        }
+
         return jsonError(error.message, error.status, error.details);
       }
 

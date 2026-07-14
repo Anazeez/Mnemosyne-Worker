@@ -96,5 +96,9 @@ test("diagnostic authorization denial is structured and precedes provider access
   ));
 
   assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    error: "forbidden"
+  });
   assert.equal(providerCalled, false);
 });
