@@ -284,6 +284,11 @@ export default {
         return handleAriadneCoreIntake(request, env);
       }
 
+      if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreReview(request, env);
+      }
+
       if (url.pathname === "/hash" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_HASH);
         return handleHash(request);
@@ -2759,6 +2764,74 @@ async function handleAriadneCoreIntake(request, env) {
   });
 }
 
+async function handleAriadneCoreReview(request, env) {
+  let body;
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("invalid_json", 400);
+  }
+
+  if (!body || body.reviewFirst !== true) {
+    return jsonError("review_first_required", 400);
+  }
+
+  const title = cleanBoundedString(body.title, 300);
+  const content = cleanBoundedString(body.content, 100_000);
+  const currentLocation = cleanBoundedString(body.currentLocation, 1_000);
+  const metadata = body.metadata && typeof body.metadata === "object"
+    ? body.metadata
+    : {};
+
+  if (!title || !content) {
+    return jsonError("missing_required_fields", 400, {
+      required: ["title", "content"]
+    });
+  }
+
+  const fields = [
+    "summary",
+    "quality",
+    "ambiguities",
+    "missingInformation",
+    "duplicateRisk",
+    "suggestedTags",
+    "suggestedLinks",
+    "suggestedDestination",
+    "confidence",
+    "warnings"
+  ];
+  const provider = await requestProviderChat(env, {
+    system:
+      "Return JSON only. Review existing content without mutating, moving, renaming, or deleting files. Do not claim any vault change occurred.",
+    input: {
+      title,
+      content,
+      currentLocation,
+      metadata,
+      reviewFirst: true
+    },
+    fields
+  });
+
+  if (!provider.ok) {
+    return jsonError(provider.error, provider.status);
+  }
+
+  const review = parseJsonObject(provider.content);
+  if (!isValidAriadneReview(review)) {
+    return jsonError("invalid_provider_output", 502);
+  }
+
+  return Response.json({
+    ok: true,
+    reviewFirst: true,
+    mutated: false,
+    review
+  });
+}
+
 async function requestProviderChat(env, { system, input, fields }) {
   if (!env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
     return { ok: false, error: "provider_unavailable", status: 503 };
@@ -2849,5 +2922,34 @@ function isValidAriadneIntakeProposal(value) {
     typeof value.proposedDestination === "string" &&
     isStringArray(value.proposedTags) &&
     isStringArray(value.proposedLinks) &&
+    isStringArray(value.warnings);
+}
+
+function isValidAriadneReview(value) {
+  const keys = [
+    "summary",
+    "quality",
+    "ambiguities",
+    "missingInformation",
+    "duplicateRisk",
+    "suggestedTags",
+    "suggestedLinks",
+    "suggestedDestination",
+    "confidence",
+    "warnings"
+  ];
+
+  return hasExactKeys(value, keys) &&
+    typeof value.summary === "string" &&
+    typeof value.quality === "string" &&
+    isStringArray(value.ambiguities) &&
+    isStringArray(value.missingInformation) &&
+    typeof value.duplicateRisk === "string" &&
+    isStringArray(value.suggestedTags) &&
+    isStringArray(value.suggestedLinks) &&
+    typeof value.suggestedDestination === "string" &&
+    typeof value.confidence === "number" &&
+    value.confidence >= 0 &&
+    value.confidence <= 1 &&
     isStringArray(value.warnings);
 }
