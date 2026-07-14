@@ -289,6 +289,11 @@ export default {
         return handleAriadneCoreReview(request, env);
       }
 
+      if (url.pathname === "/api/ariadne/core/status" && method === "GET") {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreStatus();
+      }
+
       if (url.pathname === "/hash" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_HASH);
         return handleHash(request);
@@ -2829,6 +2834,17 @@ async function handleAriadneCoreReview(request, env) {
     reviewFirst: true,
     mutated: false,
     review
+  });
+}
+
+function handleAriadneCoreStatus() {
+  return Response.json({
+    ok: true,
+    service: "ariadne.core",
+    mode: "review-first",
+    intakeEnabled: true,
+    reviewEnabled: true,
+    vaultMutationAllowed: false
   });
 }
 
