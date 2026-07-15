@@ -7,8 +7,11 @@ evidence:
   verification_method: explicit-implementation-card
 standing:
   implementation_authorized: true
-  activation_approved: false
-  deployment_approved: false
+  activation_approved: true
+  deployment_approved: true
+  deployment_condition: successful-pre-deployment-verification
+  binding_activation_approved: false
+  automatic_backfill_publication_approved: false
 missing_permission_semantics: not-an-explicit-prohibition
 relationships:
   - relationship_id: root-continuity-read
@@ -18,6 +21,13 @@ relationships:
     proposed_state: granted
     security_effect: exact continuity lookup and rehydration
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.root-continuity-read
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: root-continuity-write
     role_id: root
     capability_id: continuity.write
@@ -25,6 +35,13 @@ relationships:
     proposed_state: granted
     security_effect: checkpoint candidate creation
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.root-continuity-write
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: root-continuity-publish
     role_id: root
     capability_id: continuity.publish
@@ -32,6 +49,13 @@ relationships:
     proposed_state: granted
     security_effect: validation and atomic head publication
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.root-continuity-publish
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: root-continuity-invalidate
     role_id: root
     capability_id: continuity.invalidate
@@ -39,6 +63,13 @@ relationships:
     proposed_state: granted
     security_effect: historical invalidation and head restoration
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.root-continuity-invalidate
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: root-continuity-audit
     role_id: root
     capability_id: continuity.audit
@@ -46,6 +77,13 @@ relationships:
     proposed_state: granted
     security_effect: continuity lineage and receipt visibility
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.root-continuity-audit
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: orchestrator-continuity-read
     role_id: orchestrator
     capability_id: continuity.read
@@ -53,6 +91,13 @@ relationships:
     proposed_state: granted
     security_effect: exact continuity lookup and rehydration
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.orchestrator-continuity-read
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: orchestrator-continuity-write
     role_id: orchestrator
     capability_id: continuity.write
@@ -60,6 +105,13 @@ relationships:
     proposed_state: granted
     security_effect: checkpoint creation for authorized identities and projects
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.orchestrator-continuity-write
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: orchestrator-continuity-publish
     role_id: orchestrator
     capability_id: continuity.publish
@@ -67,6 +119,13 @@ relationships:
     proposed_state: granted
     security_effect: validated checkpoint publication without invalidation authority
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.orchestrator-continuity-publish
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: orchestrator-continuity-audit
     role_id: orchestrator
     capability_id: continuity.audit
@@ -74,6 +133,13 @@ relationships:
     proposed_state: granted
     security_effect: continuity lineage and receipt visibility
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.orchestrator-continuity-audit
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: specialist-continuity-read
     role_id: specialist
     capability_id: continuity.read
@@ -81,6 +147,13 @@ relationships:
     proposed_state: granted
     security_effect: own-identity exact continuity lookup and rehydration
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.specialist-continuity-read
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: specialist-continuity-write
     role_id: specialist
     capability_id: continuity.write
@@ -88,6 +161,13 @@ relationships:
     proposed_state: granted
     security_effect: own-identity checkpoint candidate creation without publication
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.specialist-continuity-write
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: portal-continuity-read
     role_id: portal
     capability_id: continuity.read
@@ -95,6 +175,13 @@ relationships:
     proposed_state: granted
     security_effect: bounded exact continuity lookup only
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.portal-continuity-read
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: inspector-continuity-read
     role_id: inspector
     capability_id: continuity.read
@@ -102,6 +189,13 @@ relationships:
     proposed_state: granted
     security_effect: read-only exact continuity inspection
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.inspector-continuity-read
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
   - relationship_id: inspector-continuity-audit
     role_id: inspector
     capability_id: continuity.audit
@@ -109,6 +203,13 @@ relationships:
     proposed_state: granted
     security_effect: lineage and receipt inspection without mutation
     approval_required: true
+    approval_state: approved
+    approval_id: approval.worker.inspector-continuity-audit
+    authority_identity: architectus
+    authority_basis: docs/root-registry-rule.md
+    approved_at: 2026-07-15T13:18:18Z
+    approval_scope: exact-role-capability-relationship
+    source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
 preserved_absences:
   - role_id: orchestrator
     capability_id: continuity.invalidate
