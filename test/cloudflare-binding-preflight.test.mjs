@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bindingSummary, findVersionId } from "../scripts/cloudflare-binding-preflight.mjs";
+import {
+  bindingShapeSummary,
+  bindingSummary,
+  findVersionId,
+} from "../scripts/cloudflare-binding-preflight.mjs";
 
 test("preflight extracts the version without exposing unrelated identifiers", () => {
   assert.equal(findVersionId([{ versions: [{ version_id: "version-secret" }] }]), "version-secret");
+});
+
+test("binding shape audit exposes keys but never values", () => {
+  const summary = bindingShapeSummary({ bindings: [
+    { type: "d1", name: "DB", id: "private-id" },
+  ] });
+  assert.deepEqual(summary, [{ keys: ["id", "name", "type"], name: "DB", type: "d1" }]);
+  assert.doesNotMatch(JSON.stringify(summary), /private-id/);
 });
 
 test("binding audit emits aliases and types only", () => {
