@@ -64,10 +64,10 @@ export function collectBindings(value) {
   return [...new Map(bindings.map(item => [`${item.type}:${item.name}`, item])).values()];
 }
 
-export function buildDeploymentConfig(value, { databaseId, migrationsDir }) {
+export function buildDeploymentConfig(value, { databaseId, migrationsDir, entrypoint }) {
   const config = {
     name: "mnemosyne-worker",
-    main: "src/index.js",
+    main: entrypoint,
     compatibility_date: "2024-01-01",
     vars: {},
   };
@@ -104,6 +104,7 @@ if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
     const config = buildDeploymentConfig(version, {
       databaseId: process.env.MNEMOSYNE_D1_DATABASE_ID,
       migrationsDir: `${process.env.GITHUB_WORKSPACE}/migrations`,
+      entrypoint: `${process.env.GITHUB_WORKSPACE}/src/index.js`,
     });
     await writeFile(process.argv[4], JSON.stringify(config));
   } else {
