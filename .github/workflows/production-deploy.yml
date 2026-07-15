@@ -1,0 +1,44 @@
+name: Production deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mnemosyne-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      MNEMOSYNE_D1_DATABASE_ID: ${{ secrets.MNEMOSYNE_D1_DATABASE_ID }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Verify merged Worker
+        run: node --test test/*.test.mjs
+      - name: Build binding-preserving ephemeral configuration
+        shell: bash
+        run: |
+          npx --yes wrangler@4.33.1 deployments list --json > /tmp/deployments.json
+          VERSION_ID="$(node scripts/cloudflare-binding-preflight.mjs version-id /tmp/deployments.json)"
+          npx --yes wrangler@4.33.1 versions view "$VERSION_ID" --json > /tmp/version.json
+          node scripts/cloudflare-binding-preflight.mjs build-config /tmp/version.json /tmp/wrangler.production.json
+      - name: Apply forward-only continuity migration
+        run: npx --yes wrangler@4.33.1 d1 migrations apply DB --remote --config /tmp/wrangler.production.json
+      - name: Deploy with existing bindings preserved
+        shell: bash
+        run: |
+          if ! npx --yes wrangler@4.33.1 deploy --keep-vars --config /tmp/wrangler.production.json > /tmp/deploy.log 2>&1; then
+            sed -E 's#https?://[^ ]+#<redacted-url>#g; s/[0-9a-f]{32,}/<redacted-id>/g' /tmp/deploy.log
+            exit 1
+          fi
+          echo "Worker deployment completed; identifiers withheld."
