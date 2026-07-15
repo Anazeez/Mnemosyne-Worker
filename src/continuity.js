@@ -600,3 +600,435 @@ function freshnessResult(status, ageSeconds, freshnessLimitSeconds, reason) {
     reason
   };
 }
+
+export function continuityFlagEnabled(env, name) {
+  return new Set(["1", "true", "yes", "on", "enabled"])
+    .has(String(env?.[name] ?? "").trim().toLowerCase());
+}
+
+export function assertContinuityTarget(principal, {
+  identityId,
+  projectId,
+  operation = "read"
+}) {
+  const identity = normalizeIdentityId(identityId);
+  const project = normalizeProjectId(projectId);
+  const role = principal?.principal_id || principal?.role;
+  const projectIds = Array.isArray(principal?.project_ids)
+    ? principal.project_ids
+    : [];
+
+  if (!projectIds.includes("*") && !projectIds.includes(project)) {
+    throw new ContinuityError(
+      "continuity_project_forbidden",
+      "Credential is not authorized for the requested continuity project",
+      403
+    );
+  }
+
+  const crossIdentityRole = role === "root" || role === "orchestrator";
+  if (!crossIdentityRole && principal?.credential_id !== identity) {
+    throw new ContinuityError(
+      "continuity_identity_forbidden",
+      `Credential cannot ${operation} continuity for the requested identity`,
+      403
+    );
+  }
+
+  return { identity_id: identity, project_id: project };
+}
+
+export async function createCandidateCheckpoint({
+  body,
+  env,
+  principal,
+  now = () => new Date(),
+  randomUUID = () => crypto.randomUUID()
+}) {
+  requireContinuityDatabase(env);
+
+  if (!continuityFlagEnabled(env, "CONTINUITY_WRITE_ENABLED")) {
+    throw new ContinuityError(
+      "continuity_write_disabled",
+      "Continuity writes are disabled",
+      503
+    );
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ContinuityError("invalid_request", "Checkpoint request must be an object");
+  }
+
+  const identityId = normalizeIdentityId(body.identity_id);
+  const projectId = normalizeProjectId(body.project_id);
+  const scopeKey = normalizeScopeKey(body.scope_key);
+  assertContinuityTarget(principal, {
+    identityId,
+    projectId,
+    operation: "write"
+  });
+
+  const idempotencyKey = normalizeIdempotencyKey(body.idempotency_key);
+  const existing = await env.DB
+    .prepare(SQL.GET_IDEMPOTENT)
+    .bind(principal.credential_id, idempotencyKey)
+    .first();
+
+  if (existing) {
+    if (
+      existing.identity_id !== identityId ||
+      existing.project_id !== projectId ||
+      existing.scope_key !== scopeKey
+    ) {
+      throw new ContinuityError(
+        "idempotency_scope_conflict",
+        "Idempotency key is already bound to another continuity scope",
+        409
+      );
+    }
+
+    return {
+      ok: true,
+      runway_id: existing.runway_id,
+      state: existing.state,
+      generation: existing.generation,
+      manifest_hash: existing.manifest_hash,
+      validation_status: existing.integrity_state,
+      idempotent_replay: true,
+      http_status: 200
+    };
+  }
+
+  const currentHead = await env.DB
+    .prepare(SQL.GET_HEAD)
+    .bind(identityId, projectId, scopeKey)
+    .first();
+  const expectedPredecessor = currentHead?.runway_id || null;
+  const requestedPredecessor = normalizeNullableId(
+    body.predecessor_runway_id,
+    "predecessor_runway_id"
+  );
+
+  if (requestedPredecessor !== expectedPredecessor) {
+    throw new ContinuityError(
+      "predecessor_mismatch",
+      "Checkpoint predecessor does not match the exact current head",
+      409,
+      {
+        expected_predecessor_runway_id: expectedPredecessor,
+        supplied_predecessor_runway_id: requestedPredecessor
+      }
+    );
+  }
+
+  const createdAt = now().toISOString();
+  const runwayId = `rwy_${randomUUID()}`;
+  const generation = Number(currentHead?.generation || 0) + 1;
+  const sourceInvocationId = normalizeNullableId(
+    body.source_invocation_id,
+    "source_invocation_id",
+    { required: true }
+  );
+  const sourceHashes = Array.isArray(body.source_hashes)
+    ? structuredClone(body.source_hashes)
+    : body.source_hashes;
+  const payload = {
+    ...(body.payload && typeof body.payload === "object" ? structuredClone(body.payload) : {}),
+    schema: RUNWAY_SCHEMA,
+    runway_id: runwayId,
+    identity_id: identityId,
+    project_id: projectId,
+    scope_key: scopeKey,
+    generation,
+    predecessor_runway_id: expectedPredecessor,
+    source_invocation_id: sourceInvocationId,
+    source_hashes: sourceHashes,
+    created_at: createdAt
+  };
+  const validation = await validateRunwayCandidate({
+    payload,
+    sourceHashes,
+    expectedIdentityId: identityId,
+    expectedProjectId: projectId,
+    expectedScopeKey: scopeKey
+  });
+
+  if (!validation.valid) {
+    throw new ContinuityError(
+      "checkpoint_validation_failed",
+      "Checkpoint candidate failed bounded validation",
+      422,
+      { findings: validation.errors }
+    );
+  }
+
+  const manifest = await buildRunwayManifest({ payload, sourceHashes });
+  const contextStatus = payload.context_status === "backfilled"
+    ? "backfilled"
+    : "current";
+  const summary = typeof payload.summary === "string" && payload.summary.trim()
+    ? payload.summary.trim()
+    : payload.operational_state.slice(0, CONTINUITY_LIMITS.summary_chars);
+
+  await env.DB.prepare(SQL.INSERT_RUNWAY).bind(
+    runwayId,
+    RUNWAY_SCHEMA,
+    identityId,
+    projectId,
+    scopeKey,
+    expectedPredecessor,
+    sourceInvocationId,
+    generation,
+    "candidate",
+    contextStatus,
+    payload.objective,
+    summary,
+    canonicalJson(payload),
+    manifest.manifest_hash,
+    canonicalJson(sourceHashes),
+    "candidate_validated",
+    validation.completeness_score,
+    principal.credential_id,
+    idempotencyKey,
+    null,
+    "not_required",
+    createdAt
+  ).run();
+
+  return {
+    ok: true,
+    runway_id: runwayId,
+    state: "candidate",
+    generation,
+    manifest_hash: manifest.manifest_hash,
+    validation_status: "candidate_validated",
+    idempotent_replay: false,
+    http_status: 201
+  };
+}
+
+export async function validateCandidateCheckpoint({
+  runwayId,
+  env,
+  principal,
+  now = () => new Date(),
+  randomUUID = () => crypto.randomUUID()
+}) {
+  requireContinuityDatabase(env);
+
+  if (!continuityFlagEnabled(env, "CONTINUITY_WRITE_ENABLED")) {
+    throw new ContinuityError(
+      "continuity_write_disabled",
+      "Continuity validation is disabled",
+      503
+    );
+  }
+
+  const normalizedRunwayId = normalizeNullableId(runwayId, "runway_id", {
+    required: true
+  });
+  const row = await env.DB.prepare(SQL.GET_RUNWAY)
+    .bind(normalizedRunwayId)
+    .first();
+
+  if (!row) {
+    throw new ContinuityError("runway_not_found", "Checkpoint does not exist", 404);
+  }
+
+  assertContinuityTarget(principal, {
+    identityId: row.identity_id,
+    projectId: row.project_id,
+    operation: "validate"
+  });
+
+  const payload = parseStoredJson(row.payload_json, "payload_json");
+  const sourceHashes = parseStoredJson(row.source_hashes_json, "source_hashes_json");
+  const validation = await validateRunwayCandidate({
+    payload,
+    sourceHashes,
+    expectedIdentityId: row.identity_id,
+    expectedProjectId: row.project_id,
+    expectedScopeKey: row.scope_key
+  });
+  const errors = [...validation.errors];
+  const warnings = [...validation.warnings];
+  const manifest = await buildRunwayManifest({ payload, sourceHashes });
+
+  if (manifest.manifest_hash !== row.manifest_hash) {
+    errors.push(finding(
+      "MANIFEST_HASH_MISMATCH",
+      "Stored checkpoint manifest hash does not match canonical content"
+    ));
+  }
+
+  if (row.predecessor_runway_id) {
+    const predecessor = await env.DB.prepare(SQL.GET_RUNWAY)
+      .bind(row.predecessor_runway_id)
+      .first();
+
+    if (!predecessor) {
+      errors.push(finding("INVALID_PREDECESSOR", "Checkpoint predecessor is unavailable"));
+    } else if (
+      predecessor.identity_id !== row.identity_id ||
+      predecessor.project_id !== row.project_id ||
+      predecessor.scope_key !== row.scope_key ||
+      Number(predecessor.generation) + 1 !== Number(row.generation)
+    ) {
+      errors.push(finding(
+        "INVALID_PREDECESSOR_LINEAGE",
+        "Checkpoint predecessor does not preserve exact tuple lineage"
+      ));
+    }
+  } else if (Number(row.generation) !== 1) {
+    errors.push(finding(
+      "INVALID_GENESIS_GENERATION",
+      "A checkpoint without a predecessor must be generation 1"
+    ));
+  }
+
+  const quarantined = errors.some(error => new Set([
+    "MANIFEST_HASH_MISMATCH",
+    "INVALID_PREDECESSOR",
+    "INVALID_PREDECESSOR_LINEAGE",
+    "PROHIBITED_SECRET_CONTENT",
+    "INVALID_SOURCE_HASH"
+  ]).has(error.code));
+  const status = errors.length === 0
+    ? "passed"
+    : quarantined ? "quarantined" : "failed";
+  const runwayState = status === "passed"
+    ? "validated"
+    : status === "quarantined" ? "quarantined" : "rejected";
+  const createdAt = now().toISOString();
+  const validationId = `val_${randomUUID()}`;
+  const receiptBody = {
+    validation_id: validationId,
+    runway_id: row.runway_id,
+    validator_credential_id: principal.credential_id,
+    status,
+    errors,
+    warnings,
+    completeness_score: validation.completeness_score,
+    created_at: createdAt
+  };
+  const receiptHash = await sha256Hex(canonicalJson(receiptBody));
+
+  await env.DB.batch([
+    env.DB.prepare(SQL.INSERT_VALIDATION).bind(
+      validationId,
+      row.runway_id,
+      principal.credential_id,
+      status,
+      canonicalJson(errors),
+      canonicalJson(warnings),
+      validation.completeness_score,
+      receiptHash,
+      createdAt
+    ),
+    env.DB.prepare(SQL.SET_RUNWAY_VALIDATION_STATE).bind(
+      runwayState,
+      status === "passed" ? "verified" : status,
+      validation.completeness_score,
+      createdAt,
+      row.runway_id
+    )
+  ]);
+
+  return {
+    ok: status === "passed",
+    validation_id: validationId,
+    runway_id: row.runway_id,
+    status,
+    errors,
+    warnings,
+    completeness_score: validation.completeness_score,
+    receipt_hash: receiptHash,
+    state: runwayState
+  };
+}
+
+function requireContinuityDatabase(env) {
+  if (!env?.DB || typeof env.DB.prepare !== "function") {
+    throw new ContinuityError(
+      "continuity_database_unavailable",
+      "D1 continuity storage is unavailable",
+      503
+    );
+  }
+}
+
+function normalizeIdempotencyKey(value) {
+  const key = String(value ?? "").trim();
+
+  if (key.length < 8 || key.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(key)) {
+    throw new ContinuityError(
+      "invalid_idempotency_key",
+      "idempotency_key must be 8-128 bounded characters"
+    );
+  }
+
+  return key;
+}
+
+function normalizeNullableId(value, field, { required = false } = {}) {
+  if (value === null || value === undefined || value === "") {
+    if (required) {
+      throw new ContinuityError(
+        `invalid_${field}`,
+        `${field} is required`
+      );
+    }
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  if (normalized.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
+    throw new ContinuityError(
+      `invalid_${field}`,
+      `${field} has an invalid bounded identifier format`
+    );
+  }
+
+  return normalized;
+}
+
+function parseStoredJson(value, field) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new ContinuityError(
+      "stored_checkpoint_malformed",
+      `Stored ${field} is not valid JSON`,
+      500
+    );
+  }
+}
+
+const SQL = Object.freeze({
+  GET_HEAD: `/* continuity:get-head */
+    SELECT * FROM context_runway_heads
+     WHERE identity_id = ? AND project_id = ? AND scope_key = ?`,
+  GET_RUNWAY: `/* continuity:get-runway */
+    SELECT * FROM context_runways WHERE runway_id = ?`,
+  GET_IDEMPOTENT: `/* continuity:get-idempotent */
+    SELECT * FROM context_runways
+     WHERE created_by_credential_id = ? AND idempotency_key = ?`,
+  INSERT_RUNWAY: `/* continuity:insert-runway */
+    INSERT INTO context_runways (
+      runway_id, schema_version, identity_id, project_id, scope_key,
+      predecessor_runway_id, source_invocation_id, generation, state,
+      context_status, objective, summary, payload_json, manifest_hash,
+      source_hashes_json, integrity_state, completeness_score,
+      created_by_credential_id, idempotency_key, portable_artifact_ref,
+      indexing_state, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  INSERT_VALIDATION: `/* continuity:insert-validation */
+    INSERT INTO context_runway_validations (
+      validation_id, runway_id, validator_credential_id, status,
+      errors_json, warnings_json, completeness_score, receipt_hash, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  SET_RUNWAY_VALIDATION_STATE: `/* continuity:set-runway-validation-state */
+    UPDATE context_runways
+       SET state = ?, integrity_state = ?, completeness_score = ?, validated_at = ?
+     WHERE runway_id = ?`
+});

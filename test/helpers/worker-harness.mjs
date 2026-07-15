@@ -1,13 +1,8 @@
-import { readFile } from "node:fs/promises";
-
 let workerPromise;
 
 export function loadWorker() {
   if (!workerPromise) {
-    workerPromise = readFile(new URL("../../src/index.js", import.meta.url), "utf8")
-      .then(source => import(
-        `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
-      ))
+    workerPromise = import(new URL("../../src/index.js", import.meta.url))
       .then(module => module.default);
   }
 

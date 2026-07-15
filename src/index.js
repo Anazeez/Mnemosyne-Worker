@@ -1,3 +1,9 @@
+import {
+  ContinuityError,
+  createCandidateCheckpoint,
+  validateCandidateCheckpoint
+} from "./continuity.js";
+
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
  * ─────────────────────────────────────────────────────────────────────────────
@@ -368,6 +374,45 @@ export default {
         return handleRegistryView(principal);
       }
 
+      if (url.pathname === "/v1/continuity/checkpoints" && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_WRITE);
+
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          return jsonError("Invalid JSON body", 400);
+        }
+
+        const result = await createCandidateCheckpoint({
+          body,
+          env,
+          principal
+        });
+        const { http_status, ...payload } = result;
+        return Response.json(payload, { status: http_status });
+      }
+
+      const continuityValidationMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/validate$/
+      );
+
+      if (continuityValidationMatch && method === "POST") {
+        requireAnyCapability(principal, [
+          CAPABILITY.CONTINUITY_PUBLISH,
+          CAPABILITY.CONTINUITY_AUDIT
+        ]);
+
+        const result = await validateCandidateCheckpoint({
+          runwayId: continuityValidationMatch[1],
+          env,
+          principal
+        });
+        return Response.json(result, {
+          status: result.status === "passed" ? 200 : 422
+        });
+      }
+
       if (url.pathname === "/v1/mandates/inbox" && method === "GET") {
         requireCapability(principal, CAPABILITY.MANDATES_READ);
         return handleMandateInbox(env, principal);
@@ -460,6 +505,17 @@ export default {
 
       return new Response("Not found", { status: 404 });
     } catch (error) {
+      if (error instanceof ContinuityError) {
+        return Response.json(
+          {
+            ok: false,
+            error: error.code,
+            ...(error.details === undefined ? {} : { details: error.details })
+          },
+          { status: error.status }
+        );
+      }
+
       if (error instanceof AuthzError) {
         if (url.pathname === "/api/ariadne/core/openai-test") {
           return Response.json(
