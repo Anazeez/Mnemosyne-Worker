@@ -3,11 +3,36 @@ import test from "node:test";
 import {
   bindingShapeSummary,
   bindingSummary,
+  buildDeploymentConfig,
   findVersionId,
 } from "../scripts/cloudflare-binding-preflight.mjs";
 
 test("preflight extracts the version without exposing unrelated identifiers", () => {
   assert.equal(findVersionId([{ versions: [{ version_id: "version-secret" }] }]), "version-secret");
+});
+
+test("deployment config preserves every supported non-secret live binding", () => {
+  const config = buildDeploymentConfig({ bindings: [
+    { type: "d1", name: "DB", id: "old" },
+    { type: "kv_namespace", name: "KV_MATRIX", namespace_id: "kv" },
+    { type: "durable_object_namespace", name: "AL_ARM3", class_name: "Alarm", script_name: "alarm-worker" },
+    { type: "queue", name: "QUEUE", queue_name: "queue" },
+    { type: "r2_bucket", name: "R2", bucket_name: "bucket" },
+    { type: "secrets_store_secret", name: "STORE", store_id: "store", secret_name: "secret" },
+    { type: "send_email", name: "MAIL" },
+    { type: "vectorize", name: "INDEX", index_name: "index" },
+    { type: "ai", name: "AI" },
+    { type: "plain_text", name: "FLAG", text: "on" },
+    { type: "json", name: "POLICY", json: { root: true } },
+    { type: "secret_text", name: "TOKEN" },
+  ] }, { databaseId: "new-db", migrationsDir: "/workspace/migrations" });
+  assert.equal(config.d1_databases[0].database_id, "new-db");
+  assert.equal(config.kv_namespaces[0].id, "kv");
+  assert.equal(config.durable_objects.bindings[0].script_name, "alarm-worker");
+  assert.equal(config.secrets_store_secrets[0].store_id, "store");
+  assert.equal(config.vars.FLAG, "on");
+  assert.deepEqual(config.vars.POLICY, { root: true });
+  assert.doesNotMatch(JSON.stringify(config), /TOKEN/);
 });
 
 test("binding shape audit exposes keys but never values", () => {
