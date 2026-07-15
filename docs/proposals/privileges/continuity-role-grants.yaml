@@ -1,0 +1,144 @@
+schema: mnemosyne.role-capability-proposals/1.0
+proposal_id: mnem-continuity-002-role-grants
+evidence:
+  classification: proposed
+  implementation_baseline_commit: 00cd709589bdc1230b79a04b5108feed2aedef39
+  authority_basis: MNEM-CONTINUITY-002
+  verification_method: explicit-implementation-card
+standing:
+  implementation_authorized: true
+  activation_approved: false
+  deployment_approved: false
+missing_permission_semantics: not-an-explicit-prohibition
+relationships:
+  - relationship_id: root-continuity-read
+    role_id: root
+    capability_id: continuity.read
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: exact continuity lookup and rehydration
+    approval_required: true
+  - relationship_id: root-continuity-write
+    role_id: root
+    capability_id: continuity.write
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: checkpoint candidate creation
+    approval_required: true
+  - relationship_id: root-continuity-publish
+    role_id: root
+    capability_id: continuity.publish
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: validation and atomic head publication
+    approval_required: true
+  - relationship_id: root-continuity-invalidate
+    role_id: root
+    capability_id: continuity.invalidate
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: historical invalidation and head restoration
+    approval_required: true
+  - relationship_id: root-continuity-audit
+    role_id: root
+    capability_id: continuity.audit
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: continuity lineage and receipt visibility
+    approval_required: true
+  - relationship_id: orchestrator-continuity-read
+    role_id: orchestrator
+    capability_id: continuity.read
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: exact continuity lookup and rehydration
+    approval_required: true
+  - relationship_id: orchestrator-continuity-write
+    role_id: orchestrator
+    capability_id: continuity.write
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: checkpoint creation for authorized identities and projects
+    approval_required: true
+  - relationship_id: orchestrator-continuity-publish
+    role_id: orchestrator
+    capability_id: continuity.publish
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: validated checkpoint publication without invalidation authority
+    approval_required: true
+  - relationship_id: orchestrator-continuity-audit
+    role_id: orchestrator
+    capability_id: continuity.audit
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: continuity lineage and receipt visibility
+    approval_required: true
+  - relationship_id: specialist-continuity-read
+    role_id: specialist
+    capability_id: continuity.read
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: own-identity exact continuity lookup and rehydration
+    approval_required: true
+  - relationship_id: specialist-continuity-write
+    role_id: specialist
+    capability_id: continuity.write
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: own-identity checkpoint candidate creation without publication
+    approval_required: true
+  - relationship_id: portal-continuity-read
+    role_id: portal
+    capability_id: continuity.read
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: bounded exact continuity lookup only
+    approval_required: true
+  - relationship_id: inspector-continuity-read
+    role_id: inspector
+    capability_id: continuity.read
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: read-only exact continuity inspection
+    approval_required: true
+  - relationship_id: inspector-continuity-audit
+    role_id: inspector
+    capability_id: continuity.audit
+    baseline_state: absent
+    proposed_state: granted
+    security_effect: lineage and receipt inspection without mutation
+    approval_required: true
+preserved_absences:
+  - role_id: orchestrator
+    capability_id: continuity.invalidate
+  - role_id: specialist
+    capability_id: continuity.publish
+  - role_id: specialist
+    capability_id: continuity.invalidate
+  - role_id: specialist
+    capability_id: continuity.audit
+  - role_id: portal
+    capability_id: continuity.write
+  - role_id: portal
+    capability_id: continuity.publish
+  - role_id: portal
+    capability_id: continuity.invalidate
+  - role_id: portal
+    capability_id: continuity.audit
+  - role_id: dashboard
+    capability_id: continuity.read
+  - role_id: dashboard
+    capability_id: continuity.write
+  - role_id: dashboard
+    capability_id: continuity.publish
+  - role_id: dashboard
+    capability_id: continuity.invalidate
+  - role_id: dashboard
+    capability_id: continuity.audit
+  - role_id: inspector
+    capability_id: continuity.write
+  - role_id: inspector
+    capability_id: continuity.publish
+  - role_id: inspector
+    capability_id: continuity.invalidate

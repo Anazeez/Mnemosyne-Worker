@@ -56,11 +56,18 @@ test("effective capability policy differs from main only by declared proposals",
   assert.equal(fixture.missing_permission_semantics, "not-an-explicit-prohibition");
 });
 
-test("unchanged roles retain the exact main capability arrays", async () => {
+test("every role preserves its complete main capability array", async () => {
   const actualByRole = new Map((await effectiveRoles()).map(role => [role.principal_id, role]));
   const baselineByRole = new Map(fixture.roles.map(role => [role.principal_id, role]));
 
-  for (const role of ["portal", "inspector"]) {
-    assert.deepEqual(actualByRole.get(role), baselineByRole.get(role));
+  for (const [role, baseline] of baselineByRole) {
+    const actual = actualByRole.get(role);
+    for (const capability of baseline.capabilities) {
+      assert.equal(
+        actual.capabilities.includes(capability),
+        true,
+        `${role} lost ${capability}`
+      );
+    }
   }
 });

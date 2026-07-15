@@ -102,7 +102,13 @@ const CAPABILITY = Object.freeze({
 
   REGISTRY_VIEW: "registry.view",
   ARIADNE_CORE_OPENAI_TEST: "ariadne.core.openai_test",
-  DASHBOARD_OVERVIEW: "dashboard.overview"
+  DASHBOARD_OVERVIEW: "dashboard.overview",
+
+  CONTINUITY_READ: "continuity.read",
+  CONTINUITY_WRITE: "continuity.write",
+  CONTINUITY_PUBLISH: "continuity.publish",
+  CONTINUITY_INVALIDATE: "continuity.invalidate",
+  CONTINUITY_AUDIT: "continuity.audit"
 });
 
 const READ_ONLY_MEMORY = Object.freeze([
@@ -138,7 +144,12 @@ const BASELINE_ROOT_CAPABILITIES = Object.freeze([
 const ROOT_CAPABILITIES = Object.freeze([
   ...BASELINE_ROOT_CAPABILITIES,
   CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
-  CAPABILITY.DASHBOARD_OVERVIEW
+  CAPABILITY.DASHBOARD_OVERVIEW,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_WRITE,
+  CAPABILITY.CONTINUITY_PUBLISH,
+  CAPABILITY.CONTINUITY_INVALIDATE,
+  CAPABILITY.CONTINUITY_AUDIT
 ]);
 
 // Specialist GPTs: read-only memory, skills, mandates, their own exchange inbox,
@@ -152,7 +163,9 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_ACK,
   CAPABILITY.EXCHANGES_REPLY,
   CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
-  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_WRITE
 ]);
 
 // Portal GPTs: observation only. No inbox, dispatch, mandates, skills, or router.
@@ -160,7 +173,8 @@ const PORTAL_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
   CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.MEMORY_SEARCH
+  CAPABILITY.MEMORY_SEARCH,
+  CAPABILITY.CONTINUITY_READ
 ]);
 
 // Orchestrators: operational coordination without memory ingest/hash authority.
@@ -176,7 +190,11 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
   CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
-  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_WRITE,
+  CAPABILITY.CONTINUITY_PUBLISH,
+  CAPABILITY.CONTINUITY_AUDIT
 ]);
 
 // Inspector is deliberately non-mutating until dedicated audit/repository routes
@@ -186,7 +204,9 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.HISTORY_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.REGISTRY_VIEW
+  CAPABILITY.REGISTRY_VIEW,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_AUDIT
 ]);
 
 const DASHBOARD_CAPABILITIES = Object.freeze([
@@ -237,6 +257,7 @@ const ARCHITECTUS_PRINCIPAL = Object.freeze({
   role: "root",
   capabilities: ROOT_CAPABILITIES,
   memory_domains: Object.freeze(["*"]),
+  project_ids: Object.freeze(["*"]),
   receives_mandates: false
 });
 
@@ -575,6 +596,7 @@ function authenticateRequest(request, env) {
         role: "dashboard",
         capabilities: [...DASHBOARD_CAPABILITIES],
         memory_domains: [],
+        project_ids: [],
         receives_mandates: false
       }
     };
@@ -699,8 +721,22 @@ function resolveCredentialPrincipal(record) {
     role,
     capabilities: [...policy.capabilities],
     memory_domains: memoryDomains,
+    project_ids: resolveEffectiveProjectIds(record),
     receives_mandates: Boolean(policy.receives_mandates)
   };
+}
+
+function resolveEffectiveProjectIds(record) {
+  const projects = normalizeStringList(
+    record.project_ids ||
+    record.projects ||
+    record.allowed_projects
+  );
+  const normalized = projects
+    .map(project => project.toLowerCase())
+    .filter(project => /^[a-z0-9][a-z0-9._-]{1,63}$/.test(project));
+
+  return [...new Set(normalized)];
 }
 
 function resolveEffectiveMemoryDomains(record, policy) {
@@ -856,7 +892,8 @@ function handleMemorySelf(principal) {
     role: principal.role,
     class: principal.role,
     capabilities: principal.capabilities,
-    memory_domains: allowedDomains(principal)
+    memory_domains: allowedDomains(principal),
+    project_ids: [...(principal.project_ids || [])]
   });
 }
 
