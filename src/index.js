@@ -100,7 +100,9 @@ const CAPABILITY = Object.freeze({
   EXCHANGES_INBOX: "exchanges.inbox",
   EXCHANGES_HISTORY: "exchanges.history",
 
-  REGISTRY_VIEW: "registry.view"
+  REGISTRY_VIEW: "registry.view",
+  ARIADNE_CORE_OPENAI_TEST: "ariadne.core.openai_test",
+  DASHBOARD_OVERVIEW: "dashboard.overview"
 });
 
 const READ_ONLY_MEMORY = Object.freeze([
@@ -108,9 +110,36 @@ const READ_ONLY_MEMORY = Object.freeze([
   CAPABILITY.MEMORY_SEARCH
 ]);
 
-const ALL_CAPABILITIES = Object.freeze(
-  Object.values(CAPABILITY)
-);
+const BASELINE_ROOT_CAPABILITIES = Object.freeze([
+  CAPABILITY.MEMORY_READ,
+  CAPABILITY.MEMORY_SEARCH,
+  CAPABILITY.MEMORY_INGEST,
+  CAPABILITY.MEMORY_HASH,
+  CAPABILITY.SKILLS_RETRIEVAL,
+  CAPABILITY.HISTORY_RETRIEVAL,
+  CAPABILITY.MANDATES_READ,
+  CAPABILITY.MANDATES_ACK,
+  CAPABILITY.MANDATES_DRAFT,
+  CAPABILITY.MANDATES_DISPATCH,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY,
+  CAPABILITY.CONTRACTS_DRAFT,
+  CAPABILITY.ROUTER_STATUS,
+  CAPABILITY.EXCHANGES_ACK,
+  CAPABILITY.EXCHANGES_DISPATCH,
+  CAPABILITY.EXCHANGES_REPLY,
+  CAPABILITY.EXCHANGES_INBOX,
+  CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.REGISTRY_VIEW
+]);
+
+// Proposed grants are explicit so adding a capability identifier cannot
+// silently expand root authority through Object.values(CAPABILITY).
+const ROOT_CAPABILITIES = Object.freeze([
+  ...BASELINE_ROOT_CAPABILITIES,
+  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
+  CAPABILITY.DASHBOARD_OVERVIEW
+]);
 
 // Specialist GPTs: read-only memory, skills, mandates, their own exchange inbox,
 // and exchange artifacts specifically addressed to their credential identity.
@@ -122,6 +151,7 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_ACK,
   CAPABILITY.EXCHANGES_REPLY,
+  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN
 ]);
 
@@ -145,6 +175,7 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
+  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
 ]);
 
@@ -158,9 +189,13 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.REGISTRY_VIEW
 ]);
 
+const DASHBOARD_CAPABILITIES = Object.freeze([
+  CAPABILITY.DASHBOARD_OVERVIEW
+]);
+
 const ROLE_POLICIES = Object.freeze({
   root: Object.freeze({
-    capabilities: ALL_CAPABILITIES,
+    capabilities: ROOT_CAPABILITIES,
     memory_domains: ["*"],
     receives_mandates: false
   }),
@@ -183,6 +218,12 @@ const ROLE_POLICIES = Object.freeze({
     receives_mandates: false
   }),
 
+  dashboard: Object.freeze({
+    capabilities: DASHBOARD_CAPABILITIES,
+    memory_domains: [],
+    receives_mandates: false
+  }),
+
   inspector: Object.freeze({
     capabilities: INSPECTOR_CAPABILITIES,
     memory_domains: ["knowledge", "agents", "skills", "files", "library"],
@@ -194,7 +235,7 @@ const ARCHITECTUS_PRINCIPAL = Object.freeze({
   credential_id: "architectus",
   principal_id: "root",
   role: "root",
-  capabilities: ALL_CAPABILITIES,
+  capabilities: ROOT_CAPABILITIES,
   memory_domains: Object.freeze(["*"]),
   receives_mandates: false
 });
@@ -238,6 +279,29 @@ export default {
     const principal = auth.principal;
 
     try {
+      if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreIntake(request, env);
+      }
+
+      if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreReview(request, env);
+      }
+
+      if (url.pathname === "/api/ariadne/core/status" && method === "GET") {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreStatus();
+      }
+
+      if (
+        url.pathname === "/api/ariadne/core/openai-test" &&
+        method === "GET"
+      ) {
+        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        return handleAriadneCoreDiagnostic(env);
+      }
+
       if (url.pathname === "/hash" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_HASH);
         return handleHash(request);
@@ -320,6 +384,11 @@ export default {
         return handleRouterStatus(env, principal);
       }
 
+      if (url.pathname === "/v1/dashboard/overview" && method === "GET") {
+        requireCapability(principal, CAPABILITY.DASHBOARD_OVERVIEW);
+        return handleDashboardOverview(env);
+      }
+
       // ─── Persona Mesh Exchanges ────────────────────────────────────────────
 
       if (url.pathname === "/v1/exchanges/dispatch" && method === "POST") {
@@ -371,6 +440,13 @@ export default {
       return new Response("Not found", { status: 404 });
     } catch (error) {
       if (error instanceof AuthzError) {
+        if (url.pathname === "/api/ariadne/core/openai-test") {
+          return Response.json(
+            { ok: false, error: "forbidden" },
+            { status: error.status }
+          );
+        }
+
         return jsonError(error.message, error.status, error.details);
       }
 
@@ -490,6 +566,20 @@ function authenticateRequest(request, env) {
     };
   }
 
+  if (env.MATRIX_DASHBOARD_KEY && authKey === env.MATRIX_DASHBOARD_KEY) {
+    return {
+      ok: true,
+      principal: {
+        credential_id: "command-center",
+        principal_id: "dashboard",
+        role: "dashboard",
+        capabilities: [...DASHBOARD_CAPABILITIES],
+        memory_domains: [],
+        receives_mandates: false
+      }
+    };
+  }
+
   const principal = principalFromScopedKey(authKey, env);
 
   if (!principal) {
@@ -592,7 +682,11 @@ function resolveCredentialPrincipal(record) {
   const policy = ROLE_POLICIES[role];
   const memoryDomains = resolveEffectiveMemoryDomains(record, policy);
 
-  if (memoryDomains.length === 0) {
+  const requiresMemoryDomain =
+    policy.capabilities.includes(CAPABILITY.MEMORY_READ) ||
+    policy.capabilities.includes(CAPABILITY.MEMORY_SEARCH);
+
+  if (requiresMemoryDomain && memoryDomains.length === 0) {
     console.warn(
       `Rejected credential ${credentialId}: no permitted memory domains after policy intersection`
     );
@@ -1102,6 +1196,43 @@ async function handleRouterStatus(env, principal) {
   }
 
   return Response.json(payload);
+}
+
+async function handleDashboardOverview(env) {
+  let pendingAcknowledgements = 0;
+  let recentActivityCount = 0;
+
+  if (env.DB) {
+    const now = new Date().toISOString();
+    const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+    const [pendingResult, recentResult] = await Promise.all([
+      env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM mandate_recipients r
+        JOIN mandates m ON m.mandate_id = r.mandate_id
+        WHERE m.state IN ("dispatched", "active")
+          AND m.expires_at > ?
+          AND r.acknowledged_at IS NULL
+      `).bind(now).first(),
+      env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM mandates
+        WHERE state = "archived"
+          AND created_at >= ?
+      `).bind(cutoff).first()
+    ]);
+
+    pendingAcknowledgements = Number(pendingResult?.count || 0);
+    recentActivityCount = Number(recentResult?.count || 0);
+  }
+
+  return Response.json({
+    ok: true,
+    pending_acknowledgements: pendingAcknowledgements,
+    recent_activity_count: recentActivityCount,
+    attention_count: pendingAcknowledgements
+  });
 }
 
 function buildMandateDraft(body, principal) {
@@ -2588,4 +2719,327 @@ function jsonError(error, status = 400, details = undefined) {
       status
     }
   );
+}
+
+async function handleAriadneCoreIntake(request, env) {
+  let body;
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("invalid_json", 400);
+  }
+
+  if (!body || body.reviewFirst !== true) {
+    return jsonError("review_first_required", 400);
+  }
+
+  const title = cleanBoundedString(body.title, 300);
+  const content = cleanBoundedString(body.content, 100_000);
+  const source = cleanBoundedString(body.source, 200);
+  const metadata = body.metadata && typeof body.metadata === "object"
+    ? body.metadata
+    : {};
+
+  if (!title || !content) {
+    return jsonError("missing_required_fields", 400, {
+      required: ["title", "content"]
+    });
+  }
+
+  const provider = await requestProviderChat(env, {
+    system:
+      "Return JSON only. Produce a review-first proposal. Do not mutate, move, rename, or delete files. Do not claim any vault change occurred.",
+    input: {
+      title,
+      content,
+      source,
+      metadata,
+      reviewFirst: true
+    },
+    fields: [
+      "classification",
+      "summary",
+      "proposedDestination",
+      "proposedTags",
+      "proposedLinks",
+      "warnings"
+    ]
+  });
+
+  if (!provider.ok) {
+    return jsonError(provider.error, provider.status);
+  }
+
+  const proposal = parseJsonObject(provider.content);
+  if (!isValidAriadneIntakeProposal(proposal)) {
+    return jsonError("invalid_provider_output", 502);
+  }
+
+  return Response.json({
+    ok: true,
+    reviewFirst: true,
+    mutated: false,
+    proposal
+  });
+}
+
+async function handleAriadneCoreReview(request, env) {
+  let body;
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("invalid_json", 400);
+  }
+
+  if (!body || body.reviewFirst !== true) {
+    return jsonError("review_first_required", 400);
+  }
+
+  const title = cleanBoundedString(body.title, 300);
+  const content = cleanBoundedString(body.content, 100_000);
+  const currentLocation = cleanBoundedString(body.currentLocation, 1_000);
+  const metadata = body.metadata && typeof body.metadata === "object"
+    ? body.metadata
+    : {};
+
+  if (!title || !content) {
+    return jsonError("missing_required_fields", 400, {
+      required: ["title", "content"]
+    });
+  }
+
+  const fields = [
+    "summary",
+    "quality",
+    "ambiguities",
+    "missingInformation",
+    "duplicateRisk",
+    "suggestedTags",
+    "suggestedLinks",
+    "suggestedDestination",
+    "confidence",
+    "warnings"
+  ];
+  const provider = await requestProviderChat(env, {
+    system:
+      "Return JSON only. Review existing content without mutating, moving, renaming, or deleting files. Do not claim any vault change occurred.",
+    input: {
+      title,
+      content,
+      currentLocation,
+      metadata,
+      reviewFirst: true
+    },
+    fields
+  });
+
+  if (!provider.ok) {
+    return jsonError(provider.error, provider.status);
+  }
+
+  const review = parseJsonObject(provider.content);
+  if (!isValidAriadneReview(review)) {
+    return jsonError("invalid_provider_output", 502);
+  }
+
+  return Response.json({
+    ok: true,
+    reviewFirst: true,
+    mutated: false,
+    review
+  });
+}
+
+function handleAriadneCoreStatus() {
+  return Response.json({
+    ok: true,
+    service: "ariadne.core",
+    mode: "review-first",
+    intakeEnabled: true,
+    reviewEnabled: true,
+    vaultMutationAllowed: false
+  });
+}
+
+async function handleAriadneCoreDiagnostic(env) {
+  if (!env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
+    return Response.json(
+      { ok: false, error: "diagnostic_unavailable" },
+      { status: 503 }
+    );
+  }
+
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL,
+        input: "Return exactly: connected"
+      })
+    });
+  } catch {
+    return Response.json(
+      { ok: false, error: "provider_unavailable" },
+      { status: 502 }
+    );
+  }
+
+  if (!response.ok) {
+    return Response.json(
+      { ok: false, error: "provider_unavailable" },
+      { status: 502 }
+    );
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return Response.json(
+      { ok: false, error: "provider_invalid_response" },
+      { status: 502 }
+    );
+  }
+
+  const output = payload?.output_text ?? payload?.output?.[0]?.content?.[0]?.text;
+  if (typeof output !== "string" || output.length === 0) {
+    return Response.json(
+      { ok: false, error: "provider_invalid_response" },
+      { status: 502 }
+    );
+  }
+
+  return Response.json({
+    ok: true,
+    code: "provider_reachable"
+  });
+}
+
+async function requestProviderChat(env, { system, input, fields }) {
+  if (!env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
+    return { ok: false, error: "provider_unavailable", status: 503 };
+  }
+
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: `Return exactly these JSON fields: ${fields.join(", ")}.\n\n${JSON.stringify(input)}`
+          }
+        ]
+      })
+    });
+  } catch {
+    return { ok: false, error: "provider_unavailable", status: 502 };
+  }
+
+  if (!response.ok) {
+    return { ok: false, error: "provider_unavailable", status: 502 };
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, error: "invalid_provider_response", status: 502 };
+  }
+
+  const content = payload?.choices?.[0]?.message?.content;
+  return typeof content === "string"
+    ? { ok: true, content }
+    : { ok: false, error: "invalid_provider_response", status: 502 };
+}
+
+function cleanBoundedString(value, maximumLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().slice(0, maximumLength);
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isStringArray(value) {
+  return Array.isArray(value) && value.every(item => typeof item === "string");
+}
+
+function hasExactKeys(value, keys) {
+  return value &&
+    Object.keys(value).sort().join("\n") === [...keys].sort().join("\n");
+}
+
+function isValidAriadneIntakeProposal(value) {
+  const keys = [
+    "classification",
+    "summary",
+    "proposedDestination",
+    "proposedTags",
+    "proposedLinks",
+    "warnings"
+  ];
+
+  return hasExactKeys(value, keys) &&
+    typeof value.classification === "string" &&
+    typeof value.summary === "string" &&
+    typeof value.proposedDestination === "string" &&
+    isStringArray(value.proposedTags) &&
+    isStringArray(value.proposedLinks) &&
+    isStringArray(value.warnings);
+}
+
+function isValidAriadneReview(value) {
+  const keys = [
+    "summary",
+    "quality",
+    "ambiguities",
+    "missingInformation",
+    "duplicateRisk",
+    "suggestedTags",
+    "suggestedLinks",
+    "suggestedDestination",
+    "confidence",
+    "warnings"
+  ];
+
+  return hasExactKeys(value, keys) &&
+    typeof value.summary === "string" &&
+    typeof value.quality === "string" &&
+    isStringArray(value.ambiguities) &&
+    isStringArray(value.missingInformation) &&
+    typeof value.duplicateRisk === "string" &&
+    isStringArray(value.suggestedTags) &&
+    isStringArray(value.suggestedLinks) &&
+    typeof value.suggestedDestination === "string" &&
+    typeof value.confidence === "number" &&
+    value.confidence >= 0 &&
+    value.confidence <= 1 &&
+    isStringArray(value.warnings);
 }

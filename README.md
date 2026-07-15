@@ -24,6 +24,23 @@
 | POST | `/ingest` | ✓ | Validate + embed + upsert |
 | POST | `/query` | ✓ | Semantic search |
 
+## Reconstructed review surface
+
+The following routes are proposed; not active. Their presence on a review
+branch does not approve privileges, activate a binding, or authorize a
+deployment.
+
+| Method | Path | Proposed purpose |
+|---|---|---|
+| GET | `/v1/dashboard/overview` | Return read-only aggregate counts without record identifiers |
+| POST | `/api/ariadne/core/intake` | Produce a review-first, non-mutating intake proposal |
+| POST | `/api/ariadne/core/review` | Review existing content without mutation |
+| GET | `/api/ariadne/core/status` | Return a minimized review-mode status |
+| GET | `/api/ariadne/core/openai-test` | Return a bounded provider-reachability code |
+
+The dashboard and Ariadne capability grants remain individually
+approval-required. No Ariadne logs route is included.
+
 ## Equilibrium Law
 
 Layer 0 (canon/git) is eternal.  

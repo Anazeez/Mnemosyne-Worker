@@ -1,0 +1,16 @@
+role_id: root
+capability_id: dashboard.overview
+baseline_state: absent
+proposed_state: granted
+authority_basis: docs/superpowers/specs/2026-07-14-mnemosyne-worker-clean-baseline-design.md#privilege-standing
+security_effect: explicitly extends root access to the proposed dashboard overview route
+approval_required: true
+approval_state: approved
+approval_id: approval.worker.root.dashboard-overview
+authority_identity: architectus
+authority_basis: docs/root-registry-rule.md
+approved_at: 2026-07-15T13:18:18Z
+approval_scope: root:dashboard.overview
+source_commit: 82cccaf86633abdd24f39e14a0fe96a4f2a96137
+deployment_authorized: false
+binding_activation_authorized: false
