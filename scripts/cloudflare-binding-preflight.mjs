@@ -64,7 +64,10 @@ export function collectBindings(value) {
   return [...new Map(bindings.map(item => [`${item.type}:${item.name}`, item])).values()];
 }
 
-export function buildDeploymentConfig(value, { databaseId, migrationsDir, entrypoint }) {
+export function buildDeploymentConfig(
+  value,
+  { databaseId, migrationsDir, entrypoint, continuityReadEnabled = false },
+) {
   const config = {
     name: "mnemosyne-worker",
     main: entrypoint,
@@ -88,6 +91,9 @@ export function buildDeploymentConfig(value, { databaseId, migrationsDir, entryp
       default: throw new Error(`unsupported_live_binding_type:${binding.type}`);
     }
   }
+  if (continuityReadEnabled) {
+    config.vars.CONTINUITY_READ_ENABLED = "1";
+  }
   if (Object.keys(config.vars).length === 0) delete config.vars;
   return config;
 }
@@ -105,6 +111,7 @@ if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
       databaseId: process.env.MNEMOSYNE_D1_DATABASE_ID,
       migrationsDir: `${process.env.GITHUB_WORKSPACE}/migrations`,
       entrypoint: `${process.env.GITHUB_WORKSPACE}/src/index.js`,
+      continuityReadEnabled: true,
     });
     await writeFile(process.argv[4], JSON.stringify(config));
   } else {

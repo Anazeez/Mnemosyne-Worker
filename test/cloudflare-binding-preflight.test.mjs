@@ -29,6 +29,7 @@ test("deployment config preserves every supported non-secret live binding", () =
     databaseId: "new-db",
     migrationsDir: "/workspace/migrations",
     entrypoint: "/workspace/src/index.js",
+    continuityReadEnabled: true,
   });
   assert.equal(config.main, "/workspace/src/index.js");
   assert.equal(config.d1_databases[0].database_id, "new-db");
@@ -37,6 +38,13 @@ test("deployment config preserves every supported non-secret live binding", () =
   assert.equal(config.secrets_store_secrets[0].store_id, "store");
   assert.equal(config.vars.FLAG, "on");
   assert.deepEqual(config.vars.POLICY, { root: true });
+  assert.equal(config.vars.CONTINUITY_READ_ENABLED, "1");
+  assert.deepEqual(
+    Object.keys(config.vars).filter((name) =>
+      name.startsWith("CONTINUITY_") && name !== "CONTINUITY_READ_ENABLED"
+    ),
+    [],
+  );
   assert.doesNotMatch(JSON.stringify(config), /TOKEN/);
 });
 
