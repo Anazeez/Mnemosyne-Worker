@@ -606,6 +606,79 @@ export function continuityFlagEnabled(env, name) {
     .has(String(env?.[name] ?? "").trim().toLowerCase());
 }
 
+const INVOCATION_ELIGIBLE_CONTEXT_STATUSES = new Set([
+  "CURRENT_CONTEXT",
+  "STALE_CONTEXT",
+  "DEGRADED_CONTEXT",
+  "NO_CONTEXT"
+]);
+
+export async function requireInvocationContinuity({
+  request,
+  env,
+  principal,
+  identityId
+}) {
+  if (!continuityFlagEnabled(env, "CONTINUITY_INVOCATION_ENFORCEMENT")) {
+    return null;
+  }
+
+  requireContinuityDatabase(env);
+  const receiptId = String(
+    request.headers.get("X-Continuity-Receipt") || ""
+  ).trim();
+
+  if (!receiptId) {
+    throw new ContinuityError(
+      "continuity_receipt_required",
+      "Exact contextual continuity must be resolved before invocation",
+      428
+    );
+  }
+
+  const receipt = await env.DB.prepare(SQL.GET_RETRIEVAL_RECEIPT)
+    .bind(receiptId)
+    .first();
+  if (!receipt) {
+    throw new ContinuityError(
+      "continuity_receipt_invalid",
+      "Continuity receipt is unavailable",
+      428
+    );
+  }
+
+  const expectedIdentity = normalizeIdentityId(identityId);
+  if (
+    receipt.requesting_credential_id !== principal.credential_id ||
+    receipt.identity_id !== expectedIdentity
+  ) {
+    throw new ContinuityError(
+      "continuity_receipt_scope_mismatch",
+      "Continuity receipt does not match the invoking credential and identity",
+      403
+    );
+  }
+
+  if (!INVOCATION_ELIGIBLE_CONTEXT_STATUSES.has(receipt.context_status)) {
+    throw new ContinuityError(
+      "continuity_context_ineligible",
+      "Resolved context is not eligible for specialist invocation",
+      428,
+      { context_status: receipt.context_status }
+    );
+  }
+
+  return {
+    receipt_id: receipt.receipt_id,
+    identity_id: receipt.identity_id,
+    project_id: receipt.project_id,
+    scope_key: receipt.scope_key,
+    context_status: receipt.context_status,
+    selected_runway_id: receipt.selected_runway_id,
+    selected_generation: receipt.selected_generation
+  };
+}
+
 export function assertContinuityTarget(principal, {
   identityId,
   projectId,
@@ -652,6 +725,19 @@ export async function createCandidateCheckpoint({
     throw new ContinuityError(
       "continuity_write_disabled",
       "Continuity writes are disabled",
+      503
+    );
+  }
+
+  const obsidianSubmission = body?.source === "obsidian-plugin" ||
+    body?.client === "obsidian";
+  if (
+    obsidianSubmission &&
+    !continuityFlagEnabled(env, "CONTINUITY_OBSIDIAN_ACTIONS")
+  ) {
+    throw new ContinuityError(
+      "continuity_obsidian_actions_disabled",
+      "Obsidian continuity submissions are disabled",
       503
     );
   }
@@ -795,6 +881,16 @@ export async function createCandidateCheckpoint({
     "not_required",
     createdAt
   ).run();
+
+  await emitContinuityMetric(env, "continuity.candidate.created", {
+    credential_id: principal.credential_id,
+    identity_id: identityId,
+    project_id: projectId,
+    scope_key: scopeKey,
+    runway_id: runwayId,
+    generation,
+    status: "candidate"
+  });
 
   return {
     ok: true,
@@ -1860,6 +1956,25 @@ async function persistResolution({
     createdAt
   ).run();
 
+  const resolveMetric = {
+    CURRENT_CONTEXT: "continuity.resolve.success",
+    NO_CONTEXT: "continuity.resolve.missing",
+    STALE_CONTEXT: "continuity.resolve.stale",
+    DEGRADED_CONTEXT: "continuity.resolve.degraded",
+    QUARANTINED_CONTEXT: "continuity.resolve.hash_failure",
+    CONTEXT_UNAVAILABLE: "continuity.resolve.unavailable"
+  }[context.status] || "continuity.resolve.degraded";
+  await emitContinuityMetric(env, resolveMetric, {
+    credential_id: principal.credential_id,
+    identity_id: identity,
+    project_id: project,
+    scope_key: scope,
+    runway_id: context.runway_id,
+    generation: context.generation,
+    receipt_id: receiptId,
+    status: context.status
+  });
+
   return {
     context,
     fallback_path: fallbackPath,
@@ -1873,7 +1988,8 @@ export async function rehydrateContext({
   principal,
   permittedDomains = [],
   supplementalSearch,
-  now = new Date()
+  now = new Date(),
+  randomUUID = () => crypto.randomUUID()
 }) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new ContinuityError(
@@ -1882,6 +1998,31 @@ export async function rehydrateContext({
     );
   }
 
+  const startedAt = performance.now();
+  const invocationId = normalizeNullableId(
+    body.invocation_id || `inv_${randomUUID()}`,
+    "invocation_id",
+    { required: true }
+  );
+  const identityId = normalizeIdentityId(body.identity_id);
+  const projectId = normalizeProjectId(body.project_id);
+  const scopeKey = normalizeScopeKey(body.scope_key);
+  const startedIso = (now instanceof Date ? now : new Date(now)).toISOString();
+
+  await env.DB.prepare(SQL.INSERT_INVOCATION).bind(
+    invocationId,
+    identityId,
+    projectId,
+    scopeKey,
+    principal.credential_id,
+    null,
+    null,
+    "opened",
+    null,
+    startedIso,
+    null
+  ).run();
+
   const requestedDomains = normalizeDomainList(body.supplemental_domains);
   const permitted = requestedDomains.length > 0
     ? requestedDomains.filter(domain => permittedDomains.includes(domain))
@@ -1889,9 +2030,9 @@ export async function rehydrateContext({
   const resolution = await resolveLatestRunway({
     env,
     principal,
-    identityId: body.identity_id,
-    projectId: body.project_id,
-    scopeKey: body.scope_key,
+    identityId,
+    projectId,
+    scopeKey,
     requestedDomains,
     permittedDomains: permitted,
     now
@@ -1927,7 +2068,10 @@ export async function rehydrateContext({
 
   resolution.context.authorized_references = authorizedReferences;
 
-  const supplementalQuery = String(body.supplemental_query || "").trim();
+  const shadowEnabled = continuityFlagEnabled(env, "CONTINUITY_SHADOW_MODE");
+  const supplementalQuery = String(
+    body.supplemental_query || (shadowEnabled ? body.shadow_query : "") || ""
+  ).trim();
   const supplemental = {
     used: supplementalQuery.length > 0,
     results: [],
@@ -1959,9 +2103,9 @@ export async function rehydrateContext({
 
   const receiptProjection = {
     receipt_id: resolution.retrieval_receipt_id,
-    identity_id: normalizeIdentityId(body.identity_id),
-    project_id: normalizeProjectId(body.project_id),
-    scope_key: normalizeScopeKey(body.scope_key),
+    identity_id: identityId,
+    project_id: projectId,
+    scope_key: scopeKey,
     selected_runway_id: resolution.context.runway_id,
     selected_generation: resolution.context.generation,
     context_status: resolution.context.status,
@@ -1984,6 +2128,76 @@ export async function rehydrateContext({
     resolution.retrieval_receipt_id
   ).run();
 
+  await env.DB.prepare(SQL.SET_INVOCATION_REHYDRATED).bind(
+    resolution.context.runway_id,
+    resolution.retrieval_receipt_id,
+    invocationId
+  ).run();
+
+  const durationMs = Math.max(0, performance.now() - startedAt);
+  const payloadBytes = resolution.context.payload
+    ? new TextEncoder().encode(canonicalJson(resolution.context.payload)).byteLength
+    : 0;
+  await emitContinuityMetric(env, "continuity.rehydrate.duration_ms", {
+    credential_id: principal.credential_id,
+    identity_id: identityId,
+    project_id: projectId,
+    scope_key: scopeKey,
+    runway_id: resolution.context.runway_id,
+    generation: resolution.context.generation,
+    receipt_id: resolution.retrieval_receipt_id,
+    status: resolution.context.status,
+    value: durationMs
+  });
+  await emitContinuityMetric(env, "continuity.rehydrate.payload_bytes", {
+    credential_id: principal.credential_id,
+    identity_id: identityId,
+    project_id: projectId,
+    scope_key: scopeKey,
+    runway_id: resolution.context.runway_id,
+    generation: resolution.context.generation,
+    receipt_id: resolution.retrieval_receipt_id,
+    status: resolution.context.status,
+    value: payloadBytes
+  });
+  await emitContinuityMetric(env, "continuity.supplemental.used", {
+    credential_id: principal.credential_id,
+    identity_id: identityId,
+    project_id: projectId,
+    scope_key: scopeKey,
+    runway_id: resolution.context.runway_id,
+    receipt_id: resolution.retrieval_receipt_id,
+    status: resolution.context.status,
+    value: supplemental.used ? 1 : 0
+  });
+  await emitContinuityMetric(env, "continuity.supplemental.result_count", {
+    credential_id: principal.credential_id,
+    identity_id: identityId,
+    project_id: projectId,
+    scope_key: scopeKey,
+    runway_id: resolution.context.runway_id,
+    receipt_id: resolution.retrieval_receipt_id,
+    status: resolution.context.status,
+    value: supplemental.results.length
+  });
+
+  const invocation = {
+    invocation_id: invocationId,
+    runway_acknowledged: true,
+    runway_id: resolution.context.runway_id,
+    generation: resolution.context.generation,
+    context_status: resolution.context.status
+  };
+  const shadow = shadowEnabled
+    ? {
+        enabled: true,
+        exact_runway_id: resolution.context.runway_id,
+        exact_context_status: resolution.context.status,
+        legacy_top_result_id: supplemental.results[0]?.id || null,
+        behavior_changed: false
+      }
+    : { enabled: false };
+
   return {
     context: resolution.context,
     supplemental,
@@ -1991,8 +2205,181 @@ export async function rehydrateContext({
     permitted_domains: permitted,
     omissions,
     fallback_path: resolution.fallback_path,
-    retrieval_receipt_id: resolution.retrieval_receipt_id
+    retrieval_receipt_id: resolution.retrieval_receipt_id,
+    invocation,
+    shadow
   };
+}
+
+export async function completeContinuityInvocation({
+  invocationId,
+  body,
+  env,
+  principal,
+  now = () => new Date()
+}) {
+  requireContinuityDatabase(env);
+
+  if (!continuityFlagEnabled(env, "CONTINUITY_WRITE_ENABLED")) {
+    throw new ContinuityError(
+      "continuity_write_disabled",
+      "Continuity completion writes are disabled",
+      503
+    );
+  }
+
+  const normalizedInvocationId = normalizeNullableId(
+    invocationId,
+    "invocation_id",
+    { required: true }
+  );
+  const invocation = await env.DB.prepare(SQL.GET_INVOCATION)
+    .bind(normalizedInvocationId)
+    .first();
+  if (!invocation) {
+    throw new ContinuityError("invocation_not_found", "Invocation does not exist", 404);
+  }
+
+  assertContinuityTarget(principal, {
+    identityId: invocation.identity_id,
+    projectId: invocation.project_id,
+    operation: "complete"
+  });
+
+  if (
+    principal.principal_id === "specialist" &&
+    invocation.credential_id !== principal.credential_id
+  ) {
+    throw new ContinuityError(
+      "invocation_credential_mismatch",
+      "Invocation belongs to another credential",
+      403
+    );
+  }
+
+  let state = "completed";
+  let outcome;
+  let candidate = null;
+
+  if (body?.checkpoint_failed === true) {
+    state = "failed";
+    outcome = "checkpoint_failed";
+  } else if (body?.continuity_changed === false) {
+    outcome = "unchanged";
+  } else if (body?.continuity_changed === true) {
+    candidate = await createCandidateCheckpoint({
+      body: {
+        identity_id: invocation.identity_id,
+        project_id: invocation.project_id,
+        scope_key: invocation.scope_key,
+        predecessor_runway_id: body.predecessor_runway_id,
+        source_invocation_id: normalizedInvocationId,
+        payload: body.checkpoint_payload,
+        source_hashes: body.source_hashes || [],
+        idempotency_key: body.idempotency_key
+      },
+      env,
+      principal
+    });
+    outcome = "changed";
+  } else {
+    throw new ContinuityError(
+      "continuity_outcome_required",
+      "Completion must declare changed, unchanged, or checkpoint failure"
+    );
+  }
+
+  const completedAt = now().toISOString();
+  const result = await env.DB.prepare(SQL.COMPLETE_INVOCATION).bind(
+    state,
+    outcome,
+    completedAt,
+    normalizedInvocationId,
+    invocation.credential_id
+  ).run();
+  if (changedRows(result) !== 1) {
+    throw new ContinuityError(
+      "invocation_completion_conflict",
+      "Invocation completion could not be recorded",
+      409
+    );
+  }
+
+  return {
+    ok: true,
+    invocation_id: normalizedInvocationId,
+    state,
+    continuity_outcome: outcome,
+    candidate_runway_id: candidate?.runway_id || null
+  };
+}
+
+export async function processContinuityQueueMessage({
+  envelope,
+  env,
+  principal
+}) {
+  if (!envelope || typeof envelope !== "object") {
+    throw new ContinuityError("invalid_continuity_queue_message", "Queue message is invalid");
+  }
+
+  if (envelope.type === "continuity.validate") {
+    return validateCandidateCheckpoint({
+      runwayId: envelope.runway_id,
+      env,
+      principal
+    });
+  }
+
+  if (envelope.type === "continuity.publish") {
+    return publishCheckpoint({
+      runwayId: envelope.runway_id,
+      body: {
+        expected_generation: envelope.expected_generation,
+        expected_predecessor_runway_id: envelope.expected_predecessor_runway_id
+      },
+      env,
+      principal
+    });
+  }
+
+  throw new ContinuityError(
+    "unknown_continuity_queue_message",
+    "Queue message type is not supported"
+  );
+}
+
+export async function runScheduledContinuityVerification({ env, principal }) {
+  requireContinuityDatabase(env);
+  const heads = await env.DB.prepare(SQL.LIST_HEADS).all();
+  const health = await env.DB.prepare(SQL.LIST_CONTINUITY_HEALTH).all();
+  let verified = 0;
+  let failed = 0;
+
+  for (const head of heads.results || []) {
+    const result = await verifyHeadTarget({
+      db: env.DB,
+      head,
+      expectedTuple: head,
+      now: new Date(),
+      freshnessLimitSeconds: env.CONTINUITY_FRESHNESS_SECONDS
+    });
+    if (result.ok) verified += 1;
+    else failed += 1;
+  }
+
+  await emitContinuityMetric(env, "continuity.scheduled.verification", {
+    credential_id: principal.credential_id,
+    status: failed === 0 ? "passed" : "failed",
+    verified_heads: verified,
+    failed_heads: failed,
+    candidate_count: (health.results || []).filter(row => row.state === "candidate").length,
+    publication_failed_count: (health.results || []).filter(
+      row => row.state === "publication_failed"
+    ).length
+  });
+
+  return { verified_heads: verified, failed_heads: failed };
 }
 
 export async function getContinuityHistory({
@@ -2167,6 +2554,21 @@ function sanitizeContinuityTopK(value) {
   return Math.min(parsed, 25);
 }
 
+async function emitContinuityMetric(env, metric, fields) {
+  const point = {
+    metric,
+    timestamp: new Date().toISOString(),
+    ...fields
+  };
+
+  if (
+    env?.CONTINUITY_TELEMETRY &&
+    typeof env.CONTINUITY_TELEMETRY.writeDataPoint === "function"
+  ) {
+    await env.CONTINUITY_TELEMETRY.writeDataPoint(point);
+  }
+}
+
 function requireContinuityDatabase(env) {
   if (!env?.DB || typeof env.DB.prepare !== "function") {
     throw new ContinuityError(
@@ -2338,5 +2740,28 @@ const SQL = Object.freeze({
     SELECT * FROM context_runway_invalidations
      WHERE runway_id = ? ORDER BY created_at DESC`,
   GET_RETRIEVAL_RECEIPT: `/* continuity:get-retrieval-receipt */
-    SELECT * FROM context_retrieval_receipts WHERE receipt_id = ?`
+    SELECT * FROM context_retrieval_receipts WHERE receipt_id = ?`,
+  INSERT_INVOCATION: `/* continuity:insert-invocation */
+    INSERT OR IGNORE INTO context_invocations (
+      invocation_id, identity_id, project_id, scope_key, credential_id,
+      resolved_runway_id, retrieval_receipt_id, state, continuity_outcome,
+      started_at, completed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  SET_INVOCATION_REHYDRATED: `/* continuity:set-invocation-rehydrated */
+    UPDATE context_invocations
+       SET resolved_runway_id = ?, retrieval_receipt_id = ?, state = 'rehydrated'
+     WHERE invocation_id = ?`,
+  GET_INVOCATION: `/* continuity:get-invocation */
+    SELECT * FROM context_invocations WHERE invocation_id = ?`,
+  COMPLETE_INVOCATION: `/* continuity:complete-invocation */
+    UPDATE context_invocations
+       SET state = ?, continuity_outcome = ?, completed_at = ?
+     WHERE invocation_id = ? AND credential_id = ?`,
+  LIST_HEADS: `/* continuity:list-heads */
+    SELECT * FROM context_runway_heads ORDER BY identity_id, project_id, scope_key`,
+  LIST_CONTINUITY_HEALTH: `/* continuity:list-continuity-health */
+    SELECT runway_id, identity_id, project_id, scope_key, generation, state,
+           integrity_state, indexing_state, created_at, published_at
+      FROM context_runways
+     WHERE state IN ('candidate', 'publication_failed', 'published')`
 });

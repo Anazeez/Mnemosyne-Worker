@@ -152,6 +152,8 @@ class MemoryStatement {
         return clone(db.invalidations.get(this.values[0]) || null);
       case "get-retrieval-receipt":
         return clone(db.receipts.get(this.values[0]) || null);
+      case "get-invocation":
+        return clone(db.invocations.get(this.values[0]) || null);
       default:
         throw new Error(`Operation ${this.operation} does not support first()`);
     }
@@ -194,6 +196,14 @@ class MemoryStatement {
           ).sort((left, right) => Number(right.generation) - Number(left.generation)))
         };
       }
+      case "list-heads":
+        return { results: clone([...db.heads.values()]) };
+      case "list-continuity-health":
+        return {
+          results: clone([...db.runways.values()].filter(row =>
+            ["candidate", "publication_failed", "published"].includes(row.state)
+          ))
+        };
       default:
         throw new Error(`Operation ${this.operation} does not support all()`);
     }
@@ -455,6 +465,35 @@ class MemoryStatement {
         db.invalidations.set(row.invalidation_id, row);
         return changed(1);
       }
+      case "insert-invocation": {
+        const row = invocationFromValues(this.values);
+        const existing = db.invocations.get(row.invocation_id);
+        if (existing) return changed(0);
+        db.invocations.set(row.invocation_id, row);
+        return changed(1);
+      }
+      case "set-invocation-rehydrated": {
+        const [runwayId, receiptId, invocationId] = this.values;
+        const row = db.invocations.get(invocationId);
+        if (!row) return changed(0);
+        Object.assign(row, {
+          resolved_runway_id: runwayId,
+          retrieval_receipt_id: receiptId,
+          state: "rehydrated"
+        });
+        return changed(1);
+      }
+      case "complete-invocation": {
+        const [state, outcome, completedAt, invocationId, credentialId] = this.values;
+        const row = db.invocations.get(invocationId);
+        if (!row || row.credential_id !== credentialId) return changed(0);
+        Object.assign(row, {
+          state,
+          continuity_outcome: outcome,
+          completed_at: completedAt
+        });
+        return changed(1);
+      }
       default:
         throw new Error(`Operation ${this.operation} does not support run()`);
     }
@@ -554,6 +593,23 @@ function invalidationFromValues(values) {
     "restored_head_runway_id",
     "created_at",
     "receipt_hash"
+  ];
+  return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
+}
+
+function invocationFromValues(values) {
+  const fields = [
+    "invocation_id",
+    "identity_id",
+    "project_id",
+    "scope_key",
+    "credential_id",
+    "resolved_runway_id",
+    "retrieval_receipt_id",
+    "state",
+    "continuity_outcome",
+    "started_at",
+    "completed_at"
   ];
   return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
 }

@@ -1,5 +1,7 @@
 import {
   ContinuityError,
+  completeContinuityInvocation,
+  continuityFlagEnabled,
   createCandidateCheckpoint,
   getCheckpointAudit,
   getContinuityHistory,
@@ -7,8 +9,11 @@ import {
   getValidationAudit,
   invalidateCheckpoint,
   publishCheckpoint,
+  processContinuityQueueMessage,
+  requireInvocationContinuity,
   rehydrateContext,
   resolveLatestRunway,
+  runScheduledContinuityVerification,
   validateCandidateCheckpoint
 } from "./continuity.js";
 
@@ -317,11 +322,23 @@ export default {
     try {
       if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
         requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        await requireInvocationContinuity({
+          request,
+          env,
+          principal,
+          identityId: "ariadne"
+        });
         return handleAriadneCoreIntake(request, env);
       }
 
       if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
         requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        await requireInvocationContinuity({
+          request,
+          env,
+          principal,
+          identityId: "ariadne"
+        });
         return handleAriadneCoreReview(request, env);
       }
 
@@ -413,6 +430,20 @@ export default {
           )
         });
         return Response.json(result);
+      }
+
+      const continuityCompletionMatch = url.pathname.match(
+        /^\/v1\/continuity\/invocations\/([^/]+)\/complete$/
+      );
+      if (continuityCompletionMatch && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_WRITE);
+        const body = await readJsonRequest(request);
+        return Response.json(await completeContinuityInvocation({
+          invocationId: continuityCompletionMatch[1],
+          body,
+          env,
+          principal
+        }));
       }
 
       if (url.pathname === "/v1/continuity/history" && method === "GET") {
@@ -710,6 +741,17 @@ export default {
 
     for (const message of batch.messages) {
       try {
+        if (String(message.body?.type || "").startsWith("continuity.")) {
+          const servicePrincipal = resolveContinuityServicePrincipal(env);
+          await processContinuityQueueMessage({
+            envelope: message.body,
+            env,
+            principal: servicePrincipal
+          });
+          message.ack();
+          continue;
+        }
+
         const ingress = normalizeQueuedIngress(message.body, message.id);
 
         await archiveExchangeRecord(
@@ -723,13 +765,32 @@ export default {
           `[Queue Consumer] Stored exchange ${ingress.exchange_id} for ${ingress.recipient_persona}`
         );
       } catch (error) {
-        console.error(
-          `[Queue Consumer Exception] Failed queue slot ${message.id}: ${error.message}`
-        );
+        if (String(message.body?.type || "").startsWith("continuity.")) {
+          console.error(JSON.stringify({
+            event: "continuity.queue.failed",
+            message_id: message.id,
+            error_code: error instanceof ContinuityError
+              ? error.code
+              : "continuity_queue_internal_failure"
+          }));
+        } else {
+          console.error(
+            `[Queue Consumer Exception] Failed queue slot ${message.id}: ${error.message}`
+          );
+        }
 
         message.retry();
       }
     }
+  },
+
+  scheduled(_event, env, ctx) {
+    if (!continuityFlagEnabled(env, "CONTINUITY_SCHEDULED_VERIFICATION")) {
+      return;
+    }
+
+    const principal = resolveContinuityServicePrincipal(env);
+    ctx.waitUntil(runScheduledContinuityVerification({ env, principal }));
   }
 };
 
@@ -902,6 +963,34 @@ function resolveCredentialPrincipal(record) {
     identity_ids: resolveEffectiveIdentityIds(record, role, credentialId),
     receives_mandates: Boolean(policy.receives_mandates)
   };
+}
+
+function resolveContinuityServicePrincipal(env) {
+  let record = env.CONTINUITY_SERVICE_PRINCIPAL;
+  if (typeof record === "string") {
+    try {
+      record = JSON.parse(record);
+    } catch {
+      throw new ContinuityError(
+        "continuity_service_principal_invalid",
+        "Continuity service principal configuration is invalid",
+        503
+      );
+    }
+  }
+
+  const principal = resolveCredentialPrincipal(record);
+  if (
+    !principal ||
+    !principal.capabilities.includes(CAPABILITY.CONTINUITY_AUDIT)
+  ) {
+    throw new ContinuityError(
+      "continuity_service_principal_invalid",
+      "Continuity service principal is unavailable or unauthorized",
+      503
+    );
+  }
+  return principal;
 }
 
 function resolveEffectiveProjectIds(record) {

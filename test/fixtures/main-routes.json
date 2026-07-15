@@ -9,6 +9,7 @@
     ["POST", "/v1/memory/search"],
     ["GET", "/v1/continuity/latest"],
     ["POST", "/v1/continuity/rehydrate"],
+    ["POST", "/v1/continuity/invocations/:id/complete"],
     ["POST", "/v1/continuity/checkpoints"],
     ["POST", "/v1/continuity/checkpoints/:id/validate"],
     ["POST", "/v1/continuity/checkpoints/:id/publish"],
