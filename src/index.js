@@ -1,6 +1,7 @@
 import {
   ContinuityError,
   createCandidateCheckpoint,
+  resolveLatestRunway,
   validateCandidateCheckpoint
 } from "./continuity.js";
 
@@ -372,6 +373,21 @@ export default {
       if (url.pathname === "/v1/registry" && method === "GET") {
         requireCapability(principal, CAPABILITY.REGISTRY_VIEW);
         return handleRegistryView(principal);
+      }
+
+      if (url.pathname === "/v1/continuity/latest" && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_READ);
+        const requestedDomains = url.searchParams.getAll("domain");
+        const result = await resolveLatestRunway({
+          env,
+          principal,
+          identityId: url.searchParams.get("identity_id"),
+          projectId: url.searchParams.get("project_id"),
+          scopeKey: url.searchParams.get("scope_key"),
+          requestedDomains,
+          permittedDomains: allowedDomains(principal)
+        });
+        return Response.json(result);
       }
 
       if (url.pathname === "/v1/continuity/checkpoints" && method === "POST") {

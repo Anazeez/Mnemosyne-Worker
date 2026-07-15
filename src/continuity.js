@@ -947,6 +947,465 @@ export async function validateCandidateCheckpoint({
   };
 }
 
+export async function resolveLatestRunway({
+  env,
+  principal,
+  identityId,
+  projectId,
+  scopeKey,
+  requestedDomains = [],
+  permittedDomains = [],
+  now = new Date(),
+  randomUUID = () => crypto.randomUUID()
+}) {
+  requireContinuityDatabase(env);
+
+  if (!continuityFlagEnabled(env, "CONTINUITY_READ_ENABLED")) {
+    throw new ContinuityError(
+      "continuity_read_disabled",
+      "Continuity reads are disabled",
+      503
+    );
+  }
+
+  const identity = normalizeIdentityId(identityId);
+  const project = normalizeProjectId(projectId);
+  const scope = normalizeScopeKey(scopeKey);
+  assertContinuityTarget(principal, {
+    identityId: identity,
+    projectId: project,
+    operation: "read"
+  });
+
+  const fallbackPath = [];
+  let selected = null;
+  let resolution = "exact";
+  let expectedTuple = {
+    identity_id: identity,
+    project_id: project,
+    scope_key: scope
+  };
+  const exactHead = await getHead(env.DB, expectedTuple);
+
+  if (exactHead) {
+    fallbackPath.push("exact:hit");
+    const exactResult = await verifyHeadTarget({
+      db: env.DB,
+      head: exactHead,
+      expectedTuple,
+      now,
+      freshnessLimitSeconds: env.CONTINUITY_FRESHNESS_SECONDS
+    });
+
+    if (!exactResult.ok) {
+      return persistResolution({
+        env,
+        principal,
+        identity,
+        project,
+        scope,
+        fallbackPath,
+        requestedDomains,
+        permittedDomains,
+        context: quarantinedContext(exactHead, exactResult.reason),
+        now,
+        randomUUID
+      });
+    }
+
+    selected = exactResult.context;
+  } else {
+    fallbackPath.push("exact:miss");
+
+    if (scope !== "default") {
+      expectedTuple = {
+        identity_id: identity,
+        project_id: project,
+        scope_key: "default"
+      };
+      const defaultHead = await getHead(env.DB, expectedTuple);
+
+      if (defaultHead) {
+        fallbackPath.push("default:hit");
+        const defaultResult = await verifyHeadTarget({
+          db: env.DB,
+          head: defaultHead,
+          expectedTuple,
+          now,
+          freshnessLimitSeconds: env.CONTINUITY_FRESHNESS_SECONDS,
+          fallback: true
+        });
+
+        if (!defaultResult.ok) {
+          return persistResolution({
+            env,
+            principal,
+            identity,
+            project,
+            scope,
+            fallbackPath,
+            requestedDomains,
+            permittedDomains,
+            context: quarantinedContext(defaultHead, defaultResult.reason),
+            now,
+            randomUUID
+          });
+        }
+
+        selected = defaultResult.context;
+        resolution = "default_scope_fallback";
+      } else {
+        fallbackPath.push("default:miss");
+      }
+    } else {
+      fallbackPath.push("default:same_as_exact");
+    }
+
+    if (!selected) {
+      const genesis = await env.DB.prepare(SQL.GET_GENESIS)
+        .bind(identity, project)
+        .first();
+
+      if (genesis) {
+        fallbackPath.push("genesis:hit");
+        const genesisResult = await verifyStoredRunway({
+          row: genesis,
+          expectedTuple: {
+            identity_id: identity,
+            project_id: project,
+            scope_key: genesis.scope_key
+          },
+          now,
+          freshnessLimitSeconds: env.CONTINUITY_FRESHNESS_SECONDS,
+          fallback: true
+        });
+
+        if (genesisResult.ok) {
+          selected = genesisResult.context;
+          resolution = "genesis_fallback";
+        } else {
+          return persistResolution({
+            env,
+            principal,
+            identity,
+            project,
+            scope,
+            fallbackPath,
+            requestedDomains,
+            permittedDomains,
+            context: quarantinedContext(genesis, genesisResult.reason),
+            now,
+            randomUUID
+          });
+        }
+      } else {
+        fallbackPath.push("genesis:miss");
+      }
+    }
+
+    if (!selected) {
+      if (continuityFlagEnabled(env, "CONTINUITY_GLOBAL_FALLBACK_ENABLED")) {
+        const globalTuple = {
+          identity_id: identity,
+          project_id: "global",
+          scope_key: "default"
+        };
+        const globalHead = await getHead(env.DB, globalTuple);
+
+        if (globalHead) {
+          fallbackPath.push("global:hit");
+          const globalResult = await verifyHeadTarget({
+            db: env.DB,
+            head: globalHead,
+            expectedTuple: globalTuple,
+            now,
+            freshnessLimitSeconds: env.CONTINUITY_FRESHNESS_SECONDS,
+            fallback: true
+          });
+
+          if (globalResult.ok) {
+            selected = globalResult.context;
+            resolution = "global_fallback";
+          } else {
+            return persistResolution({
+              env,
+              principal,
+              identity,
+              project,
+              scope,
+              fallbackPath,
+              requestedDomains,
+              permittedDomains,
+              context: quarantinedContext(globalHead, globalResult.reason),
+              now,
+              randomUUID
+            });
+          }
+        } else {
+          fallbackPath.push("global:miss");
+        }
+      } else {
+        fallbackPath.push("global:not_permitted");
+      }
+    }
+
+    if (!selected) {
+      const backfilled = await env.DB.prepare(SQL.GET_BACKFILLED)
+        .bind(identity, project, scope)
+        .first();
+
+      if (backfilled) {
+        fallbackPath.push("backfill:hit");
+        const backfillResult = await verifyStoredRunway({
+          row: backfilled,
+          expectedTuple: {
+            identity_id: identity,
+            project_id: project,
+            scope_key: scope
+          },
+          now,
+          freshnessLimitSeconds: env.CONTINUITY_FRESHNESS_SECONDS,
+          fallback: true
+        });
+
+        if (backfillResult.ok) {
+          selected = backfillResult.context;
+          resolution = "backfill_fallback";
+        } else {
+          return persistResolution({
+            env,
+            principal,
+            identity,
+            project,
+            scope,
+            fallbackPath,
+            requestedDomains,
+            permittedDomains,
+            context: quarantinedContext(backfilled, backfillResult.reason),
+            now,
+            randomUUID
+          });
+        }
+      } else {
+        fallbackPath.push("backfill:miss");
+      }
+    }
+  }
+
+  if (!selected) {
+    fallbackPath.push("no_context");
+    return persistResolution({
+      env,
+      principal,
+      identity,
+      project,
+      scope,
+      fallbackPath,
+      requestedDomains,
+      permittedDomains,
+      context: {
+        status: "NO_CONTEXT",
+        runway_id: null,
+        generation: null,
+        payload: null,
+        age_seconds: null,
+        freshness_limit_seconds: null,
+        reason: "No valid checkpoint exists",
+        resolution: "none"
+      },
+      now,
+      randomUUID
+    });
+  }
+
+  selected.resolution = resolution;
+  if (resolution !== "exact") {
+    selected.status = "DEGRADED_CONTEXT";
+    selected.reason = "A governed fallback supplied continuity because the exact scope had no head";
+  }
+
+  return persistResolution({
+    env,
+    principal,
+    identity,
+    project,
+    scope,
+    fallbackPath,
+    requestedDomains,
+    permittedDomains,
+    context: selected,
+    now,
+    randomUUID
+  });
+}
+
+async function getHead(db, tuple) {
+  return db.prepare(SQL.GET_HEAD)
+    .bind(tuple.identity_id, tuple.project_id, tuple.scope_key)
+    .first();
+}
+
+async function verifyHeadTarget({ db, head, expectedTuple, ...options }) {
+  const row = await db.prepare(SQL.GET_RUNWAY).bind(head.runway_id).first();
+
+  if (!row) {
+    return { ok: false, reason: "Runway head references a missing checkpoint" };
+  }
+
+  if (
+    Number(head.generation) !== Number(row.generation) ||
+    head.manifest_hash !== row.manifest_hash
+  ) {
+    return { ok: false, reason: "Runway head generation or hash does not match its checkpoint" };
+  }
+
+  return verifyStoredRunway({ row, expectedTuple, ...options });
+}
+
+async function verifyStoredRunway({
+  row,
+  expectedTuple,
+  now,
+  freshnessLimitSeconds,
+  fallback = false
+}) {
+  const allowedState = fallback
+    ? ["published", "superseded"].includes(row.state)
+    : row.state === "published";
+
+  if (!allowedState) {
+    return { ok: false, reason: `Checkpoint state ${row.state} is not eligible for resolution` };
+  }
+
+  if (
+    row.identity_id !== expectedTuple.identity_id ||
+    row.project_id !== expectedTuple.project_id ||
+    row.scope_key !== expectedTuple.scope_key
+  ) {
+    return { ok: false, reason: "Checkpoint tuple does not match the exact lookup tuple" };
+  }
+
+  let payload;
+  let sourceHashes;
+  try {
+    payload = JSON.parse(row.payload_json);
+    sourceHashes = JSON.parse(row.source_hashes_json);
+  } catch {
+    return { ok: false, reason: "Checkpoint canonical content is malformed" };
+  }
+
+  const manifest = await buildRunwayManifest({ payload, sourceHashes });
+  if (manifest.manifest_hash !== row.manifest_hash) {
+    return { ok: false, reason: "Checkpoint manifest hash verification failed" };
+  }
+
+  if (
+    payload.identity_id !== row.identity_id ||
+    payload.project_id !== row.project_id ||
+    payload.scope_key !== row.scope_key ||
+    Number(payload.generation) !== Number(row.generation) ||
+    payload.runway_id !== row.runway_id
+  ) {
+    return { ok: false, reason: "Checkpoint payload tuple or generation is inconsistent" };
+  }
+
+  const freshness = classifyFreshness({
+    publishedAt: row.published_at,
+    now,
+    freshnessLimitSeconds,
+    state: row.state,
+    contextStatus: row.context_status,
+    integrityState: row.integrity_state
+  });
+
+  return {
+    ok: true,
+    context: {
+      ...freshness,
+      runway_id: row.runway_id,
+      generation: Number(row.generation),
+      manifest_hash: row.manifest_hash,
+      identity_id: row.identity_id,
+      project_id: row.project_id,
+      scope_key: row.scope_key,
+      payload
+    }
+  };
+}
+
+function quarantinedContext(row, reason) {
+  return {
+    status: "QUARANTINED_CONTEXT",
+    runway_id: row?.runway_id || null,
+    generation: row?.generation == null ? null : Number(row.generation),
+    payload: null,
+    age_seconds: null,
+    freshness_limit_seconds: null,
+    reason,
+    resolution: "integrity_failure"
+  };
+}
+
+async function persistResolution({
+  env,
+  principal,
+  identity,
+  project,
+  scope,
+  fallbackPath,
+  requestedDomains,
+  permittedDomains,
+  context,
+  now,
+  randomUUID
+}) {
+  const createdAt = (now instanceof Date ? now : new Date(now)).toISOString();
+  const receiptId = `receipt_${randomUUID()}`;
+  const receiptBody = {
+    receipt_id: receiptId,
+    requesting_credential_id: principal.credential_id,
+    identity_id: identity,
+    project_id: project,
+    scope_key: scope,
+    selected_runway_id: context.runway_id,
+    selected_generation: context.generation,
+    context_status: context.status,
+    fallback_path: fallbackPath,
+    requested_domains: requestedDomains,
+    permitted_domains: permittedDomains,
+    supplemental_search_used: false,
+    supplemental_result_count: 0,
+    omissions: [],
+    created_at: createdAt
+  };
+  const receiptHash = await sha256Hex(canonicalJson(receiptBody));
+
+  await env.DB.prepare(SQL.INSERT_RETRIEVAL_RECEIPT).bind(
+    receiptId,
+    principal.credential_id,
+    identity,
+    project,
+    scope,
+    context.runway_id,
+    context.generation,
+    context.status,
+    canonicalJson(fallbackPath),
+    canonicalJson(requestedDomains),
+    canonicalJson(permittedDomains),
+    0,
+    0,
+    "[]",
+    receiptHash,
+    createdAt
+  ).run();
+
+  return {
+    context,
+    fallback_path: fallbackPath,
+    retrieval_receipt_id: receiptId
+  };
+}
+
 function requireContinuityDatabase(env) {
   if (!env?.DB || typeof env.DB.prepare !== "function") {
     throw new ContinuityError(
@@ -1030,5 +1489,24 @@ const SQL = Object.freeze({
   SET_RUNWAY_VALIDATION_STATE: `/* continuity:set-runway-validation-state */
     UPDATE context_runways
        SET state = ?, integrity_state = ?, completeness_score = ?, validated_at = ?
-     WHERE runway_id = ?`
+     WHERE runway_id = ?`,
+  GET_GENESIS: `/* continuity:get-genesis */
+    SELECT * FROM context_runways
+     WHERE identity_id = ? AND project_id = ? AND generation = 1
+       AND state IN ('published', 'superseded')
+     ORDER BY created_at DESC LIMIT 1`,
+  GET_BACKFILLED: `/* continuity:get-backfilled */
+    SELECT * FROM context_runways
+     WHERE identity_id = ? AND project_id = ? AND scope_key = ?
+       AND context_status = 'backfilled'
+       AND state IN ('published', 'superseded')
+     ORDER BY generation DESC LIMIT 1`,
+  INSERT_RETRIEVAL_RECEIPT: `/* continuity:insert-retrieval-receipt */
+    INSERT INTO context_retrieval_receipts (
+      receipt_id, requesting_credential_id, identity_id, project_id, scope_key,
+      selected_runway_id, selected_generation, context_status,
+      fallback_path_json, requested_domains_json, permitted_domains_json,
+      supplemental_search_used, supplemental_result_count, omissions_json,
+      receipt_hash, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 });

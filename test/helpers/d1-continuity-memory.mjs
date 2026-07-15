@@ -13,6 +13,19 @@ export class ContinuityMemoryD1 {
     this.records = [];
   }
 
+  seedRunway(row) {
+    this.runways.set(row.runway_id, clone(row));
+    return this;
+  }
+
+  seedHead(row) {
+    this.heads.set(
+      headKey(row.identity_id, row.project_id, row.scope_key),
+      clone(row)
+    );
+    return this;
+  }
+
   prepare(sql) {
     const operation = sql.match(/\/\*\s*continuity:([a-z0-9-]+)\s*\*\//i)?.[1];
 
@@ -95,6 +108,26 @@ class MemoryStatement {
         const rows = [...db.validations.values()]
           .filter(row => row.runway_id === runwayId)
           .sort((left, right) => right.created_at.localeCompare(left.created_at));
+        return clone(rows[0] || null);
+      }
+      case "get-genesis": {
+        const [identityId, projectId] = this.values;
+        return clone([...db.runways.values()].find(row =>
+          row.identity_id === identityId &&
+          row.project_id === projectId &&
+          Number(row.generation) === 1 &&
+          ["published", "superseded"].includes(row.state)
+        ) || null);
+      }
+      case "get-backfilled": {
+        const [identityId, projectId, scopeKey] = this.values;
+        const rows = [...db.runways.values()].filter(row =>
+          row.identity_id === identityId &&
+          row.project_id === projectId &&
+          row.scope_key === scopeKey &&
+          row.context_status === "backfilled" &&
+          ["published", "superseded"].includes(row.state)
+        ).sort((left, right) => Number(right.generation) - Number(left.generation));
         return clone(rows[0] || null);
       }
       default:
@@ -182,6 +215,11 @@ class MemoryStatement {
         });
         return changed(1);
       }
+      case "insert-retrieval-receipt": {
+        const row = receiptFromValues(this.values);
+        db.receipts.set(row.receipt_id, row);
+        return changed(1);
+      }
       default:
         throw new Error(`Operation ${this.operation} does not support run()`);
     }
@@ -226,6 +264,29 @@ function validationFromValues(values) {
     "errors_json",
     "warnings_json",
     "completeness_score",
+    "receipt_hash",
+    "created_at"
+  ];
+
+  return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
+}
+
+function receiptFromValues(values) {
+  const fields = [
+    "receipt_id",
+    "requesting_credential_id",
+    "identity_id",
+    "project_id",
+    "scope_key",
+    "selected_runway_id",
+    "selected_generation",
+    "context_status",
+    "fallback_path_json",
+    "requested_domains_json",
+    "permitted_domains_json",
+    "supplemental_search_used",
+    "supplemental_result_count",
+    "omissions_json",
     "receipt_hash",
     "created_at"
   ];
