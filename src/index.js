@@ -1,3 +1,22 @@
+import {
+  ContinuityError,
+  completeContinuityInvocation,
+  continuityFlagEnabled,
+  createCandidateCheckpoint,
+  getCheckpointAudit,
+  getContinuityHistory,
+  getRetrievalReceiptAudit,
+  getValidationAudit,
+  invalidateCheckpoint,
+  publishCheckpoint,
+  processContinuityQueueMessage,
+  requireInvocationContinuity,
+  rehydrateContext,
+  resolveLatestRunway,
+  runScheduledContinuityVerification,
+  validateCandidateCheckpoint
+} from "./continuity.js";
+
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
  * ─────────────────────────────────────────────────────────────────────────────
@@ -102,7 +121,13 @@ const CAPABILITY = Object.freeze({
 
   REGISTRY_VIEW: "registry.view",
   ARIADNE_CORE_OPENAI_TEST: "ariadne.core.openai_test",
-  DASHBOARD_OVERVIEW: "dashboard.overview"
+  DASHBOARD_OVERVIEW: "dashboard.overview",
+
+  CONTINUITY_READ: "continuity.read",
+  CONTINUITY_WRITE: "continuity.write",
+  CONTINUITY_PUBLISH: "continuity.publish",
+  CONTINUITY_INVALIDATE: "continuity.invalidate",
+  CONTINUITY_AUDIT: "continuity.audit"
 });
 
 const READ_ONLY_MEMORY = Object.freeze([
@@ -138,7 +163,12 @@ const BASELINE_ROOT_CAPABILITIES = Object.freeze([
 const ROOT_CAPABILITIES = Object.freeze([
   ...BASELINE_ROOT_CAPABILITIES,
   CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
-  CAPABILITY.DASHBOARD_OVERVIEW
+  CAPABILITY.DASHBOARD_OVERVIEW,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_WRITE,
+  CAPABILITY.CONTINUITY_PUBLISH,
+  CAPABILITY.CONTINUITY_INVALIDATE,
+  CAPABILITY.CONTINUITY_AUDIT
 ]);
 
 // Specialist GPTs: read-only memory, skills, mandates, their own exchange inbox,
@@ -152,7 +182,9 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_ACK,
   CAPABILITY.EXCHANGES_REPLY,
   CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
-  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_WRITE
 ]);
 
 // Portal GPTs: observation only. No inbox, dispatch, mandates, skills, or router.
@@ -160,7 +192,8 @@ const PORTAL_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
   CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.MEMORY_SEARCH
+  CAPABILITY.MEMORY_SEARCH,
+  CAPABILITY.CONTINUITY_READ
 ]);
 
 // Orchestrators: operational coordination without memory ingest/hash authority.
@@ -176,7 +209,11 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
   CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
-  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
+  CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_WRITE,
+  CAPABILITY.CONTINUITY_PUBLISH,
+  CAPABILITY.CONTINUITY_AUDIT
 ]);
 
 // Inspector is deliberately non-mutating until dedicated audit/repository routes
@@ -186,7 +223,9 @@ const INSPECTOR_CAPABILITIES = Object.freeze([
   CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.HISTORY_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.REGISTRY_VIEW
+  CAPABILITY.REGISTRY_VIEW,
+  CAPABILITY.CONTINUITY_READ,
+  CAPABILITY.CONTINUITY_AUDIT
 ]);
 
 const DASHBOARD_CAPABILITIES = Object.freeze([
@@ -237,6 +276,8 @@ const ARCHITECTUS_PRINCIPAL = Object.freeze({
   role: "root",
   capabilities: ROOT_CAPABILITIES,
   memory_domains: Object.freeze(["*"]),
+  project_ids: Object.freeze(["*"]),
+  identity_ids: Object.freeze(["*"]),
   receives_mandates: false
 });
 
@@ -281,11 +322,23 @@ export default {
     try {
       if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
         requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        await requireInvocationContinuity({
+          request,
+          env,
+          principal,
+          identityId: "ariadne"
+        });
         return handleAriadneCoreIntake(request, env);
       }
 
       if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
         requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        await requireInvocationContinuity({
+          request,
+          env,
+          principal,
+          identityId: "ariadne"
+        });
         return handleAriadneCoreReview(request, env);
       }
 
@@ -345,6 +398,170 @@ export default {
       if (url.pathname === "/v1/registry" && method === "GET") {
         requireCapability(principal, CAPABILITY.REGISTRY_VIEW);
         return handleRegistryView(principal);
+      }
+
+      if (url.pathname === "/v1/continuity/latest" && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_READ);
+        const requestedDomains = url.searchParams.getAll("domain");
+        const result = await resolveLatestRunway({
+          env,
+          principal,
+          identityId: url.searchParams.get("identity_id"),
+          projectId: url.searchParams.get("project_id"),
+          scopeKey: url.searchParams.get("scope_key"),
+          requestedDomains,
+          permittedDomains: allowedDomains(principal)
+        });
+        return Response.json(result);
+      }
+
+      if (url.pathname === "/v1/continuity/rehydrate" && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_READ);
+        const body = await readJsonRequest(request);
+        const result = await rehydrateContext({
+          body,
+          env,
+          principal,
+          permittedDomains: allowedDomains(principal),
+          supplementalSearch: input => executeSupplementalMemorySearch(
+            input,
+            env,
+            principal
+          )
+        });
+        return Response.json(result);
+      }
+
+      const continuityCompletionMatch = url.pathname.match(
+        /^\/v1\/continuity\/invocations\/([^/]+)\/complete$/
+      );
+      if (continuityCompletionMatch && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_WRITE);
+        const body = await readJsonRequest(request);
+        return Response.json(await completeContinuityInvocation({
+          invocationId: continuityCompletionMatch[1],
+          body,
+          env,
+          principal
+        }));
+      }
+
+      if (url.pathname === "/v1/continuity/history" && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getContinuityHistory({
+          env,
+          principal,
+          identityId: url.searchParams.get("identity_id"),
+          projectId: url.searchParams.get("project_id"),
+          scopeKey: url.searchParams.get("scope_key")
+        }));
+      }
+
+      const continuityReceiptMatch = url.pathname.match(
+        /^\/v1\/continuity\/retrieval-receipts\/([^/]+)$/
+      );
+      if (continuityReceiptMatch && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getRetrievalReceiptAudit({
+          env,
+          principal,
+          receiptId: continuityReceiptMatch[1]
+        }));
+      }
+
+      const continuityValidationAuditMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/validation$/
+      );
+      if (continuityValidationAuditMatch && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getValidationAudit({
+          env,
+          principal,
+          runwayId: continuityValidationAuditMatch[1]
+        }));
+      }
+
+      const continuityCheckpointAuditMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)$/
+      );
+      if (continuityCheckpointAuditMatch && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getCheckpointAudit({
+          env,
+          principal,
+          runwayId: continuityCheckpointAuditMatch[1]
+        }));
+      }
+
+      if (url.pathname === "/v1/continuity/checkpoints" && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_WRITE);
+
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          return jsonError("Invalid JSON body", 400);
+        }
+
+        const result = await createCandidateCheckpoint({
+          body,
+          env,
+          principal
+        });
+        const { http_status, ...payload } = result;
+        return Response.json(payload, { status: http_status });
+      }
+
+      const continuityValidationMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/validate$/
+      );
+
+      if (continuityValidationMatch && method === "POST") {
+        requireAnyCapability(principal, [
+          CAPABILITY.CONTINUITY_PUBLISH,
+          CAPABILITY.CONTINUITY_AUDIT
+        ]);
+
+        const result = await validateCandidateCheckpoint({
+          runwayId: continuityValidationMatch[1],
+          env,
+          principal
+        });
+        return Response.json(result, {
+          status: result.status === "passed" ? 200 : 422
+        });
+      }
+
+      const continuityPublishMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/publish$/
+      );
+
+      if (continuityPublishMatch && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_PUBLISH);
+        const body = await readJsonRequest(request);
+        const result = await publishCheckpoint({
+          runwayId: continuityPublishMatch[1],
+          body,
+          env,
+          principal
+        });
+        return Response.json(result);
+      }
+
+      const continuityInvalidateMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/invalidate$/
+      );
+
+      if (continuityInvalidateMatch && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_INVALIDATE);
+        const body = await readJsonRequest(request);
+        const result = await invalidateCheckpoint({
+          runwayId: continuityInvalidateMatch[1],
+          body,
+          env,
+          principal
+        });
+        return Response.json(result);
       }
 
       if (url.pathname === "/v1/mandates/inbox" && method === "GET") {
@@ -439,6 +656,17 @@ export default {
 
       return new Response("Not found", { status: 404 });
     } catch (error) {
+      if (error instanceof ContinuityError) {
+        return Response.json(
+          {
+            ok: false,
+            error: error.code,
+            ...(error.details === undefined ? {} : { details: error.details })
+          },
+          { status: error.status }
+        );
+      }
+
       if (error instanceof AuthzError) {
         if (url.pathname === "/api/ariadne/core/openai-test") {
           return Response.json(
@@ -513,6 +741,17 @@ export default {
 
     for (const message of batch.messages) {
       try {
+        if (String(message.body?.type || "").startsWith("continuity.")) {
+          const servicePrincipal = resolveContinuityServicePrincipal(env);
+          await processContinuityQueueMessage({
+            envelope: message.body,
+            env,
+            principal: servicePrincipal
+          });
+          message.ack();
+          continue;
+        }
+
         const ingress = normalizeQueuedIngress(message.body, message.id);
 
         await archiveExchangeRecord(
@@ -526,13 +765,32 @@ export default {
           `[Queue Consumer] Stored exchange ${ingress.exchange_id} for ${ingress.recipient_persona}`
         );
       } catch (error) {
-        console.error(
-          `[Queue Consumer Exception] Failed queue slot ${message.id}: ${error.message}`
-        );
+        if (String(message.body?.type || "").startsWith("continuity.")) {
+          console.error(JSON.stringify({
+            event: "continuity.queue.failed",
+            message_id: message.id,
+            error_code: error instanceof ContinuityError
+              ? error.code
+              : "continuity_queue_internal_failure"
+          }));
+        } else {
+          console.error(
+            `[Queue Consumer Exception] Failed queue slot ${message.id}: ${error.message}`
+          );
+        }
 
         message.retry();
       }
     }
+  },
+
+  scheduled(_event, env, ctx) {
+    if (!continuityFlagEnabled(env, "CONTINUITY_SCHEDULED_VERIFICATION")) {
+      return;
+    }
+
+    const principal = resolveContinuityServicePrincipal(env);
+    ctx.waitUntil(runScheduledContinuityVerification({ env, principal }));
   }
 };
 
@@ -575,6 +833,8 @@ function authenticateRequest(request, env) {
         role: "dashboard",
         capabilities: [...DASHBOARD_CAPABILITIES],
         memory_domains: [],
+        project_ids: [],
+        identity_ids: [],
         receives_mandates: false
       }
     };
@@ -699,8 +959,71 @@ function resolveCredentialPrincipal(record) {
     role,
     capabilities: [...policy.capabilities],
     memory_domains: memoryDomains,
+    project_ids: resolveEffectiveProjectIds(record),
+    identity_ids: resolveEffectiveIdentityIds(record, role, credentialId),
     receives_mandates: Boolean(policy.receives_mandates)
   };
+}
+
+function resolveContinuityServicePrincipal(env) {
+  let record = env.CONTINUITY_SERVICE_PRINCIPAL;
+  if (typeof record === "string") {
+    try {
+      record = JSON.parse(record);
+    } catch {
+      throw new ContinuityError(
+        "continuity_service_principal_invalid",
+        "Continuity service principal configuration is invalid",
+        503
+      );
+    }
+  }
+
+  const principal = resolveCredentialPrincipal(record);
+  if (
+    !principal ||
+    !principal.capabilities.includes(CAPABILITY.CONTINUITY_AUDIT)
+  ) {
+    throw new ContinuityError(
+      "continuity_service_principal_invalid",
+      "Continuity service principal is unavailable or unauthorized",
+      503
+    );
+  }
+  return principal;
+}
+
+function resolveEffectiveProjectIds(record) {
+  const projects = normalizeStringList(
+    record.project_ids ||
+    record.projects ||
+    record.allowed_projects
+  );
+  const normalized = projects
+    .map(project => project.toLowerCase())
+    .filter(project => /^[a-z0-9][a-z0-9._-]{1,63}$/.test(project));
+
+  return [...new Set(normalized)];
+}
+
+function resolveEffectiveIdentityIds(record, role, credentialId) {
+  if (role === "root" || role === "orchestrator") {
+    return ["*"];
+  }
+
+  const identities = normalizeStringList(
+    record.identity_ids ||
+    record.identities ||
+    record.allowed_identities
+  )
+    .map(identity => identity.toLowerCase())
+    .filter(identity => /^[a-z0-9][a-z0-9_-]{1,63}$/.test(identity));
+
+  if (identities.length === 0 && role === "specialist") {
+    return [credentialId];
+  }
+
+  return [...new Set(identities)];
 }
 
 function resolveEffectiveMemoryDomains(record, policy) {
@@ -856,7 +1179,9 @@ function handleMemorySelf(principal) {
     role: principal.role,
     class: principal.role,
     capabilities: principal.capabilities,
-    memory_domains: allowedDomains(principal)
+    memory_domains: allowedDomains(principal),
+    project_ids: [...(principal.project_ids || [])],
+    identity_ids: [...(principal.identity_ids || [])]
   });
 }
 
@@ -898,6 +1223,8 @@ async function handleMemorySearch(
   const topK = sanitizeTopK(
     body.top_k ?? body.topK ?? DEFAULT_TOP_K
   );
+  const threshold = sanitizeRetrievalThreshold(body.threshold);
+  const metadataFilter = buildMemoryMetadataFilter(body);
 
   if (!query) {
     return jsonError("query is required", 400);
@@ -940,7 +1267,10 @@ async function handleMemorySearch(
     try {
       const queryResult = await matrixIndex.query(queryVector, {
         topK,
-        returnMetadata: "all"
+        returnMetadata: "all",
+        ...(Object.keys(metadataFilter).length > 0
+          ? { filter: metadataFilter }
+          : {})
       });
 
       for (const match of queryResult.matches || []) {
@@ -960,20 +1290,22 @@ async function handleMemorySearch(
   const sortedMatches = combined.sort((a, b) => b.score - a.score);
 
   const filteredMatches = sortedMatches
-    .filter(match => match.score >= RETRIEVAL_THRESHOLD)
+    .filter(match => match.score >= threshold)
     .slice(0, topK);
 
   const payload = {
     query,
     index,
     searched_indexes: domains,
-    threshold: RETRIEVAL_THRESHOLD,
+    threshold,
     total_raw: combined.length,
     above_threshold: filteredMatches.length,
     credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     errors,
-    results: filteredMatches.map(formatVectorMatch)
+    results: filteredMatches.map(formatVectorMatch),
+    runway_context: null,
+    supplemental_evidence: filteredMatches.map(formatVectorMatch)
   };
 
   if (legacy) {
@@ -988,10 +1320,92 @@ async function handleMemorySearch(
   });
 }
 
+async function executeSupplementalMemorySearch(input, env, principal) {
+  const query = String(input.query || "").trim();
+  if (!query) {
+    return { results: [], errors: [] };
+  }
+
+  const domains = [...new Set(input.domains || [])]
+    .flatMap(domain => resolveSearchDomains(domain, principal));
+  const topK = sanitizeTopK(input.topK);
+  const metadataFilter = buildMemoryMetadataFilter({
+    project_id: input.projectId,
+    scope_key: input.scopeKey,
+    runway_id: input.runwayId,
+    created_after: input.createdAfter,
+    source_refs: input.sourceRefs
+  });
+  const embedding = await env.AI.run(EMBEDDING_MODEL, { text: [query] });
+  const queryVector = embedding.data?.[0];
+
+  if (!queryVector) {
+    throw new Error("supplemental embedding unavailable");
+  }
+
+  const combined = [];
+  const errors = [];
+
+  for (const domain of domains) {
+    const matrixIndex = env[INDEX_BINDING[domain]];
+    if (!matrixIndex) {
+      errors.push({ index: domain, code: "supplemental_domain_unavailable" });
+      continue;
+    }
+
+    try {
+      const queryResult = await matrixIndex.query(queryVector, {
+        topK,
+        returnMetadata: "all",
+        ...(Object.keys(metadataFilter).length > 0
+          ? { filter: metadataFilter }
+          : {})
+      });
+      for (const match of queryResult.matches || []) {
+        combined.push({ ...match, resolved_index: domain });
+      }
+    } catch {
+      errors.push({ index: domain, code: "supplemental_domain_unavailable" });
+    }
+  }
+
+  return {
+    results: combined
+      .sort((left, right) => right.score - left.score)
+      .filter(match => match.score >= RETRIEVAL_THRESHOLD)
+      .slice(0, topK)
+      .map(formatVectorMatch),
+    errors
+  };
+}
+
+function buildMemoryMetadataFilter(body) {
+  const filter = {};
+  const bounded = (value, maximum = 128) => {
+    const normalized = String(value || "").trim();
+    return normalized && normalized.length <= maximum ? normalized : null;
+  };
+  const projectId = bounded(body.project_id);
+  const scopeKey = bounded(body.scope_key);
+  const runwayId = bounded(body.runway_id);
+  const createdAfter = bounded(body.created_after);
+  const sourceRefs = Array.isArray(body.source_refs)
+    ? body.source_refs.map(item => bounded(item, 500)).filter(Boolean).slice(0, 100)
+    : [];
+
+  if (projectId) filter.project_id = projectId;
+  if (scopeKey) filter.scope_key = scopeKey;
+  if (runwayId) filter.runway_id = runwayId;
+  if (createdAfter) filter.created = { $gte: createdAfter };
+  if (sourceRefs.length > 0) filter.source_ref = { $in: sourceRefs };
+  return filter;
+}
+
 function formatVectorMatch(match) {
   const metadata = match.metadata || {};
 
   return {
+    id: match.id,
     score: Number(match.score.toFixed(4)),
     file: metadata.file,
     path: metadata.path,
@@ -1000,6 +1414,12 @@ function formatVectorMatch(match) {
     status: metadata.status,
     preview: metadata.preview,
     index: metadata.index || match.resolved_index,
+    project_id: metadata.project_id,
+    scope_key: metadata.scope_key,
+    runway_id: metadata.runway_id,
+    source_ref: metadata.source_ref,
+    created: metadata.created,
+    schema: metadata.schema,
     citation:
       metadata.path && metadata.sha256
         ? `${metadata.path}#${metadata.sha256}`
@@ -1015,6 +1435,19 @@ function sanitizeTopK(value) {
   }
 
   return Math.min(parsed, MAX_TOP_K);
+}
+
+function sanitizeRetrievalThreshold(value) {
+  if (value === undefined || value === null || value === "") {
+    return RETRIEVAL_THRESHOLD;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return RETRIEVAL_THRESHOLD;
+  }
+
+  return Math.min(0.95, Math.max(0.5, parsed));
 }
 
 // ─── Mandate API ──────────────────────────────────────────────────────────────
@@ -2719,6 +3152,18 @@ function jsonError(error, status = 400, details = undefined) {
       status
     }
   );
+}
+
+async function readJsonRequest(request) {
+  try {
+    return await request.json();
+  } catch {
+    throw new ContinuityError(
+      "invalid_json_body",
+      "Request body must be valid JSON",
+      400
+    );
+  }
 }
 
 async function handleAriadneCoreIntake(request, env) {

@@ -57,16 +57,46 @@
   "proposed_grants": [
     ["root", "ariadne.core.openai_test"],
     ["root", "dashboard.overview"],
+    ["root", "continuity.read"],
+    ["root", "continuity.write"],
+    ["root", "continuity.publish"],
+    ["root", "continuity.invalidate"],
+    ["root", "continuity.audit"],
     ["orchestrator", "ariadne.core.openai_test"],
+    ["orchestrator", "continuity.read"],
+    ["orchestrator", "continuity.write"],
+    ["orchestrator", "continuity.publish"],
+    ["orchestrator", "continuity.audit"],
     ["specialist", "ariadne.core.openai_test"],
-    ["dashboard", "dashboard.overview"]
+    ["specialist", "continuity.read"],
+    ["specialist", "continuity.write"],
+    ["portal", "continuity.read"],
+    ["dashboard", "dashboard.overview"],
+    ["inspector", "continuity.read"],
+    ["inspector", "continuity.audit"]
   ],
   "preserved_absences": [
     ["portal", "ariadne.core.openai_test"],
     ["portal", "dashboard.overview"],
     ["inspector", "ariadne.core.openai_test"],
     ["inspector", "dashboard.overview"],
-    ["dashboard", "ariadne.core.openai_test"]
+    ["dashboard", "ariadne.core.openai_test"],
+    ["orchestrator", "continuity.invalidate"],
+    ["specialist", "continuity.publish"],
+    ["specialist", "continuity.invalidate"],
+    ["specialist", "continuity.audit"],
+    ["portal", "continuity.write"],
+    ["portal", "continuity.publish"],
+    ["portal", "continuity.invalidate"],
+    ["portal", "continuity.audit"],
+    ["dashboard", "continuity.read"],
+    ["dashboard", "continuity.write"],
+    ["dashboard", "continuity.publish"],
+    ["dashboard", "continuity.invalidate"],
+    ["dashboard", "continuity.audit"],
+    ["inspector", "continuity.write"],
+    ["inspector", "continuity.publish"],
+    ["inspector", "continuity.invalidate"]
   ],
   "missing_permission_semantics": "not-an-explicit-prohibition"
 }

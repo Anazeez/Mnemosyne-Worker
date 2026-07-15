@@ -41,6 +41,45 @@ deployment.
 The dashboard and Ariadne capability grants remain individually
 approval-required. No Ariadne logs route is included.
 
+## Deterministic contextual continuity review surface
+
+MNEM-CONTINUITY-002 adds an exact D1 runway resolver before optional semantic
+retrieval. The implementation is proposed on this review branch; it is not
+deployed, activated, or bound by its presence in Git.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/v1/continuity/latest` | Resolve and verify an exact runway head |
+| POST | `/v1/continuity/rehydrate` | Build exact context, then optional supplemental evidence |
+| POST | `/v1/continuity/checkpoints` | Create an immutable candidate |
+| POST | `/v1/continuity/checkpoints/:id/validate` | Write a separate validation receipt |
+| POST | `/v1/continuity/checkpoints/:id/publish` | Seal, index when required, and compare-and-swap the head |
+| POST | `/v1/continuity/checkpoints/:id/invalidate` | Preserve history and restore an eligible predecessor |
+| POST | `/v1/continuity/invocations/:id/complete` | Record changed, unchanged, or checkpoint-failed completion |
+| GET | `/v1/continuity/history` | Audit bounded runway history |
+| GET | `/v1/continuity/checkpoints/:id` | Audit a checkpoint and its lifecycle receipts |
+| GET | `/v1/continuity/checkpoints/:id/validation` | Audit validation receipts |
+| GET | `/v1/continuity/retrieval-receipts/:id` | Audit one retrieval decision |
+
+All behavior is fail-closed behind explicit flags. No flag is enabled in
+`wrangler.toml`, and no scheduled trigger is configured by this branch.
+
+| Flag | Effect when explicitly enabled |
+|---|---|
+| `CONTINUITY_READ_ENABLED` | Permit exact resolution and rehydration |
+| `CONTINUITY_WRITE_ENABLED` | Permit candidates and invocation completion |
+| `CONTINUITY_SHADOW_MODE` | Compare exact context with legacy evidence without changing behavior |
+| `CONTINUITY_PUBLICATION_ENABLED` | Permit sealing, publication, and invalidation |
+| `CONTINUITY_INVOCATION_ENFORCEMENT` | Require a valid continuity receipt at specialist invocation boundaries |
+| `CONTINUITY_SCHEDULED_VERIFICATION` | Run configured scheduled integrity verification; no cron is added here |
+| `CONTINUITY_OBSIDIAN_ACTIONS` | Permit explicit reviewed Obsidian continuity submissions |
+
+`CONTINUITY_INDEX_REQUIRED` and `CONTINUITY_ARTIFACT_REQUIRED` are publication
+quality gates: when enabled, either failure prevents head advancement. Backfill
+uses `scripts/backfill-context-runways.mjs` in dry-run mode unless `--apply` is
+supplied with runtime API credentials. Rollback disables enforcement and
+publication while preserving tables, checkpoints, heads, and receipts.
+
 ## Equilibrium Law
 
 Layer 0 (canon/git) is eternal.  
