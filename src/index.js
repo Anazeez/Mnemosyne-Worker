@@ -2845,7 +2845,6 @@ async function handleAriadneCoreIntake(request, env) {
     },
     body: JSON.stringify({
       model: model,
-      temperature: 0.2,
       messages: [
         {
           role: "system",
@@ -3136,7 +3135,6 @@ async function handleAriadneCoreReview(request, env) {
     },
     body: JSON.stringify({
       model: model,
-      temperature: 0.2,
       messages: [
         {
           role: "system",
