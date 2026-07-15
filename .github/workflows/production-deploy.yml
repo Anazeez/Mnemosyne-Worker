@@ -28,16 +28,16 @@ jobs:
       - name: Build binding-preserving ephemeral configuration
         shell: bash
         run: |
-          npx --yes wrangler@4.33.1 deployments list --json > /tmp/deployments.json
+          npx --yes wrangler@4.111.0 deployments list --json > /tmp/deployments.json
           VERSION_ID="$(node scripts/cloudflare-binding-preflight.mjs version-id /tmp/deployments.json)"
-          npx --yes wrangler@4.33.1 versions view "$VERSION_ID" --json > /tmp/version.json
+          npx --yes wrangler@4.111.0 versions view "$VERSION_ID" --json > /tmp/version.json
           node scripts/cloudflare-binding-preflight.mjs build-config /tmp/version.json /tmp/wrangler.production.json
       - name: Apply forward-only continuity migration
-        run: npx --yes wrangler@4.33.1 d1 migrations apply DB --remote --config /tmp/wrangler.production.json
+        run: npx --yes wrangler@4.111.0 d1 migrations apply DB --remote --config /tmp/wrangler.production.json
       - name: Deploy with existing bindings preserved
         shell: bash
         run: |
-          if ! npx --yes wrangler@4.33.1 deploy --keep-vars --config /tmp/wrangler.production.json > /tmp/deploy.log 2>&1; then
+          if ! npx --yes wrangler@4.111.0 deploy --keep-vars --config /tmp/wrangler.production.json > /tmp/deploy.log 2>&1; then
             sed -E 's#https?://[^ ]+#<redacted-url>#g; s/[0-9a-f]{32,}/<redacted-id>/g' /tmp/deploy.log
             exit 1
           fi
