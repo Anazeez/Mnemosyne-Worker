@@ -57,8 +57,14 @@ CREATE TABLE IF NOT EXISTS context_runways (
     ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_context_runways_scope_generation
+-- Candidate successors from the same predecessor intentionally share a
+-- proposed generation until compare-and-swap publication chooses one head.
+CREATE INDEX IF NOT EXISTS idx_context_runways_scope_generation
   ON context_runways (identity_id, project_id, scope_key, generation);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_context_runways_published_scope_generation
+  ON context_runways (identity_id, project_id, scope_key, generation)
+  WHERE state = 'published';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_context_runways_idempotency
   ON context_runways (created_by_credential_id, idempotency_key);
@@ -197,6 +203,29 @@ CREATE TABLE IF NOT EXISTS context_publication_attempts (
 CREATE INDEX IF NOT EXISTS idx_context_publication_attempts_runway_created
   ON context_publication_attempts (runway_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS context_runway_invalidations (
+  invalidation_id TEXT PRIMARY KEY,
+  runway_id TEXT NOT NULL,
+  invalidated_by_credential_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  previous_head_runway_id TEXT,
+  restored_head_runway_id TEXT,
+  created_at TEXT NOT NULL,
+  receipt_hash TEXT NOT NULL,
+  FOREIGN KEY (runway_id)
+    REFERENCES context_runways(runway_id)
+    ON DELETE RESTRICT,
+  FOREIGN KEY (previous_head_runway_id)
+    REFERENCES context_runways(runway_id)
+    ON DELETE RESTRICT,
+  FOREIGN KEY (restored_head_runway_id)
+    REFERENCES context_runways(runway_id)
+    ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_runway_invalidations_runway_created
+  ON context_runway_invalidations (runway_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS context_invocations (
   invocation_id TEXT PRIMARY KEY,
   identity_id TEXT NOT NULL,
@@ -285,4 +314,36 @@ BEGIN
          published_at = COALESCE(published_at, NEW.published_at)
    WHERE runway_id = NEW.runway_id
      AND state IN ('sealed', 'indexing', 'superseded');
+END;
+
+CREATE TRIGGER context_runways_restore_head_after_invalidation
+AFTER UPDATE OF state ON context_runways
+WHEN OLD.state = 'published' AND NEW.state = 'invalidated'
+BEGIN
+  UPDATE context_runway_heads
+     SET runway_id = NEW.predecessor_runway_id,
+         generation = (
+           SELECT generation FROM context_runways
+            WHERE runway_id = NEW.predecessor_runway_id
+         ),
+         manifest_hash = (
+           SELECT manifest_hash FROM context_runways
+            WHERE runway_id = NEW.predecessor_runway_id
+         ),
+         published_at = (
+           SELECT published_at FROM context_runways
+            WHERE runway_id = NEW.predecessor_runway_id
+         )
+   WHERE identity_id = NEW.identity_id
+     AND project_id = NEW.project_id
+     AND scope_key = NEW.scope_key
+     AND runway_id = NEW.runway_id
+     AND NEW.predecessor_runway_id IS NOT NULL;
+
+  DELETE FROM context_runway_heads
+   WHERE identity_id = NEW.identity_id
+     AND project_id = NEW.project_id
+     AND scope_key = NEW.scope_key
+     AND runway_id = NEW.runway_id
+     AND NEW.predecessor_runway_id IS NULL;
 END;

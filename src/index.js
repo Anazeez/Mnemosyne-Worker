@@ -1,6 +1,8 @@
 import {
   ContinuityError,
   createCandidateCheckpoint,
+  invalidateCheckpoint,
+  publishCheckpoint,
   resolveLatestRunway,
   validateCandidateCheckpoint
 } from "./continuity.js";
@@ -427,6 +429,38 @@ export default {
         return Response.json(result, {
           status: result.status === "passed" ? 200 : 422
         });
+      }
+
+      const continuityPublishMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/publish$/
+      );
+
+      if (continuityPublishMatch && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_PUBLISH);
+        const body = await readJsonRequest(request);
+        const result = await publishCheckpoint({
+          runwayId: continuityPublishMatch[1],
+          body,
+          env,
+          principal
+        });
+        return Response.json(result);
+      }
+
+      const continuityInvalidateMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/invalidate$/
+      );
+
+      if (continuityInvalidateMatch && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_INVALIDATE);
+        const body = await readJsonRequest(request);
+        const result = await invalidateCheckpoint({
+          runwayId: continuityInvalidateMatch[1],
+          body,
+          env,
+          principal
+        });
+        return Response.json(result);
       }
 
       if (url.pathname === "/v1/mandates/inbox" && method === "GET") {
@@ -2828,6 +2862,18 @@ function jsonError(error, status = 400, details = undefined) {
       status
     }
   );
+}
+
+async function readJsonRequest(request) {
+  try {
+    return await request.json();
+  } catch {
+    throw new ContinuityError(
+      "invalid_json_body",
+      "Request body must be valid JSON",
+      400
+    );
+  }
 }
 
 async function handleAriadneCoreIntake(request, env) {

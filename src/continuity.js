@@ -1239,6 +1239,466 @@ export async function resolveLatestRunway({
   });
 }
 
+export async function publishCheckpoint({
+  runwayId,
+  body,
+  env,
+  principal,
+  now = () => new Date(),
+  randomUUID = () => crypto.randomUUID()
+}) {
+  requireContinuityDatabase(env);
+
+  if (!continuityFlagEnabled(env, "CONTINUITY_PUBLICATION_ENABLED")) {
+    throw new ContinuityError(
+      "continuity_publication_disabled",
+      "Continuity publication is disabled",
+      503
+    );
+  }
+
+  const normalizedRunwayId = normalizeNullableId(runwayId, "runway_id", {
+    required: true
+  });
+  const row = await env.DB.prepare(SQL.GET_RUNWAY)
+    .bind(normalizedRunwayId)
+    .first();
+
+  if (!row) {
+    throw new ContinuityError("runway_not_found", "Checkpoint does not exist", 404);
+  }
+
+  assertContinuityTarget(principal, {
+    identityId: row.identity_id,
+    projectId: row.project_id,
+    operation: "publish"
+  });
+
+  const currentHead = await getHead(env.DB, row);
+  if (row.state === "published" && currentHead?.runway_id === row.runway_id) {
+    return {
+      ok: true,
+      runway_id: row.runway_id,
+      state: "published",
+      generation: Number(row.generation),
+      manifest_hash: row.manifest_hash,
+      idempotent_replay: true
+    };
+  }
+
+  const validation = await env.DB.prepare(SQL.GET_LATEST_VALIDATION)
+    .bind(row.runway_id)
+    .first();
+
+  if (!validation || validation.status !== "passed" || row.state !== "validated") {
+    throw new ContinuityError(
+      "publication_validation_required",
+      "Checkpoint requires a passed validation receipt before publication",
+      422
+    );
+  }
+
+  const expectedGeneration = normalizeExpectedGeneration(body?.expected_generation);
+  const expectedPredecessor = normalizeNullableId(
+    body?.expected_predecessor_runway_id,
+    "expected_predecessor_runway_id"
+  );
+
+  if (
+    Number(row.generation) !== expectedGeneration + 1 ||
+    row.predecessor_runway_id !== expectedPredecessor
+  ) {
+    throw new ContinuityError(
+      "publication_expectation_mismatch",
+      "Publication expectation does not match candidate lineage",
+      409
+    );
+  }
+
+  const startedAt = now().toISOString();
+  const attemptId = `attempt_${randomUUID()}`;
+  const observedGeneration = currentHead == null
+    ? null
+    : Number(currentHead.generation);
+
+  await env.DB.prepare(SQL.INSERT_PUBLICATION_ATTEMPT).bind(
+    attemptId,
+    row.runway_id,
+    expectedGeneration,
+    observedGeneration,
+    "started",
+    null,
+    null,
+    startedAt,
+    null
+  ).run();
+
+  try {
+    const artifactRequired = continuityFlagEnabled(env, "CONTINUITY_ARTIFACT_REQUIRED");
+    const indexingRequired = continuityFlagEnabled(env, "CONTINUITY_INDEX_REQUIRED");
+    const sealed = await env.DB.prepare(SQL.SEAL_RUNWAY).bind(
+      startedAt,
+      indexingRequired ? "pending" : "not_required",
+      row.runway_id
+    ).run();
+
+    if (changedRows(sealed) !== 1) {
+      throw new ContinuityError(
+        "publication_state_conflict",
+        "Checkpoint could not be sealed from its validated state",
+        409
+      );
+    }
+
+    const payload = parseStoredJson(row.payload_json, "payload_json");
+
+    if (artifactRequired) {
+      const artifactRef = await persistPortableArtifact({ env, row, payload });
+      await env.DB.prepare(SQL.SET_ARTIFACT_REF)
+        .bind(artifactRef, row.runway_id)
+        .run();
+    }
+
+    if (indexingRequired) {
+      await indexRunwaySummary({ env, row, payload });
+      await env.DB.prepare(SQL.SET_INDEXING_STATE)
+        .bind("complete", "sealed", row.runway_id)
+        .run();
+    }
+
+    const publishedAt = now().toISOString();
+    const published = await env.DB.prepare(SQL.PUBLISH_HEAD_CAS).bind(
+      row.identity_id,
+      row.project_id,
+      row.scope_key,
+      row.runway_id,
+      Number(row.generation),
+      row.manifest_hash,
+      publishedAt,
+      expectedGeneration,
+      expectedPredecessor
+    ).run();
+
+    if (changedRows(published) !== 1) {
+      throw new ContinuityError(
+        "publication_conflict",
+        "Another successor advanced the exact runway head",
+        409
+      );
+    }
+
+    await updatePublicationAttempt(env.DB, {
+      attemptId,
+      status: "succeeded",
+      errorCode: null,
+      errorMessage: null,
+      completedAt: now().toISOString()
+    });
+
+    return {
+      ok: true,
+      runway_id: row.runway_id,
+      state: "published",
+      generation: Number(row.generation),
+      manifest_hash: row.manifest_hash,
+      publication_attempt_id: attemptId,
+      idempotent_replay: false
+    };
+  } catch (error) {
+    const continuityError = normalizePublicationError(error);
+    const attemptStatus = continuityError.code === "publication_conflict"
+      ? "conflict"
+      : "failed";
+    const indexingState = continuityError.code === "continuity_indexing_failed"
+      ? "failed"
+      : "not_required";
+
+    try {
+      await env.DB.prepare(SQL.SET_PUBLICATION_FAILED)
+        .bind(indexingState, row.runway_id)
+        .run();
+      await updatePublicationAttempt(env.DB, {
+        attemptId,
+        status: attemptStatus,
+        errorCode: continuityError.code,
+        errorMessage: "Publication stage failed",
+        completedAt: now().toISOString()
+      });
+    } catch {
+      // The bounded API error is retained even when failure bookkeeping is
+      // unavailable; raw provider or database details are never echoed.
+    }
+
+    throw continuityError;
+  }
+}
+
+export async function invalidateCheckpoint({
+  runwayId,
+  body,
+  env,
+  principal,
+  now = () => new Date(),
+  randomUUID = () => crypto.randomUUID()
+}) {
+  requireContinuityDatabase(env);
+
+  if (!continuityFlagEnabled(env, "CONTINUITY_PUBLICATION_ENABLED")) {
+    throw new ContinuityError(
+      "continuity_publication_disabled",
+      "Continuity invalidation is disabled",
+      503
+    );
+  }
+
+  const normalizedRunwayId = normalizeNullableId(runwayId, "runway_id", {
+    required: true
+  });
+  const reason = String(body?.reason || "").trim();
+  if (reason.length < 8 || reason.length > 500) {
+    throw new ContinuityError(
+      "invalid_invalidation_reason",
+      "Invalidation reason must contain 8-500 characters"
+    );
+  }
+
+  const row = await env.DB.prepare(SQL.GET_RUNWAY)
+    .bind(normalizedRunwayId)
+    .first();
+  if (!row) {
+    throw new ContinuityError("runway_not_found", "Checkpoint does not exist", 404);
+  }
+
+  assertContinuityTarget(principal, {
+    identityId: row.identity_id,
+    projectId: row.project_id,
+    operation: "invalidate"
+  });
+
+  if (row.state === "invalidated") {
+    const head = await getHead(env.DB, row);
+    return {
+      ok: true,
+      runway_id: row.runway_id,
+      state: "invalidated",
+      restored_head_runway_id: head?.runway_id || null,
+      idempotent_replay: true
+    };
+  }
+
+  if (!["published", "superseded"].includes(row.state)) {
+    throw new ContinuityError(
+      "runway_not_invalidation_eligible",
+      "Only published continuity history can be invalidated",
+      409
+    );
+  }
+
+  const currentHead = await getHead(env.DB, row);
+  const wasCurrent = currentHead?.runway_id === row.runway_id;
+  const restoredHeadId = wasCurrent ? row.predecessor_runway_id : currentHead?.runway_id || null;
+  const createdAt = now().toISOString();
+  const invalidationId = `invalidation_${randomUUID()}`;
+  const receiptBody = {
+    invalidation_id: invalidationId,
+    runway_id: row.runway_id,
+    invalidated_by_credential_id: principal.credential_id,
+    reason,
+    previous_head_runway_id: wasCurrent ? row.runway_id : null,
+    restored_head_runway_id: restoredHeadId,
+    created_at: createdAt
+  };
+  const receiptHash = await sha256Hex(canonicalJson(receiptBody));
+
+  await env.DB.batch([
+    env.DB.prepare(SQL.INVALIDATE_RUNWAY).bind(createdAt, reason, row.runway_id),
+    env.DB.prepare(SQL.INSERT_INVALIDATION).bind(
+      invalidationId,
+      row.runway_id,
+      principal.credential_id,
+      reason,
+      wasCurrent ? row.runway_id : null,
+      restoredHeadId,
+      createdAt,
+      receiptHash
+    )
+  ]);
+
+  const restoredHead = await getHead(env.DB, row);
+  return {
+    ok: true,
+    invalidation_id: invalidationId,
+    runway_id: row.runway_id,
+    state: "invalidated",
+    restored_head_runway_id: restoredHead?.runway_id || null,
+    receipt_hash: receiptHash,
+    idempotent_replay: false
+  };
+}
+
+async function persistPortableArtifact({ env, row, payload }) {
+  if (!env.CONTINUITY_ARTIFACTS || typeof env.CONTINUITY_ARTIFACTS.put !== "function") {
+    throw new ContinuityError(
+      "portable_artifact_failed",
+      "Required portable artifact storage is unavailable",
+      502
+    );
+  }
+
+  const key = [
+    "continuity",
+    row.project_id,
+    row.identity_id,
+    row.scope_key,
+    `${row.runway_id}.md`
+  ].join("/");
+  const markdown = renderPortableRunway(row, payload);
+
+  try {
+    await env.CONTINUITY_ARTIFACTS.put(key, markdown, {
+      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      customMetadata: {
+        runway_id: row.runway_id,
+        manifest_hash: row.manifest_hash,
+        schema: row.schema_version
+      }
+    });
+  } catch {
+    throw new ContinuityError(
+      "portable_artifact_failed",
+      "Required portable artifact generation or storage failed",
+      502
+    );
+  }
+
+  return key;
+}
+
+function renderPortableRunway(row, payload) {
+  const list = value => Array.isArray(value) && value.length > 0
+    ? value.map(item => `- ${typeof item === "string" ? item : canonicalJson(item)}`).join("\n")
+    : "- None";
+
+  return `---
+id: ${row.runway_id}
+title: ${row.identity_id} ${row.scope_key} runway ${row.generation}
+created: ${payload.created_at}
+status: sealed
+sha256: ${row.manifest_hash}
+parents: [${row.predecessor_runway_id || ""}]
+sources: [invocation:${row.source_invocation_id || ""}]
+tags: [continuity, runway, ${row.identity_id}]
+schema: ${row.schema_version}
+identity_id: ${row.identity_id}
+project_id: ${row.project_id}
+scope_key: ${row.scope_key}
+generation: ${row.generation}
+---
+# Objective
+${payload.objective}
+# Current Operational State
+${payload.operational_state}
+# Decisions in Force
+${list(payload.decisions_in_force)}
+# Open Threads
+${list(payload.open_threads)}
+# Relevant Skills
+${list(payload.mounted_skills)}
+# Relevant Files
+${list(payload.relevant_files)}
+# Next Actions
+${list(payload.next_actions)}
+# Integrity Notes
+${list(payload.integrity_warnings)}
+`;
+}
+
+async function indexRunwaySummary({ env, row, payload }) {
+  if (
+    !env.AI || typeof env.AI.run !== "function" ||
+    !env.MATRIX_KNOWLEDGE || typeof env.MATRIX_KNOWLEDGE.upsert !== "function"
+  ) {
+    throw new ContinuityError(
+      "continuity_indexing_failed",
+      "Required continuity indexing bindings are unavailable",
+      502
+    );
+  }
+
+  try {
+    const embedding = await env.AI.run(
+      "@cf/baai/bge-large-en-v1.5",
+      { text: [`${payload.objective}\n${payload.operational_state}`.slice(0, 2000)] }
+    );
+    const vector = embedding.data?.[0];
+    if (!vector) throw new Error("missing vector");
+
+    await env.MATRIX_KNOWLEDGE.upsert([{
+      id: `continuity:${row.runway_id}:summary`,
+      values: vector,
+      metadata: {
+        document_id: row.runway_id,
+        schema: row.schema_version,
+        status: "sealed",
+        project_id: row.project_id,
+        scope_key: row.scope_key,
+        runway_id: row.runway_id,
+        identity_id: row.identity_id,
+        generation: String(row.generation),
+        sha256: row.manifest_hash,
+        source_ref: `runway:${row.runway_id}`,
+        created: row.created_at
+      }
+    }]);
+  } catch {
+    throw new ContinuityError(
+      "continuity_indexing_failed",
+      "Required continuity indexing failed",
+      502
+    );
+  }
+}
+
+function normalizePublicationError(error) {
+  if (error instanceof ContinuityError) return error;
+  return new ContinuityError(
+    "continuity_publication_unavailable",
+    "Continuity publication storage is unavailable",
+    503
+  );
+}
+
+function normalizeExpectedGeneration(value) {
+  const generation = Number(value);
+  if (!Number.isInteger(generation) || generation < 0) {
+    throw new ContinuityError(
+      "invalid_expected_generation",
+      "expected_generation must be a non-negative integer"
+    );
+  }
+  return generation;
+}
+
+function changedRows(result) {
+  return Number(result?.meta?.changes ?? result?.changes ?? 0);
+}
+
+async function updatePublicationAttempt(db, {
+  attemptId,
+  status,
+  errorCode,
+  errorMessage,
+  completedAt
+}) {
+  await db.prepare(SQL.UPDATE_PUBLICATION_ATTEMPT).bind(
+    status,
+    errorCode,
+    errorMessage,
+    completedAt,
+    attemptId
+  ).run();
+}
+
 async function getHead(db, tuple) {
   return db.prepare(SQL.GET_HEAD)
     .bind(tuple.identity_id, tuple.project_id, tuple.scope_key)
@@ -1508,5 +1968,50 @@ const SQL = Object.freeze({
       fallback_path_json, requested_domains_json, permitted_domains_json,
       supplemental_search_used, supplemental_result_count, omissions_json,
       receipt_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  GET_LATEST_VALIDATION: `/* continuity:get-latest-validation */
+    SELECT * FROM context_runway_validations
+     WHERE runway_id = ? ORDER BY created_at DESC LIMIT 1`,
+  INSERT_PUBLICATION_ATTEMPT: `/* continuity:insert-publication-attempt */
+    INSERT INTO context_publication_attempts (
+      attempt_id, runway_id, expected_generation, observed_generation,
+      status, error_code, error_message, created_at, completed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  UPDATE_PUBLICATION_ATTEMPT: `/* continuity:update-publication-attempt */
+    UPDATE context_publication_attempts
+       SET status = ?, error_code = ?, error_message = ?, completed_at = ?
+     WHERE attempt_id = ?`,
+  SEAL_RUNWAY: `/* continuity:seal-runway */
+    UPDATE context_runways
+       SET state = 'sealed', sealed_at = ?, indexing_state = ?
+     WHERE runway_id = ? AND state = 'validated'`,
+  SET_ARTIFACT_REF: `/* continuity:set-artifact-ref */
+    UPDATE context_runways SET portable_artifact_ref = ? WHERE runway_id = ?`,
+  SET_INDEXING_STATE: `/* continuity:set-indexing-state */
+    UPDATE context_runways SET indexing_state = ?, state = ? WHERE runway_id = ?`,
+  SET_PUBLICATION_FAILED: `/* continuity:set-publication-failed */
+    UPDATE context_runways
+       SET state = 'publication_failed', indexing_state = ?
+     WHERE runway_id = ? AND state <> 'published'`,
+  PUBLISH_HEAD_CAS: `/* continuity:publish-head-cas */
+    INSERT INTO context_runway_heads (
+      identity_id, project_id, scope_key, runway_id, generation,
+      manifest_hash, published_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (identity_id, project_id, scope_key) DO UPDATE SET
+      runway_id = excluded.runway_id,
+      generation = excluded.generation,
+      manifest_hash = excluded.manifest_hash,
+      published_at = excluded.published_at
+    WHERE context_runway_heads.generation = ?
+      AND context_runway_heads.runway_id = ?`,
+  INVALIDATE_RUNWAY: `/* continuity:invalidate-runway */
+    UPDATE context_runways
+       SET state = 'invalidated', invalidated_at = ?, invalidation_reason = ?
+     WHERE runway_id = ?`,
+  INSERT_INVALIDATION: `/* continuity:insert-invalidation */
+    INSERT INTO context_runway_invalidations (
+      invalidation_id, runway_id, invalidated_by_credential_id, reason,
+      previous_head_runway_id, restored_head_runway_id, created_at, receipt_hash
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 });

@@ -18,6 +18,7 @@ const REQUIRED_TABLES = [
   "context_runway_validations",
   "context_retrieval_receipts",
   "context_publication_attempts",
+  "context_runway_invalidations",
   "context_invocations"
 ];
 
@@ -46,6 +47,16 @@ test("continuity migration defines the complete D1 persistence surface", async (
   }
 
   assert.match(source, /idx_context_runways_scope_generation/i);
+  assert.match(source, /idx_context_runways_published_scope_generation/i);
+  assert.doesNotMatch(
+    source,
+    /CREATE UNIQUE INDEX IF NOT EXISTS idx_context_runways_scope_generation/i,
+    "candidate successors from the same predecessor must be retained"
+  );
+  assert.match(
+    source,
+    /CREATE UNIQUE INDEX IF NOT EXISTS idx_context_runways_published_scope_generation[\s\S]+WHERE state = 'published'/i
+  );
   assert.match(source, /idx_context_runways_scope_state_created/i);
   assert.match(source, /idx_context_runways_idempotency/i);
   assert.match(

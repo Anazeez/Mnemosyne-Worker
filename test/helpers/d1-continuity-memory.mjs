@@ -9,8 +9,23 @@ export class ContinuityMemoryD1 {
     this.validations = new Map();
     this.receipts = new Map();
     this.attempts = new Map();
+    this.invalidations = new Map();
     this.invocations = new Map();
     this.records = [];
+    this.failures = new Map();
+  }
+
+  failNext(operation, count = 1) {
+    this.failures.set(operation, count);
+    return this;
+  }
+
+  consumeFailure(operation) {
+    const remaining = this.failures.get(operation) || 0;
+    if (remaining <= 0) return;
+    if (remaining === 1) this.failures.delete(operation);
+    else this.failures.set(operation, remaining - 1);
+    throw new Error(`Injected D1 failure: ${operation}`);
   }
 
   seedRunway(row) {
@@ -58,6 +73,7 @@ export class ContinuityMemoryD1 {
       validations: [...this.validations],
       receipts: [...this.receipts],
       attempts: [...this.attempts],
+      invalidations: [...this.invalidations],
       invocations: [...this.invocations],
       records: this.records
     });
@@ -69,6 +85,7 @@ export class ContinuityMemoryD1 {
     this.validations = new Map(snapshot.validations);
     this.receipts = new Map(snapshot.receipts);
     this.attempts = new Map(snapshot.attempts);
+    this.invalidations = new Map(snapshot.invalidations);
     this.invocations = new Map(snapshot.invocations);
     this.records = snapshot.records;
   }
@@ -88,6 +105,7 @@ class MemoryStatement {
 
   async first() {
     const db = this.database;
+    db.consumeFailure(this.operation);
 
     switch (this.operation) {
       case "get-head": {
@@ -130,6 +148,8 @@ class MemoryStatement {
         ).sort((left, right) => Number(right.generation) - Number(left.generation));
         return clone(rows[0] || null);
       }
+      case "get-invalidation":
+        return clone(db.invalidations.get(this.values[0]) || null);
       default:
         throw new Error(`Operation ${this.operation} does not support first()`);
     }
@@ -137,6 +157,7 @@ class MemoryStatement {
 
   async all() {
     const db = this.database;
+    db.consumeFailure(this.operation);
 
     switch (this.operation) {
       case "list-runway-records":
@@ -149,6 +170,12 @@ class MemoryStatement {
             row.runway_id === this.values[0]
           ))
         };
+      case "list-invalidations":
+        return {
+          results: clone([...db.invalidations.values()].filter(row =>
+            row.runway_id === this.values[0]
+          ))
+        };
       default:
         throw new Error(`Operation ${this.operation} does not support all()`);
     }
@@ -156,6 +183,7 @@ class MemoryStatement {
 
   async run() {
     const db = this.database;
+    db.consumeFailure(this.operation);
 
     switch (this.operation) {
       case "insert-runway": {
@@ -218,6 +246,173 @@ class MemoryStatement {
       case "insert-retrieval-receipt": {
         const row = receiptFromValues(this.values);
         db.receipts.set(row.receipt_id, row);
+        return changed(1);
+      }
+      case "insert-publication-attempt": {
+        const row = publicationAttemptFromValues(this.values);
+        db.attempts.set(row.attempt_id, row);
+        return changed(1);
+      }
+      case "update-publication-attempt": {
+        const [status, errorCode, errorMessage, completedAt, attemptId] = this.values;
+        const row = db.attempts.get(attemptId);
+        if (!row) return changed(0);
+        Object.assign(row, {
+          status,
+          error_code: errorCode,
+          error_message: errorMessage,
+          completed_at: completedAt
+        });
+        return changed(1);
+      }
+      case "seal-runway": {
+        const [sealedAt, indexingState, runwayId] = this.values;
+        const row = db.runways.get(runwayId);
+        if (!row || row.state !== "validated") return changed(0);
+        Object.assign(row, {
+          state: "sealed",
+          sealed_at: sealedAt,
+          indexing_state: indexingState
+        });
+        return changed(1);
+      }
+      case "set-indexing-state": {
+        const [indexingState, state, runwayId] = this.values;
+        const row = db.runways.get(runwayId);
+        if (!row) return changed(0);
+        Object.assign(row, { indexing_state: indexingState, state });
+        return changed(1);
+      }
+      case "set-artifact-ref": {
+        const [artifactRef, runwayId] = this.values;
+        const row = db.runways.get(runwayId);
+        if (!row) return changed(0);
+        row.portable_artifact_ref = artifactRef;
+        return changed(1);
+      }
+      case "set-publication-failed": {
+        const [indexingState, runwayId] = this.values;
+        const row = db.runways.get(runwayId);
+        if (!row || row.state === "published") return changed(0);
+        Object.assign(row, {
+          state: "publication_failed",
+          indexing_state: indexingState
+        });
+        return changed(1);
+      }
+      case "publish-head-cas": {
+        const [
+          identityId,
+          projectId,
+          scopeKey,
+          runwayId,
+          generation,
+          manifestHash,
+          publishedAt,
+          expectedGeneration,
+          expectedPredecessor
+        ] = this.values;
+        const key = headKey(identityId, projectId, scopeKey);
+        const current = db.heads.get(key) || null;
+        const matches = current
+          ? Number(current.generation) === Number(expectedGeneration) &&
+            current.runway_id === expectedPredecessor
+          : Number(expectedGeneration) === 0 && expectedPredecessor === null;
+        if (!matches) return changed(0);
+
+        if (current && current.runway_id !== runwayId) {
+          const predecessor = db.runways.get(current.runway_id);
+          if (predecessor?.state === "published") predecessor.state = "superseded";
+        }
+        const row = db.runways.get(runwayId);
+        if (row) {
+          row.state = "published";
+          row.published_at = publishedAt;
+        }
+        db.heads.set(key, {
+          identity_id: identityId,
+          project_id: projectId,
+          scope_key: scopeKey,
+          runway_id: runwayId,
+          generation,
+          manifest_hash: manifestHash,
+          published_at: publishedAt
+        });
+        return changed(1);
+      }
+      case "invalidate-runway": {
+        const [invalidatedAt, reason, runwayId] = this.values;
+        const row = db.runways.get(runwayId);
+        if (!row) return changed(0);
+        const wasPublished = row.state === "published";
+        Object.assign(row, {
+          state: "invalidated",
+          invalidated_at: invalidatedAt,
+          invalidation_reason: reason
+        });
+        if (wasPublished) {
+          const key = headKey(row.identity_id, row.project_id, row.scope_key);
+          const current = db.heads.get(key);
+          if (current?.runway_id === row.runway_id) {
+            if (row.predecessor_runway_id) {
+              const predecessor = db.runways.get(row.predecessor_runway_id);
+              if (predecessor) {
+                predecessor.state = "published";
+                db.heads.set(key, {
+                  identity_id: predecessor.identity_id,
+                  project_id: predecessor.project_id,
+                  scope_key: predecessor.scope_key,
+                  runway_id: predecessor.runway_id,
+                  generation: predecessor.generation,
+                  manifest_hash: predecessor.manifest_hash,
+                  published_at: predecessor.published_at
+                });
+              }
+            } else {
+              db.heads.delete(key);
+            }
+          }
+        }
+        return changed(1);
+      }
+      case "restore-head-cas": {
+        const [
+          runwayId,
+          generation,
+          manifestHash,
+          publishedAt,
+          identityId,
+          projectId,
+          scopeKey,
+          expectedCurrent
+        ] = this.values;
+        const key = headKey(identityId, projectId, scopeKey);
+        const current = db.heads.get(key);
+        if (!current || current.runway_id !== expectedCurrent) return changed(0);
+        const restored = db.runways.get(runwayId);
+        if (restored) restored.state = "published";
+        db.heads.set(key, {
+          identity_id: identityId,
+          project_id: projectId,
+          scope_key: scopeKey,
+          runway_id: runwayId,
+          generation,
+          manifest_hash: manifestHash,
+          published_at: publishedAt
+        });
+        return changed(1);
+      }
+      case "delete-head-if-current": {
+        const [identityId, projectId, scopeKey, expectedCurrent] = this.values;
+        const key = headKey(identityId, projectId, scopeKey);
+        const current = db.heads.get(key);
+        if (!current || current.runway_id !== expectedCurrent) return changed(0);
+        db.heads.delete(key);
+        return changed(1);
+      }
+      case "insert-invalidation": {
+        const row = invalidationFromValues(this.values);
+        db.invalidations.set(row.invalidation_id, row);
         return changed(1);
       }
       default:
@@ -291,6 +486,35 @@ function receiptFromValues(values) {
     "created_at"
   ];
 
+  return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
+}
+
+function publicationAttemptFromValues(values) {
+  const fields = [
+    "attempt_id",
+    "runway_id",
+    "expected_generation",
+    "observed_generation",
+    "status",
+    "error_code",
+    "error_message",
+    "created_at",
+    "completed_at"
+  ];
+  return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
+}
+
+function invalidationFromValues(values) {
+  const fields = [
+    "invalidation_id",
+    "runway_id",
+    "invalidated_by_credential_id",
+    "reason",
+    "previous_head_runway_id",
+    "restored_head_runway_id",
+    "created_at",
+    "receipt_hash"
+  ];
   return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
 }
 
