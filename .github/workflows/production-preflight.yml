@@ -37,7 +37,9 @@ jobs:
           npx --yes wrangler@4.33.1 deployments list --json > /tmp/deployments.json
           VERSION_ID="$(node scripts/cloudflare-binding-preflight.mjs /tmp/deployments.json)"
           npx --yes wrangler@4.33.1 versions view "$VERSION_ID" --json > /tmp/version.json
-          node --input-type=module -e 'import {readFile} from "node:fs/promises"; import {bindingSummary} from "./scripts/cloudflare-binding-preflight.mjs"; const value=JSON.parse(await readFile("/tmp/version.json","utf8")); console.log(JSON.stringify({bindings:bindingSummary(value)}));'
+          node --input-type=module -e 'import {readFile} from "node:fs/promises"; import {bindingShapeSummary,bindingSummary} from "./scripts/cloudflare-binding-preflight.mjs"; const value=JSON.parse(await readFile("/tmp/version.json","utf8")); console.log(JSON.stringify({bindings:bindingSummary(value),shapes:bindingShapeSummary(value)}));'
       - name: Verify production migration visibility
         shell: bash
-        run: npx --yes wrangler@4.33.1 d1 migrations list "$MNEMOSYNE_D1_DATABASE_ID" --remote
+        run: |
+          node --input-type=module -e 'import {writeFile} from "node:fs/promises"; const config={name:"mnemosyne-worker",compatibility_date:"2024-01-01",d1_databases:[{binding:"DB",database_name:"pulse-registry",database_id:process.env.MNEMOSYNE_D1_DATABASE_ID,migrations_dir:"migrations"}]}; await writeFile("/tmp/wrangler.d1.json",JSON.stringify(config));'
+          npx --yes wrangler@4.33.1 d1 migrations list DB --remote --config /tmp/wrangler.d1.json
