@@ -613,10 +613,12 @@ export function assertContinuityTarget(principal, {
 }) {
   const identity = normalizeIdentityId(identityId);
   const project = normalizeProjectId(projectId);
-  const role = principal?.principal_id || principal?.role;
   const projectIds = Array.isArray(principal?.project_ids)
     ? principal.project_ids
     : [];
+  const identityIds = Array.isArray(principal?.identity_ids)
+    ? principal.identity_ids
+    : [principal?.credential_id].filter(Boolean);
 
   if (!projectIds.includes("*") && !projectIds.includes(project)) {
     throw new ContinuityError(
@@ -626,8 +628,7 @@ export function assertContinuityTarget(principal, {
     );
   }
 
-  const crossIdentityRole = role === "root" || role === "orchestrator";
-  if (!crossIdentityRole && principal?.credential_id !== identity) {
+  if (!identityIds.includes("*") && !identityIds.includes(identity)) {
     throw new ContinuityError(
       "continuity_identity_forbidden",
       `Credential cannot ${operation} continuity for the requested identity`,
@@ -1866,6 +1867,306 @@ async function persistResolution({
   };
 }
 
+export async function rehydrateContext({
+  body,
+  env,
+  principal,
+  permittedDomains = [],
+  supplementalSearch,
+  now = new Date()
+}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ContinuityError(
+      "invalid_rehydration_request",
+      "Rehydration request must be an object"
+    );
+  }
+
+  const requestedDomains = normalizeDomainList(body.supplemental_domains);
+  const permitted = requestedDomains.length > 0
+    ? requestedDomains.filter(domain => permittedDomains.includes(domain))
+    : [...permittedDomains];
+  const resolution = await resolveLatestRunway({
+    env,
+    principal,
+    identityId: body.identity_id,
+    projectId: body.project_id,
+    scopeKey: body.scope_key,
+    requestedDomains,
+    permittedDomains: permitted,
+    now
+  });
+  const omissions = [];
+  const authorizedReferences = [];
+
+  if (resolution.context.runway_id && resolution.context.payload) {
+    const records = await env.DB.prepare(SQL.LIST_RUNWAY_RECORDS)
+      .bind(resolution.context.runway_id)
+      .all();
+
+    for (const record of records.results || []) {
+      if (permittedDomains.includes(record.domain)) {
+        authorizedReferences.push({
+          record_id: record.record_id,
+          domain: record.domain,
+          record_type: record.record_type,
+          source_ref: record.source_ref,
+          source_hash: record.source_hash,
+          relation: record.relation,
+          ordinal: Number(record.ordinal)
+        });
+      } else {
+        omissions.push({
+          record_id: record.record_id,
+          domain: record.domain,
+          reason: "domain_not_permitted"
+        });
+      }
+    }
+  }
+
+  resolution.context.authorized_references = authorizedReferences;
+
+  const supplementalQuery = String(body.supplemental_query || "").trim();
+  const supplemental = {
+    used: supplementalQuery.length > 0,
+    results: [],
+    errors: []
+  };
+
+  if (supplemental.used) {
+    if (permitted.length === 0) {
+      supplemental.errors.push({ code: "no_permitted_supplemental_domains" });
+    } else {
+      try {
+        const searchResult = await supplementalSearch({
+          query: supplementalQuery,
+          domains: permitted,
+          topK: sanitizeContinuityTopK(body.top_k),
+          projectId: normalizeProjectId(body.project_id),
+          scopeKey: normalizeScopeKey(body.scope_key),
+          runwayId: resolution.context.runway_id,
+          createdAfter: body.created_after,
+          sourceRefs: Array.isArray(body.source_refs) ? body.source_refs : []
+        });
+        supplemental.results = searchResult.results || [];
+        supplemental.errors = searchResult.errors || [];
+      } catch {
+        supplemental.errors = [{ code: "supplemental_search_unavailable" }];
+      }
+    }
+  }
+
+  const receiptProjection = {
+    receipt_id: resolution.retrieval_receipt_id,
+    identity_id: normalizeIdentityId(body.identity_id),
+    project_id: normalizeProjectId(body.project_id),
+    scope_key: normalizeScopeKey(body.scope_key),
+    selected_runway_id: resolution.context.runway_id,
+    selected_generation: resolution.context.generation,
+    context_status: resolution.context.status,
+    fallback_path: resolution.fallback_path,
+    requested_domains: requestedDomains,
+    permitted_domains: permitted,
+    supplemental_search_used: supplemental.used,
+    supplemental_result_count: supplemental.results.length,
+    omissions
+  };
+  const receiptHash = await sha256Hex(canonicalJson(receiptProjection));
+
+  await env.DB.prepare(SQL.UPDATE_RETRIEVAL_RECEIPT).bind(
+    supplemental.used ? 1 : 0,
+    supplemental.results.length,
+    canonicalJson(omissions),
+    canonicalJson(requestedDomains),
+    canonicalJson(permitted),
+    receiptHash,
+    resolution.retrieval_receipt_id
+  ).run();
+
+  return {
+    context: resolution.context,
+    supplemental,
+    requested_domains: requestedDomains,
+    permitted_domains: permitted,
+    omissions,
+    fallback_path: resolution.fallback_path,
+    retrieval_receipt_id: resolution.retrieval_receipt_id
+  };
+}
+
+export async function getContinuityHistory({
+  env,
+  principal,
+  identityId,
+  projectId,
+  scopeKey
+}) {
+  requireContinuityDatabase(env);
+  const identity = normalizeIdentityId(identityId);
+  const project = normalizeProjectId(projectId);
+  const scope = normalizeScopeKey(scopeKey);
+  assertContinuityTarget(principal, {
+    identityId: identity,
+    projectId: project,
+    operation: "audit"
+  });
+  const rows = await env.DB.prepare(SQL.LIST_HISTORY)
+    .bind(identity, project, scope)
+    .all();
+
+  return {
+    identity_id: identity,
+    project_id: project,
+    scope_key: scope,
+    runways: (rows.results || []).map(auditRunwayMetadata)
+  };
+}
+
+export async function getCheckpointAudit({ env, principal, runwayId }) {
+  const row = await requireAuditableRunway(env, principal, runwayId);
+  const [records, validations, attempts, invalidations] = await Promise.all([
+    env.DB.prepare(SQL.LIST_RUNWAY_RECORDS).bind(row.runway_id).all(),
+    env.DB.prepare(SQL.LIST_VALIDATIONS).bind(row.runway_id).all(),
+    env.DB.prepare(SQL.LIST_PUBLICATION_ATTEMPTS).bind(row.runway_id).all(),
+    env.DB.prepare(SQL.LIST_INVALIDATIONS).bind(row.runway_id).all()
+  ]);
+
+  return {
+    runway: auditRunwayMetadata(row),
+    payload: parseStoredJson(row.payload_json, "payload_json"),
+    records: records.results || [],
+    validations: (validations.results || []).map(parseValidationAudit),
+    publication_attempts: attempts.results || [],
+    invalidations: invalidations.results || []
+  };
+}
+
+export async function getValidationAudit({ env, principal, runwayId }) {
+  const row = await requireAuditableRunway(env, principal, runwayId);
+  const validations = await env.DB.prepare(SQL.LIST_VALIDATIONS)
+    .bind(row.runway_id)
+    .all();
+
+  return {
+    runway_id: row.runway_id,
+    validations: (validations.results || []).map(parseValidationAudit)
+  };
+}
+
+export async function getRetrievalReceiptAudit({
+  env,
+  principal,
+  receiptId
+}) {
+  requireContinuityDatabase(env);
+  const normalizedReceiptId = normalizeNullableId(receiptId, "receipt_id", {
+    required: true
+  });
+  const row = await env.DB.prepare(SQL.GET_RETRIEVAL_RECEIPT)
+    .bind(normalizedReceiptId)
+    .first();
+
+  if (!row) {
+    throw new ContinuityError(
+      "retrieval_receipt_not_found",
+      "Retrieval receipt does not exist",
+      404
+    );
+  }
+
+  assertContinuityTarget(principal, {
+    identityId: row.identity_id,
+    projectId: row.project_id,
+    operation: "audit"
+  });
+
+  return {
+    ...row,
+    fallback_path: parseStoredJson(row.fallback_path_json, "fallback_path_json"),
+    requested_domains: parseStoredJson(
+      row.requested_domains_json,
+      "requested_domains_json"
+    ),
+    permitted_domains: parseStoredJson(
+      row.permitted_domains_json,
+      "permitted_domains_json"
+    ),
+    omissions: parseStoredJson(row.omissions_json, "omissions_json"),
+    fallback_path_json: undefined,
+    requested_domains_json: undefined,
+    permitted_domains_json: undefined,
+    omissions_json: undefined
+  };
+}
+
+async function requireAuditableRunway(env, principal, runwayId) {
+  requireContinuityDatabase(env);
+  const normalizedRunwayId = normalizeNullableId(runwayId, "runway_id", {
+    required: true
+  });
+  const row = await env.DB.prepare(SQL.GET_RUNWAY).bind(normalizedRunwayId).first();
+  if (!row) {
+    throw new ContinuityError("runway_not_found", "Checkpoint does not exist", 404);
+  }
+  assertContinuityTarget(principal, {
+    identityId: row.identity_id,
+    projectId: row.project_id,
+    operation: "audit"
+  });
+  return row;
+}
+
+function auditRunwayMetadata(row) {
+  return {
+    runway_id: row.runway_id,
+    schema_version: row.schema_version,
+    identity_id: row.identity_id,
+    project_id: row.project_id,
+    scope_key: row.scope_key,
+    predecessor_runway_id: row.predecessor_runway_id,
+    source_invocation_id: row.source_invocation_id,
+    generation: Number(row.generation),
+    state: row.state,
+    context_status: row.context_status,
+    manifest_hash: row.manifest_hash,
+    integrity_state: row.integrity_state,
+    completeness_score: row.completeness_score,
+    indexing_state: row.indexing_state,
+    portable_artifact_ref: row.portable_artifact_ref || null,
+    created_at: row.created_at,
+    validated_at: row.validated_at || null,
+    sealed_at: row.sealed_at || null,
+    published_at: row.published_at || null,
+    invalidated_at: row.invalidated_at || null,
+    invalidation_reason: row.invalidation_reason || null
+  };
+}
+
+function parseValidationAudit(row) {
+  return {
+    ...row,
+    errors: parseStoredJson(row.errors_json, "errors_json"),
+    warnings: parseStoredJson(row.warnings_json, "warnings_json"),
+    errors_json: undefined,
+    warnings_json: undefined
+  };
+}
+
+function normalizeDomainList(value) {
+  const allowed = new Set(["knowledge", "agents", "skills", "files", "library"]);
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map(item => String(item).trim().toLowerCase())
+    .filter(item => allowed.has(item)))];
+}
+
+function sanitizeContinuityTopK(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 5;
+  return Math.min(parsed, 25);
+}
+
 function requireContinuityDatabase(env) {
   if (!env?.DB || typeof env.DB.prepare !== "function") {
     throw new ContinuityError(
@@ -2013,5 +2314,29 @@ const SQL = Object.freeze({
     INSERT INTO context_runway_invalidations (
       invalidation_id, runway_id, invalidated_by_credential_id, reason,
       previous_head_runway_id, restored_head_runway_id, created_at, receipt_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  LIST_RUNWAY_RECORDS: `/* continuity:list-runway-records */
+    SELECT * FROM context_runway_records
+     WHERE runway_id = ? ORDER BY ordinal ASC, record_id ASC`,
+  UPDATE_RETRIEVAL_RECEIPT: `/* continuity:update-retrieval-receipt */
+    UPDATE context_retrieval_receipts
+       SET supplemental_search_used = ?, supplemental_result_count = ?,
+           omissions_json = ?, requested_domains_json = ?,
+           permitted_domains_json = ?, receipt_hash = ?
+     WHERE receipt_id = ?`,
+  LIST_HISTORY: `/* continuity:list-history */
+    SELECT * FROM context_runways
+     WHERE identity_id = ? AND project_id = ? AND scope_key = ?
+     ORDER BY generation DESC, created_at DESC`,
+  LIST_VALIDATIONS: `/* continuity:list-validations */
+    SELECT * FROM context_runway_validations
+     WHERE runway_id = ? ORDER BY created_at DESC`,
+  LIST_PUBLICATION_ATTEMPTS: `/* continuity:list-publication-attempts */
+    SELECT * FROM context_publication_attempts
+     WHERE runway_id = ? ORDER BY created_at DESC`,
+  LIST_INVALIDATIONS: `/* continuity:list-invalidations */
+    SELECT * FROM context_runway_invalidations
+     WHERE runway_id = ? ORDER BY created_at DESC`,
+  GET_RETRIEVAL_RECEIPT: `/* continuity:get-retrieval-receipt */
+    SELECT * FROM context_retrieval_receipts WHERE receipt_id = ?`
 });

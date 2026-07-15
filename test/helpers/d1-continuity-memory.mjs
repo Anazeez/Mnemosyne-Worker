@@ -150,6 +150,8 @@ class MemoryStatement {
       }
       case "get-invalidation":
         return clone(db.invalidations.get(this.values[0]) || null);
+      case "get-retrieval-receipt":
+        return clone(db.receipts.get(this.values[0]) || null);
       default:
         throw new Error(`Operation ${this.operation} does not support first()`);
     }
@@ -176,6 +178,22 @@ class MemoryStatement {
             row.runway_id === this.values[0]
           ))
         };
+      case "list-publication-attempts":
+        return {
+          results: clone([...db.attempts.values()].filter(row =>
+            row.runway_id === this.values[0]
+          ))
+        };
+      case "list-history": {
+        const [identityId, projectId, scopeKey] = this.values;
+        return {
+          results: clone([...db.runways.values()].filter(row =>
+            row.identity_id === identityId &&
+            row.project_id === projectId &&
+            row.scope_key === scopeKey
+          ).sort((left, right) => Number(right.generation) - Number(left.generation)))
+        };
+      }
       default:
         throw new Error(`Operation ${this.operation} does not support all()`);
     }
@@ -246,6 +264,28 @@ class MemoryStatement {
       case "insert-retrieval-receipt": {
         const row = receiptFromValues(this.values);
         db.receipts.set(row.receipt_id, row);
+        return changed(1);
+      }
+      case "update-retrieval-receipt": {
+        const [
+          supplementalUsed,
+          supplementalCount,
+          omissionsJson,
+          requestedDomainsJson,
+          permittedDomainsJson,
+          receiptHash,
+          receiptId
+        ] = this.values;
+        const row = db.receipts.get(receiptId);
+        if (!row) return changed(0);
+        Object.assign(row, {
+          supplemental_search_used: supplementalUsed,
+          supplemental_result_count: supplementalCount,
+          omissions_json: omissionsJson,
+          requested_domains_json: requestedDomainsJson,
+          permitted_domains_json: permittedDomainsJson,
+          receipt_hash: receiptHash
+        });
         return changed(1);
       }
       case "insert-publication-attempt": {

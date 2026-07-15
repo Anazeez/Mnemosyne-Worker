@@ -1,8 +1,13 @@
 import {
   ContinuityError,
   createCandidateCheckpoint,
+  getCheckpointAudit,
+  getContinuityHistory,
+  getRetrievalReceiptAudit,
+  getValidationAudit,
   invalidateCheckpoint,
   publishCheckpoint,
+  rehydrateContext,
   resolveLatestRunway,
   validateCandidateCheckpoint
 } from "./continuity.js";
@@ -267,6 +272,7 @@ const ARCHITECTUS_PRINCIPAL = Object.freeze({
   capabilities: ROOT_CAPABILITIES,
   memory_domains: Object.freeze(["*"]),
   project_ids: Object.freeze(["*"]),
+  identity_ids: Object.freeze(["*"]),
   receives_mandates: false
 });
 
@@ -390,6 +396,70 @@ export default {
           permittedDomains: allowedDomains(principal)
         });
         return Response.json(result);
+      }
+
+      if (url.pathname === "/v1/continuity/rehydrate" && method === "POST") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_READ);
+        const body = await readJsonRequest(request);
+        const result = await rehydrateContext({
+          body,
+          env,
+          principal,
+          permittedDomains: allowedDomains(principal),
+          supplementalSearch: input => executeSupplementalMemorySearch(
+            input,
+            env,
+            principal
+          )
+        });
+        return Response.json(result);
+      }
+
+      if (url.pathname === "/v1/continuity/history" && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getContinuityHistory({
+          env,
+          principal,
+          identityId: url.searchParams.get("identity_id"),
+          projectId: url.searchParams.get("project_id"),
+          scopeKey: url.searchParams.get("scope_key")
+        }));
+      }
+
+      const continuityReceiptMatch = url.pathname.match(
+        /^\/v1\/continuity\/retrieval-receipts\/([^/]+)$/
+      );
+      if (continuityReceiptMatch && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getRetrievalReceiptAudit({
+          env,
+          principal,
+          receiptId: continuityReceiptMatch[1]
+        }));
+      }
+
+      const continuityValidationAuditMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)\/validation$/
+      );
+      if (continuityValidationAuditMatch && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getValidationAudit({
+          env,
+          principal,
+          runwayId: continuityValidationAuditMatch[1]
+        }));
+      }
+
+      const continuityCheckpointAuditMatch = url.pathname.match(
+        /^\/v1\/continuity\/checkpoints\/([^/]+)$/
+      );
+      if (continuityCheckpointAuditMatch && method === "GET") {
+        requireCapability(principal, CAPABILITY.CONTINUITY_AUDIT);
+        return Response.json(await getCheckpointAudit({
+          env,
+          principal,
+          runwayId: continuityCheckpointAuditMatch[1]
+        }));
       }
 
       if (url.pathname === "/v1/continuity/checkpoints" && method === "POST") {
@@ -703,6 +773,7 @@ function authenticateRequest(request, env) {
         capabilities: [...DASHBOARD_CAPABILITIES],
         memory_domains: [],
         project_ids: [],
+        identity_ids: [],
         receives_mandates: false
       }
     };
@@ -828,6 +899,7 @@ function resolveCredentialPrincipal(record) {
     capabilities: [...policy.capabilities],
     memory_domains: memoryDomains,
     project_ids: resolveEffectiveProjectIds(record),
+    identity_ids: resolveEffectiveIdentityIds(record, role, credentialId),
     receives_mandates: Boolean(policy.receives_mandates)
   };
 }
@@ -843,6 +915,26 @@ function resolveEffectiveProjectIds(record) {
     .filter(project => /^[a-z0-9][a-z0-9._-]{1,63}$/.test(project));
 
   return [...new Set(normalized)];
+}
+
+function resolveEffectiveIdentityIds(record, role, credentialId) {
+  if (role === "root" || role === "orchestrator") {
+    return ["*"];
+  }
+
+  const identities = normalizeStringList(
+    record.identity_ids ||
+    record.identities ||
+    record.allowed_identities
+  )
+    .map(identity => identity.toLowerCase())
+    .filter(identity => /^[a-z0-9][a-z0-9_-]{1,63}$/.test(identity));
+
+  if (identities.length === 0 && role === "specialist") {
+    return [credentialId];
+  }
+
+  return [...new Set(identities)];
 }
 
 function resolveEffectiveMemoryDomains(record, policy) {
@@ -999,7 +1091,8 @@ function handleMemorySelf(principal) {
     class: principal.role,
     capabilities: principal.capabilities,
     memory_domains: allowedDomains(principal),
-    project_ids: [...(principal.project_ids || [])]
+    project_ids: [...(principal.project_ids || [])],
+    identity_ids: [...(principal.identity_ids || [])]
   });
 }
 
@@ -1041,6 +1134,8 @@ async function handleMemorySearch(
   const topK = sanitizeTopK(
     body.top_k ?? body.topK ?? DEFAULT_TOP_K
   );
+  const threshold = sanitizeRetrievalThreshold(body.threshold);
+  const metadataFilter = buildMemoryMetadataFilter(body);
 
   if (!query) {
     return jsonError("query is required", 400);
@@ -1083,7 +1178,10 @@ async function handleMemorySearch(
     try {
       const queryResult = await matrixIndex.query(queryVector, {
         topK,
-        returnMetadata: "all"
+        returnMetadata: "all",
+        ...(Object.keys(metadataFilter).length > 0
+          ? { filter: metadataFilter }
+          : {})
       });
 
       for (const match of queryResult.matches || []) {
@@ -1103,20 +1201,22 @@ async function handleMemorySearch(
   const sortedMatches = combined.sort((a, b) => b.score - a.score);
 
   const filteredMatches = sortedMatches
-    .filter(match => match.score >= RETRIEVAL_THRESHOLD)
+    .filter(match => match.score >= threshold)
     .slice(0, topK);
 
   const payload = {
     query,
     index,
     searched_indexes: domains,
-    threshold: RETRIEVAL_THRESHOLD,
+    threshold,
     total_raw: combined.length,
     above_threshold: filteredMatches.length,
     credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     errors,
-    results: filteredMatches.map(formatVectorMatch)
+    results: filteredMatches.map(formatVectorMatch),
+    runway_context: null,
+    supplemental_evidence: filteredMatches.map(formatVectorMatch)
   };
 
   if (legacy) {
@@ -1131,10 +1231,92 @@ async function handleMemorySearch(
   });
 }
 
+async function executeSupplementalMemorySearch(input, env, principal) {
+  const query = String(input.query || "").trim();
+  if (!query) {
+    return { results: [], errors: [] };
+  }
+
+  const domains = [...new Set(input.domains || [])]
+    .flatMap(domain => resolveSearchDomains(domain, principal));
+  const topK = sanitizeTopK(input.topK);
+  const metadataFilter = buildMemoryMetadataFilter({
+    project_id: input.projectId,
+    scope_key: input.scopeKey,
+    runway_id: input.runwayId,
+    created_after: input.createdAfter,
+    source_refs: input.sourceRefs
+  });
+  const embedding = await env.AI.run(EMBEDDING_MODEL, { text: [query] });
+  const queryVector = embedding.data?.[0];
+
+  if (!queryVector) {
+    throw new Error("supplemental embedding unavailable");
+  }
+
+  const combined = [];
+  const errors = [];
+
+  for (const domain of domains) {
+    const matrixIndex = env[INDEX_BINDING[domain]];
+    if (!matrixIndex) {
+      errors.push({ index: domain, code: "supplemental_domain_unavailable" });
+      continue;
+    }
+
+    try {
+      const queryResult = await matrixIndex.query(queryVector, {
+        topK,
+        returnMetadata: "all",
+        ...(Object.keys(metadataFilter).length > 0
+          ? { filter: metadataFilter }
+          : {})
+      });
+      for (const match of queryResult.matches || []) {
+        combined.push({ ...match, resolved_index: domain });
+      }
+    } catch {
+      errors.push({ index: domain, code: "supplemental_domain_unavailable" });
+    }
+  }
+
+  return {
+    results: combined
+      .sort((left, right) => right.score - left.score)
+      .filter(match => match.score >= RETRIEVAL_THRESHOLD)
+      .slice(0, topK)
+      .map(formatVectorMatch),
+    errors
+  };
+}
+
+function buildMemoryMetadataFilter(body) {
+  const filter = {};
+  const bounded = (value, maximum = 128) => {
+    const normalized = String(value || "").trim();
+    return normalized && normalized.length <= maximum ? normalized : null;
+  };
+  const projectId = bounded(body.project_id);
+  const scopeKey = bounded(body.scope_key);
+  const runwayId = bounded(body.runway_id);
+  const createdAfter = bounded(body.created_after);
+  const sourceRefs = Array.isArray(body.source_refs)
+    ? body.source_refs.map(item => bounded(item, 500)).filter(Boolean).slice(0, 100)
+    : [];
+
+  if (projectId) filter.project_id = projectId;
+  if (scopeKey) filter.scope_key = scopeKey;
+  if (runwayId) filter.runway_id = runwayId;
+  if (createdAfter) filter.created = { $gte: createdAfter };
+  if (sourceRefs.length > 0) filter.source_ref = { $in: sourceRefs };
+  return filter;
+}
+
 function formatVectorMatch(match) {
   const metadata = match.metadata || {};
 
   return {
+    id: match.id,
     score: Number(match.score.toFixed(4)),
     file: metadata.file,
     path: metadata.path,
@@ -1143,6 +1325,12 @@ function formatVectorMatch(match) {
     status: metadata.status,
     preview: metadata.preview,
     index: metadata.index || match.resolved_index,
+    project_id: metadata.project_id,
+    scope_key: metadata.scope_key,
+    runway_id: metadata.runway_id,
+    source_ref: metadata.source_ref,
+    created: metadata.created,
+    schema: metadata.schema,
     citation:
       metadata.path && metadata.sha256
         ? `${metadata.path}#${metadata.sha256}`
@@ -1158,6 +1346,19 @@ function sanitizeTopK(value) {
   }
 
   return Math.min(parsed, MAX_TOP_K);
+}
+
+function sanitizeRetrievalThreshold(value) {
+  if (value === undefined || value === null || value === "") {
+    return RETRIEVAL_THRESHOLD;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return RETRIEVAL_THRESHOLD;
+  }
+
+  return Math.min(0.95, Math.max(0.5, parsed));
 }
 
 // ─── Mandate API ──────────────────────────────────────────────────────────────
