@@ -311,7 +311,10 @@ test("invocation enforcement requires an eligible exact-resolution receipt at Ar
       proposedTags: [],
       proposedLinks: [],
       warnings: []
-    }) } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) }, finish_reason: "stop" }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
   };
   try {
     const allowed = await worker.fetch(new Request(
