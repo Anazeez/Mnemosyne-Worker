@@ -161,3 +161,67 @@ test("review does not reflect provider failure bodies", async () => {
     }
   });
 });
+
+test("review contains provider refusals without reflecting refusal text", async () => {
+  const worker = await loadWorker();
+  const sensitiveMarker = "private refusal explanation";
+  const response = await withStubbedFetch(
+    async () => providerChatResponse("{}", { refusal: sensitiveMarker }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(response.status, 502);
+  const body = await response.text();
+  assert.equal(body.includes(sensitiveMarker), false);
+  assert.deepEqual(JSON.parse(body), { error: "provider_output_refused" });
+});
+
+test("review reports a bounded incomplete completion reason", async () => {
+  const worker = await loadWorker();
+  const response = await withStubbedFetch(
+    async () => providerChatResponse("{}", { finishReason: "length" }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), {
+    error: "provider_output_incomplete",
+    details: { finishReason: "length" }
+  });
+});
+
+test("review omits unsafe incomplete completion reasons", async () => {
+  const worker = await loadWorker();
+  const response = await withStubbedFetch(
+    async () => providerChatResponse("{}", { finishReason: "secret value" }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), {
+    error: "provider_output_incomplete"
+  });
+});
+
+test("review distinguishes JSON parsing from contract validation", async () => {
+  const worker = await loadWorker();
+  const parseFailure = await withStubbedFetch(
+    async () => providerChatResponse("not-json"),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+  const contractFailure = await withStubbedFetch(
+    async () => providerChatResponse({ summary: "incomplete" }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(parseFailure.status, 502);
+  assert.deepEqual(await parseFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "json_parse" }
+  });
+  assert.equal(contractFailure.status, 502);
+  assert.deepEqual(await contractFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "contract_validation" }
+  });
+});

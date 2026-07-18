@@ -3261,8 +3261,15 @@ async function handleAriadneCoreIntake(request, env) {
   }
 
   const proposal = parseJsonObject(provider.content);
+  if (!proposal) {
+    return jsonError("invalid_provider_output", 502, {
+      stage: "json_parse"
+    });
+  }
   if (!isValidAriadneIntakeProposal(proposal)) {
-    return jsonError("invalid_provider_output", 502);
+    return jsonError("invalid_provider_output", 502, {
+      stage: "contract_validation"
+    });
   }
 
   return Response.json({
@@ -3318,8 +3325,15 @@ async function handleAriadneCoreReview(request, env) {
   }
 
   const review = parseJsonObject(provider.content);
+  if (!review) {
+    return jsonError("invalid_provider_output", 502, {
+      stage: "json_parse"
+    });
+  }
   if (!isValidAriadneReview(review)) {
-    return jsonError("invalid_provider_output", 502);
+    return jsonError("invalid_provider_output", 502, {
+      stage: "contract_validation"
+    });
   }
 
   return Response.json({
@@ -3468,7 +3482,24 @@ async function requestProviderChat(env, { system, input, schemaName, schema }) {
     return { ok: false, error: "invalid_provider_response", status: 502 };
   }
 
-  const content = payload?.choices?.[0]?.message?.content;
+  const choice = payload?.choices?.[0];
+  const message = choice?.message;
+
+  if (typeof message?.refusal === "string" && message.refusal.length > 0) {
+    return { ok: false, error: "provider_output_refused", status: 502 };
+  }
+
+  if (choice?.finish_reason !== "stop") {
+    const finishReason = cleanProviderCode(choice?.finish_reason);
+    return {
+      ok: false,
+      error: "provider_output_incomplete",
+      status: 502,
+      ...(finishReason ? { details: { finishReason } } : {})
+    };
+  }
+
+  const content = message?.content;
   return typeof content === "string"
     ? { ok: true, content }
     : { ok: false, error: "invalid_provider_response", status: 502 };

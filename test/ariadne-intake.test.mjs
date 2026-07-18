@@ -158,13 +158,25 @@ test("intake contains provider failures without reflecting upstream content", as
   });
 });
 
-test("intake rejects malformed provider output without reflecting it", async () => {
+test("intake distinguishes JSON parsing from contract validation", async () => {
   const worker = await loadWorker();
-  const response = await withStubbedFetch(
+  const parseFailure = await withStubbedFetch(
+    async () => providerChatResponse("not-json"),
+    () => worker.fetch(intakeRequest(), ariadneEnvironment())
+  );
+  const contractFailure = await withStubbedFetch(
     async () => providerChatResponse({ summary: "incomplete" }),
     () => worker.fetch(intakeRequest(), ariadneEnvironment())
   );
 
-  assert.equal(response.status, 502);
-  assert.deepEqual(await response.json(), { error: "invalid_provider_output" });
+  assert.equal(parseFailure.status, 502);
+  assert.deepEqual(await parseFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "json_parse" }
+  });
+  assert.equal(contractFailure.status, 502);
+  assert.deepEqual(await contractFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "contract_validation" }
+  });
 });
