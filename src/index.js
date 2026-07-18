@@ -3202,14 +3202,14 @@ async function handleAriadneCoreIntake(request, env) {
       metadata,
       reviewFirst: true
     },
-    fields: [
-      "classification",
-      "summary",
-      "proposedDestination",
-      "proposedTags",
-      "proposedLinks",
-      "warnings"
-    ]
+    contract: {
+      classification: "string",
+      summary: "string",
+      proposedDestination: "string",
+      proposedTags: "string[]",
+      proposedLinks: "string[]",
+      warnings: "string[]"
+    }
   });
 
   if (!provider.ok) {
@@ -3255,18 +3255,18 @@ async function handleAriadneCoreReview(request, env) {
     });
   }
 
-  const fields = [
-    "summary",
-    "quality",
-    "ambiguities",
-    "missingInformation",
-    "duplicateRisk",
-    "suggestedTags",
-    "suggestedLinks",
-    "suggestedDestination",
-    "confidence",
-    "warnings"
-  ];
+  const contract = {
+    summary: "string",
+    quality: "string",
+    ambiguities: "string[]",
+    missingInformation: "string[]",
+    duplicateRisk: "string",
+    suggestedTags: "string[]",
+    suggestedLinks: "string[]",
+    suggestedDestination: "string",
+    confidence: "number between 0 and 1",
+    warnings: "string[]"
+  };
   const provider = await requestProviderChat(env, {
     system:
       "Return JSON only. Review existing content without mutating, moving, renaming, or deleting files. Do not claim any vault change occurred.",
@@ -3277,7 +3277,7 @@ async function handleAriadneCoreReview(request, env) {
       metadata,
       reviewFirst: true
     },
-    fields
+    contract
   });
 
   if (!provider.ok) {
@@ -3367,7 +3367,7 @@ async function handleAriadneCoreDiagnostic(env) {
   });
 }
 
-async function requestProviderChat(env, { system, input, fields }) {
+async function requestProviderChat(env, { system, input, contract }) {
   if (!env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
     return { ok: false, error: "provider_unavailable", status: 503 };
   }
@@ -3382,12 +3382,15 @@ async function requestProviderChat(env, { system, input, fields }) {
       },
       body: JSON.stringify({
         model: env.OPENAI_MODEL,
-        temperature: 0.2,
         messages: [
           { role: "system", content: system },
           {
             role: "user",
-            content: `Return exactly these JSON fields: ${fields.join(", ")}.\n\n${JSON.stringify(input)}`
+            content:
+              "Return one JSON object matching this required contract exactly. " +
+              "Do not add or omit fields.\n\n" +
+              `Contract: ${JSON.stringify(contract)}\n\n` +
+              `Input: ${JSON.stringify(input)}`
           }
         ]
       })

@@ -48,7 +48,16 @@ function environment(role = "specialist") {
 test("review returns a validated non-mutating result", async () => {
   const worker = await loadWorker();
   const response = await withStubbedFetch(
-    async () => providerChatResponse(validReview),
+    async (_url, options) => {
+      const payload = JSON.parse(options.body);
+      assert.equal(Object.hasOwn(payload, "temperature"), false);
+      assert.match(
+        payload.messages[1].content,
+        /"confidence":"number between 0 and 1"/
+      );
+      assert.match(payload.messages[1].content, /"warnings":"string\[\]"/);
+      return providerChatResponse(validReview);
+    },
     () => worker.fetch(reviewRequest(), environment())
   );
 
