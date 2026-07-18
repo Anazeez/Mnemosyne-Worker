@@ -106,12 +106,26 @@ test("review does not reflect provider failure bodies", async () => {
   const worker = await loadWorker();
   const sensitiveMarker = "private-provider-review-detail";
   const response = await withStubbedFetch(
-    async () => new Response(sensitiveMarker, { status: 500 }),
+    async () => new Response(JSON.stringify({
+      error: {
+        code: "unsupported_value",
+        message: sensitiveMarker
+      }
+    }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    }),
     () => worker.fetch(reviewRequest(), environment())
   );
 
   assert.equal(response.status, 502);
   const body = await response.text();
   assert.equal(body.includes(sensitiveMarker), false);
-  assert.equal(JSON.parse(body).error, "provider_unavailable");
+  assert.deepEqual(JSON.parse(body), {
+    error: "provider_request_failed",
+    details: {
+      upstreamStatus: 400,
+      upstreamCode: "unsupported_value"
+    }
+  });
 });

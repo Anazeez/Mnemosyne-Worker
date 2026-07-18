@@ -107,7 +107,12 @@ test("intake contains provider failures without reflecting upstream content", as
   const worker = await loadWorker();
   const sensitiveMarker = "provider-private-diagnostic-marker";
   const response = await withStubbedFetch(
-    async () => new Response(JSON.stringify({ error: sensitiveMarker }), {
+    async () => new Response(JSON.stringify({
+      error: {
+        type: "rate_limit_error",
+        message: sensitiveMarker
+      }
+    }), {
       status: 429,
       headers: { "Content-Type": "application/json" }
     }),
@@ -117,7 +122,13 @@ test("intake contains provider failures without reflecting upstream content", as
   assert.equal(response.status, 502);
   const body = await response.text();
   assert.equal(body.includes(sensitiveMarker), false);
-  assert.equal(JSON.parse(body).error, "provider_unavailable");
+  assert.deepEqual(JSON.parse(body), {
+    error: "provider_request_failed",
+    details: {
+      upstreamStatus: 429,
+      upstreamCode: "rate_limit_error"
+    }
+  });
 });
 
 test("intake rejects malformed provider output without reflecting it", async () => {

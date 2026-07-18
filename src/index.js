@@ -3213,7 +3213,7 @@ async function handleAriadneCoreIntake(request, env) {
   });
 
   if (!provider.ok) {
-    return jsonError(provider.error, provider.status);
+    return jsonError(provider.error, provider.status, provider.details);
   }
 
   const proposal = parseJsonObject(provider.content);
@@ -3281,7 +3281,7 @@ async function handleAriadneCoreReview(request, env) {
   });
 
   if (!provider.ok) {
-    return jsonError(provider.error, provider.status);
+    return jsonError(provider.error, provider.status, provider.details);
   }
 
   const review = parseJsonObject(provider.content);
@@ -3400,7 +3400,25 @@ async function requestProviderChat(env, { system, input, contract }) {
   }
 
   if (!response.ok) {
-    return { ok: false, error: "provider_unavailable", status: 502 };
+    let upstreamCode = "";
+    try {
+      const payload = await response.json();
+      upstreamCode = cleanProviderCode(
+        payload?.error?.code ?? payload?.error?.type
+      );
+    } catch {
+      // Upstream bodies are intentionally discarded.
+    }
+
+    return {
+      ok: false,
+      error: "provider_request_failed",
+      status: 502,
+      details: {
+        upstreamStatus: response.status,
+        ...(upstreamCode ? { upstreamCode } : {})
+      }
+    };
   }
 
   let payload;
@@ -3414,6 +3432,12 @@ async function requestProviderChat(env, { system, input, contract }) {
   return typeof content === "string"
     ? { ok: true, content }
     : { ok: false, error: "invalid_provider_response", status: 502 };
+}
+
+function cleanProviderCode(value) {
+  return typeof value === "string" && /^[A-Za-z0-9._-]{1,100}$/.test(value)
+    ? value
+    : "";
 }
 
 function cleanBoundedString(value, maximumLength) {
