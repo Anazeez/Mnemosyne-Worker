@@ -51,11 +51,22 @@ test("review returns a validated non-mutating result", async () => {
     async (_url, options) => {
       const payload = JSON.parse(options.body);
       assert.equal(Object.hasOwn(payload, "temperature"), false);
-      assert.match(
-        payload.messages[1].content,
-        /"confidence":"number between 0 and 1"/
+      const contract = payload.messages[1].content.match(
+        /Contract: (\{.*\})\n\nInput:/s
       );
-      assert.match(payload.messages[1].content, /"warnings":"string\[\]"/);
+      assert.ok(contract);
+      assert.deepEqual(JSON.parse(contract[1]), {
+        summary: "string",
+        quality: "string",
+        ambiguities: "string[]",
+        missingInformation: "string[]",
+        duplicateRisk: "string",
+        suggestedTags: "string[]",
+        suggestedLinks: "string[]",
+        suggestedDestination: "string",
+        confidence: "number between 0 and 1",
+        warnings: "string[]"
+      });
       return providerChatResponse(validReview);
     },
     () => worker.fetch(reviewRequest(), environment())

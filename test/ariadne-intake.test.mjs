@@ -52,8 +52,18 @@ test("observed intake envelope returns a review-first non-mutating proposal", as
   const response = await withStubbedFetch(async (_url, options) => {
     const payload = JSON.parse(options.body);
     assert.equal(Object.hasOwn(payload, "temperature"), false);
-    assert.match(payload.messages[1].content, /"proposedTags":"string\[\]"/);
-    assert.match(payload.messages[1].content, /"warnings":"string\[\]"/);
+    const contract = payload.messages[1].content.match(
+      /Contract: (\{.*\})\n\nInput:/s
+    );
+    assert.ok(contract);
+    assert.deepEqual(JSON.parse(contract[1]), {
+      classification: "string",
+      summary: "string",
+      proposedDestination: "string",
+      proposedTags: "string[]",
+      proposedLinks: "string[]",
+      warnings: "string[]"
+    });
     assert.match(payload.messages[1].content, /"source":"obsidian-plugin"/);
     assert.match(payload.messages[1].content, /"reviewFirst":true/);
     return providerChatResponse(validProposal);
