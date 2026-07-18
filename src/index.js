@@ -3260,12 +3260,13 @@ async function handleAriadneCoreIntake(request, env) {
     return jsonError(provider.error, provider.status, provider.details);
   }
 
-  const proposal = parseJsonObject(provider.content);
-  if (!proposal) {
+  const parsedProposal = parseProviderJson(provider.content);
+  if (!parsedProposal.ok) {
     return jsonError("invalid_provider_output", 502, {
       stage: "json_parse"
     });
   }
+  const proposal = parsedProposal.value;
   if (!isValidAriadneIntakeProposal(proposal)) {
     return jsonError("invalid_provider_output", 502, {
       stage: "contract_validation"
@@ -3324,12 +3325,13 @@ async function handleAriadneCoreReview(request, env) {
     return jsonError(provider.error, provider.status, provider.details);
   }
 
-  const review = parseJsonObject(provider.content);
-  if (!review) {
+  const parsedReview = parseProviderJson(provider.content);
+  if (!parsedReview.ok) {
     return jsonError("invalid_provider_output", 502, {
       stage: "json_parse"
     });
   }
+  const review = parsedReview.value;
   if (!isValidAriadneReview(review)) {
     return jsonError("invalid_provider_output", 502, {
       stage: "contract_validation"
@@ -3519,14 +3521,11 @@ function cleanBoundedString(value, maximumLength) {
   return value.trim().slice(0, maximumLength);
 }
 
-function parseJsonObject(value) {
+function parseProviderJson(value) {
   try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : null;
+    return { ok: true, value: JSON.parse(value) };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 

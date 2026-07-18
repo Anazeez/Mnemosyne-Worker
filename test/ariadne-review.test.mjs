@@ -213,6 +213,10 @@ test("review distinguishes JSON parsing from contract validation", async () => {
     async () => providerChatResponse({ summary: "incomplete" }),
     () => worker.fetch(reviewRequest(), environment())
   );
+  const nonObjectFailure = await withStubbedFetch(
+    async () => providerChatResponse([]),
+    () => worker.fetch(reviewRequest(), environment())
+  );
 
   assert.equal(parseFailure.status, 502);
   assert.deepEqual(await parseFailure.json(), {
@@ -221,6 +225,11 @@ test("review distinguishes JSON parsing from contract validation", async () => {
   });
   assert.equal(contractFailure.status, 502);
   assert.deepEqual(await contractFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "contract_validation" }
+  });
+  assert.equal(nonObjectFailure.status, 502);
+  assert.deepEqual(await nonObjectFailure.json(), {
     error: "invalid_provider_output",
     details: { stage: "contract_validation" }
   });
