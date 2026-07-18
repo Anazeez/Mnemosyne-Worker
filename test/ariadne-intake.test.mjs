@@ -51,6 +51,19 @@ test("observed intake envelope returns a review-first non-mutating proposal", as
   const worker = await loadWorker();
   const response = await withStubbedFetch(async (_url, options) => {
     const payload = JSON.parse(options.body);
+    assert.equal(Object.hasOwn(payload, "temperature"), false);
+    const contract = payload.messages[1].content.match(
+      /Contract: (\{.*\})\n\nInput:/s
+    );
+    assert.ok(contract);
+    assert.deepEqual(JSON.parse(contract[1]), {
+      classification: "string",
+      summary: "string",
+      proposedDestination: "string",
+      proposedTags: "string[]",
+      proposedLinks: "string[]",
+      warnings: "string[]"
+    });
     assert.match(payload.messages[1].content, /"source":"obsidian-plugin"/);
     assert.match(payload.messages[1].content, /"reviewFirst":true/);
     return providerChatResponse(validProposal);
@@ -104,7 +117,12 @@ test("intake contains provider failures without reflecting upstream content", as
   const worker = await loadWorker();
   const sensitiveMarker = "provider-private-diagnostic-marker";
   const response = await withStubbedFetch(
-    async () => new Response(JSON.stringify({ error: sensitiveMarker }), {
+    async () => new Response(JSON.stringify({
+      error: {
+        type: "rate_limit_error",
+        message: sensitiveMarker
+      }
+    }), {
       status: 429,
       headers: { "Content-Type": "application/json" }
     }),
@@ -114,7 +132,13 @@ test("intake contains provider failures without reflecting upstream content", as
   assert.equal(response.status, 502);
   const body = await response.text();
   assert.equal(body.includes(sensitiveMarker), false);
-  assert.equal(JSON.parse(body).error, "provider_unavailable");
+  assert.deepEqual(JSON.parse(body), {
+    error: "provider_request_failed",
+    details: {
+      upstreamStatus: 429,
+      upstreamCode: "rate_limit_error"
+    }
+  });
 });
 
 test("intake rejects malformed provider output without reflecting it", async () => {
