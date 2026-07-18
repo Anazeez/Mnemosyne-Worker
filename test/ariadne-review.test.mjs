@@ -30,6 +30,42 @@ const validReview = Object.freeze({
   warnings: []
 });
 
+const reviewResponseFormat = Object.freeze({
+  type: "json_schema",
+  json_schema: {
+    name: "ariadne_review",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        quality: { type: "string" },
+        ambiguities: { type: "array", items: { type: "string" } },
+        missingInformation: { type: "array", items: { type: "string" } },
+        duplicateRisk: { type: "string" },
+        suggestedTags: { type: "array", items: { type: "string" } },
+        suggestedLinks: { type: "array", items: { type: "string" } },
+        suggestedDestination: { type: "string" },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+        warnings: { type: "array", items: { type: "string" } }
+      },
+      required: [
+        "summary",
+        "quality",
+        "ambiguities",
+        "missingInformation",
+        "duplicateRisk",
+        "suggestedTags",
+        "suggestedLinks",
+        "suggestedDestination",
+        "confidence",
+        "warnings"
+      ],
+      additionalProperties: false
+    }
+  }
+});
+
 function reviewRequest(body = validReviewRequest) {
   return authenticatedRequest("/api/ariadne/core/review", {
     method: "POST",
@@ -51,22 +87,7 @@ test("review returns a validated non-mutating result", async () => {
     async (_url, options) => {
       const payload = JSON.parse(options.body);
       assert.equal(Object.hasOwn(payload, "temperature"), false);
-      const contract = payload.messages[1].content.match(
-        /Contract: (\{.*\})\n\nInput:/s
-      );
-      assert.ok(contract);
-      assert.deepEqual(JSON.parse(contract[1]), {
-        summary: "string",
-        quality: "string",
-        ambiguities: "string[]",
-        missingInformation: "string[]",
-        duplicateRisk: "string",
-        suggestedTags: "string[]",
-        suggestedLinks: "string[]",
-        suggestedDestination: "string",
-        confidence: "number between 0 and 1",
-        warnings: "string[]"
-      });
+      assert.deepEqual(payload.response_format, reviewResponseFormat);
       return providerChatResponse(validReview);
     },
     () => worker.fetch(reviewRequest(), environment())
