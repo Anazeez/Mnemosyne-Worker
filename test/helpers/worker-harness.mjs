@@ -42,9 +42,22 @@ export async function withStubbedFetch(stub, operation) {
   }
 }
 
-export function providerChatResponse(content, status = 200) {
+export function providerChatResponse(content, options = {}) {
+  const {
+    status = 200,
+    finishReason = "stop",
+    refusal
+  } = options;
+  const message = {
+    content: typeof content === "string" ? content : JSON.stringify(content)
+  };
+
+  if (refusal !== undefined) {
+    message.refusal = refusal;
+  }
+
   return new Response(JSON.stringify({
-    choices: [{ message: { content: JSON.stringify(content) } }]
+    choices: [{ message, finish_reason: finishReason }]
   }), {
     status,
     headers: { "Content-Type": "application/json" }

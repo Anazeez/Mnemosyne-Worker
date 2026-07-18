@@ -29,6 +29,34 @@ const validProposal = Object.freeze({
   warnings: []
 });
 
+const intakeResponseFormat = Object.freeze({
+  type: "json_schema",
+  json_schema: {
+    name: "ariadne_intake",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        classification: { type: "string" },
+        summary: { type: "string" },
+        proposedDestination: { type: "string" },
+        proposedTags: { type: "array", items: { type: "string" } },
+        proposedLinks: { type: "array", items: { type: "string" } },
+        warnings: { type: "array", items: { type: "string" } }
+      },
+      required: [
+        "classification",
+        "summary",
+        "proposedDestination",
+        "proposedTags",
+        "proposedLinks",
+        "warnings"
+      ],
+      additionalProperties: false
+    }
+  }
+});
+
 function intakeRequest(body = validIntake, authenticated = true) {
   const options = {
     method: "POST",
@@ -52,18 +80,7 @@ test("observed intake envelope returns a review-first non-mutating proposal", as
   const response = await withStubbedFetch(async (_url, options) => {
     const payload = JSON.parse(options.body);
     assert.equal(Object.hasOwn(payload, "temperature"), false);
-    const contract = payload.messages[1].content.match(
-      /Contract: (\{.*\})\n\nInput:/s
-    );
-    assert.ok(contract);
-    assert.deepEqual(JSON.parse(contract[1]), {
-      classification: "string",
-      summary: "string",
-      proposedDestination: "string",
-      proposedTags: "string[]",
-      proposedLinks: "string[]",
-      warnings: "string[]"
-    });
+    assert.deepEqual(payload.response_format, intakeResponseFormat);
     assert.match(payload.messages[1].content, /"source":"obsidian-plugin"/);
     assert.match(payload.messages[1].content, /"reviewFirst":true/);
     return providerChatResponse(validProposal);
@@ -141,13 +158,25 @@ test("intake contains provider failures without reflecting upstream content", as
   });
 });
 
-test("intake rejects malformed provider output without reflecting it", async () => {
+test("intake distinguishes JSON parsing from contract validation", async () => {
   const worker = await loadWorker();
-  const response = await withStubbedFetch(
+  const parseFailure = await withStubbedFetch(
+    async () => providerChatResponse("not-json"),
+    () => worker.fetch(intakeRequest(), ariadneEnvironment())
+  );
+  const contractFailure = await withStubbedFetch(
     async () => providerChatResponse({ summary: "incomplete" }),
     () => worker.fetch(intakeRequest(), ariadneEnvironment())
   );
 
-  assert.equal(response.status, 502);
-  assert.deepEqual(await response.json(), { error: "invalid_provider_output" });
+  assert.equal(parseFailure.status, 502);
+  assert.deepEqual(await parseFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "json_parse" }
+  });
+  assert.equal(contractFailure.status, 502);
+  assert.deepEqual(await contractFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "contract_validation" }
+  });
 });

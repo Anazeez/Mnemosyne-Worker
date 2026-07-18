@@ -3166,6 +3166,56 @@ async function readJsonRequest(request) {
   }
 }
 
+const ARIADNE_INTAKE_SCHEMA = Object.freeze({
+  type: "object",
+  properties: {
+    classification: { type: "string" },
+    summary: { type: "string" },
+    proposedDestination: { type: "string" },
+    proposedTags: { type: "array", items: { type: "string" } },
+    proposedLinks: { type: "array", items: { type: "string" } },
+    warnings: { type: "array", items: { type: "string" } }
+  },
+  required: [
+    "classification",
+    "summary",
+    "proposedDestination",
+    "proposedTags",
+    "proposedLinks",
+    "warnings"
+  ],
+  additionalProperties: false
+});
+
+const ARIADNE_REVIEW_SCHEMA = Object.freeze({
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    quality: { type: "string" },
+    ambiguities: { type: "array", items: { type: "string" } },
+    missingInformation: { type: "array", items: { type: "string" } },
+    duplicateRisk: { type: "string" },
+    suggestedTags: { type: "array", items: { type: "string" } },
+    suggestedLinks: { type: "array", items: { type: "string" } },
+    suggestedDestination: { type: "string" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+    warnings: { type: "array", items: { type: "string" } }
+  },
+  required: [
+    "summary",
+    "quality",
+    "ambiguities",
+    "missingInformation",
+    "duplicateRisk",
+    "suggestedTags",
+    "suggestedLinks",
+    "suggestedDestination",
+    "confidence",
+    "warnings"
+  ],
+  additionalProperties: false
+});
+
 async function handleAriadneCoreIntake(request, env) {
   let body;
 
@@ -3202,23 +3252,25 @@ async function handleAriadneCoreIntake(request, env) {
       metadata,
       reviewFirst: true
     },
-    contract: {
-      classification: "string",
-      summary: "string",
-      proposedDestination: "string",
-      proposedTags: "string[]",
-      proposedLinks: "string[]",
-      warnings: "string[]"
-    }
+    schemaName: "ariadne_intake",
+    schema: ARIADNE_INTAKE_SCHEMA
   });
 
   if (!provider.ok) {
     return jsonError(provider.error, provider.status, provider.details);
   }
 
-  const proposal = parseJsonObject(provider.content);
+  const parsedProposal = parseProviderJson(provider.content);
+  if (!parsedProposal.ok) {
+    return jsonError("invalid_provider_output", 502, {
+      stage: "json_parse"
+    });
+  }
+  const proposal = parsedProposal.value;
   if (!isValidAriadneIntakeProposal(proposal)) {
-    return jsonError("invalid_provider_output", 502);
+    return jsonError("invalid_provider_output", 502, {
+      stage: "contract_validation"
+    });
   }
 
   return Response.json({
@@ -3255,18 +3307,6 @@ async function handleAriadneCoreReview(request, env) {
     });
   }
 
-  const contract = {
-    summary: "string",
-    quality: "string",
-    ambiguities: "string[]",
-    missingInformation: "string[]",
-    duplicateRisk: "string",
-    suggestedTags: "string[]",
-    suggestedLinks: "string[]",
-    suggestedDestination: "string",
-    confidence: "number between 0 and 1",
-    warnings: "string[]"
-  };
   const provider = await requestProviderChat(env, {
     system:
       "Return JSON only. Review existing content without mutating, moving, renaming, or deleting files. Do not claim any vault change occurred.",
@@ -3277,16 +3317,25 @@ async function handleAriadneCoreReview(request, env) {
       metadata,
       reviewFirst: true
     },
-    contract
+    schemaName: "ariadne_review",
+    schema: ARIADNE_REVIEW_SCHEMA
   });
 
   if (!provider.ok) {
     return jsonError(provider.error, provider.status, provider.details);
   }
 
-  const review = parseJsonObject(provider.content);
+  const parsedReview = parseProviderJson(provider.content);
+  if (!parsedReview.ok) {
+    return jsonError("invalid_provider_output", 502, {
+      stage: "json_parse"
+    });
+  }
+  const review = parsedReview.value;
   if (!isValidAriadneReview(review)) {
-    return jsonError("invalid_provider_output", 502);
+    return jsonError("invalid_provider_output", 502, {
+      stage: "contract_validation"
+    });
   }
 
   return Response.json({
@@ -3367,7 +3416,7 @@ async function handleAriadneCoreDiagnostic(env) {
   });
 }
 
-async function requestProviderChat(env, { system, input, contract }) {
+async function requestProviderChat(env, { system, input, schemaName, schema }) {
   if (!env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
     return { ok: false, error: "provider_unavailable", status: 503 };
   }
@@ -3382,14 +3431,21 @@ async function requestProviderChat(env, { system, input, contract }) {
       },
       body: JSON.stringify({
         model: env.OPENAI_MODEL,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: schemaName,
+            strict: true,
+            schema
+          }
+        },
         messages: [
           { role: "system", content: system },
           {
             role: "user",
             content:
-              "Return one JSON object matching this required contract exactly. " +
+              "Return one JSON object matching the required response format. " +
               "Do not add or omit fields.\n\n" +
-              `Contract: ${JSON.stringify(contract)}\n\n` +
               `Input: ${JSON.stringify(input)}`
           }
         ]
@@ -3428,7 +3484,24 @@ async function requestProviderChat(env, { system, input, contract }) {
     return { ok: false, error: "invalid_provider_response", status: 502 };
   }
 
-  const content = payload?.choices?.[0]?.message?.content;
+  const choice = payload?.choices?.[0];
+  const message = choice?.message;
+
+  if (typeof message?.refusal === "string" && message.refusal.length > 0) {
+    return { ok: false, error: "provider_output_refused", status: 502 };
+  }
+
+  if (choice?.finish_reason !== "stop") {
+    const finishReason = cleanProviderCode(choice?.finish_reason);
+    return {
+      ok: false,
+      error: "provider_output_incomplete",
+      status: 502,
+      ...(finishReason ? { details: { finishReason } } : {})
+    };
+  }
+
+  const content = message?.content;
   return typeof content === "string"
     ? { ok: true, content }
     : { ok: false, error: "invalid_provider_response", status: 502 };
@@ -3448,14 +3521,11 @@ function cleanBoundedString(value, maximumLength) {
   return value.trim().slice(0, maximumLength);
 }
 
-function parseJsonObject(value) {
+function parseProviderJson(value) {
   try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : null;
+    return { ok: true, value: JSON.parse(value) };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 

@@ -30,6 +30,42 @@ const validReview = Object.freeze({
   warnings: []
 });
 
+const reviewResponseFormat = Object.freeze({
+  type: "json_schema",
+  json_schema: {
+    name: "ariadne_review",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        quality: { type: "string" },
+        ambiguities: { type: "array", items: { type: "string" } },
+        missingInformation: { type: "array", items: { type: "string" } },
+        duplicateRisk: { type: "string" },
+        suggestedTags: { type: "array", items: { type: "string" } },
+        suggestedLinks: { type: "array", items: { type: "string" } },
+        suggestedDestination: { type: "string" },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+        warnings: { type: "array", items: { type: "string" } }
+      },
+      required: [
+        "summary",
+        "quality",
+        "ambiguities",
+        "missingInformation",
+        "duplicateRisk",
+        "suggestedTags",
+        "suggestedLinks",
+        "suggestedDestination",
+        "confidence",
+        "warnings"
+      ],
+      additionalProperties: false
+    }
+  }
+});
+
 function reviewRequest(body = validReviewRequest) {
   return authenticatedRequest("/api/ariadne/core/review", {
     method: "POST",
@@ -51,22 +87,7 @@ test("review returns a validated non-mutating result", async () => {
     async (_url, options) => {
       const payload = JSON.parse(options.body);
       assert.equal(Object.hasOwn(payload, "temperature"), false);
-      const contract = payload.messages[1].content.match(
-        /Contract: (\{.*\})\n\nInput:/s
-      );
-      assert.ok(contract);
-      assert.deepEqual(JSON.parse(contract[1]), {
-        summary: "string",
-        quality: "string",
-        ambiguities: "string[]",
-        missingInformation: "string[]",
-        duplicateRisk: "string",
-        suggestedTags: "string[]",
-        suggestedLinks: "string[]",
-        suggestedDestination: "string",
-        confidence: "number between 0 and 1",
-        warnings: "string[]"
-      });
+      assert.deepEqual(payload.response_format, reviewResponseFormat);
       return providerChatResponse(validReview);
     },
     () => worker.fetch(reviewRequest(), environment())
@@ -138,5 +159,78 @@ test("review does not reflect provider failure bodies", async () => {
       upstreamStatus: 400,
       upstreamCode: "unsupported_value"
     }
+  });
+});
+
+test("review contains provider refusals without reflecting refusal text", async () => {
+  const worker = await loadWorker();
+  const sensitiveMarker = "private refusal explanation";
+  const response = await withStubbedFetch(
+    async () => providerChatResponse("{}", { refusal: sensitiveMarker }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(response.status, 502);
+  const body = await response.text();
+  assert.equal(body.includes(sensitiveMarker), false);
+  assert.deepEqual(JSON.parse(body), { error: "provider_output_refused" });
+});
+
+test("review reports a bounded incomplete completion reason", async () => {
+  const worker = await loadWorker();
+  const response = await withStubbedFetch(
+    async () => providerChatResponse("{}", { finishReason: "length" }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), {
+    error: "provider_output_incomplete",
+    details: { finishReason: "length" }
+  });
+});
+
+test("review omits unsafe incomplete completion reasons", async () => {
+  const worker = await loadWorker();
+  const response = await withStubbedFetch(
+    async () => providerChatResponse("{}", { finishReason: "secret value" }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), {
+    error: "provider_output_incomplete"
+  });
+});
+
+test("review distinguishes JSON parsing from contract validation", async () => {
+  const worker = await loadWorker();
+  const parseFailure = await withStubbedFetch(
+    async () => providerChatResponse("not-json"),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+  const contractFailure = await withStubbedFetch(
+    async () => providerChatResponse({ summary: "incomplete" }),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+  const nonObjectFailure = await withStubbedFetch(
+    async () => providerChatResponse([]),
+    () => worker.fetch(reviewRequest(), environment())
+  );
+
+  assert.equal(parseFailure.status, 502);
+  assert.deepEqual(await parseFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "json_parse" }
+  });
+  assert.equal(contractFailure.status, 502);
+  assert.deepEqual(await contractFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "contract_validation" }
+  });
+  assert.equal(nonObjectFailure.status, 502);
+  assert.deepEqual(await nonObjectFailure.json(), {
+    error: "invalid_provider_output",
+    details: { stage: "contract_validation" }
   });
 });
