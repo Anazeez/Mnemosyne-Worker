@@ -22,14 +22,16 @@ in deployment automation and remain manual internal operations.
 ## Deployment order
 
 1. Run production preflight and the deterministic pilot.
-2. Deploy with all graph flags off; apply migration and create/reuse `OAUTH_KV`.
+2. Deploy with all graph flags off and apply the migration. Create or reuse a
+   dedicated `OAUTH_KV` when the Cloudflare token permits it.
 3. Verify `/ping`, OAuth metadata, protected-resource metadata, and OpenAPI.
-4. Configure GitHub OAuth credentials.
+4. Require dedicated `OAUTH_KV`, then configure GitHub OAuth credentials.
 5. Enable read for the synthetic tenant.
 6. Enable MCP and Actions, then verify five tools with a scoped token.
 7. Enable proposal and prove it creates only `pending_validation`.
 
 Do not enable review or publication through public rollout automation.
+MCP and Actions deployment fails closed when `OAUTH_KV` cannot be resolved.
 
 ## Recovery
 

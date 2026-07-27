@@ -56,7 +56,16 @@ jobs:
       - name: Verify complete Worker
         run: npm test
       - name: Ensure dedicated OAuth KV binding
-        run: node scripts/ensure-oauth-kv.mjs
+        shell: bash
+        run: |
+          if node scripts/ensure-oauth-kv.mjs; then
+            exit 0
+          fi
+          if [[ "$GRAPH_MEMORY_MCP_ENABLED" == "1" || "$GRAPH_MEMORY_ACTIONS_ENABLED" == "1" ]]; then
+            echo "OAuth KV is required before enabling public adapters."
+            exit 1
+          fi
+          echo "OAuth KV unavailable to this token; continuing only because all public adapters are disabled."
       - name: Build binding-preserving ephemeral configuration
         shell: bash
         run: |
