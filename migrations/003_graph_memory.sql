@@ -378,6 +378,22 @@ CREATE TABLE memory_invocations (
   completed_at TEXT
 );
 
+CREATE TABLE memory_deletion_receipts (
+  receipt_id TEXT PRIMARY KEY,
+  scope_kind TEXT NOT NULL CHECK (
+    scope_kind IN ('tenant', 'project', 'identity', 'candidate')
+  ),
+  scope_hash TEXT NOT NULL,
+  deleted_counts_json TEXT NOT NULL,
+  projection_ids_hash TEXT NOT NULL,
+  projection_status TEXT NOT NULL CHECK (
+    projection_status IN ('pending', 'deleted', 'repair_queued')
+  ),
+  requested_by_credential_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
 CREATE INDEX idx_memory_entities_type_state
   ON memory_entities (
     tenant_id, project_id, ontology_type, lifecycle_state, canonical_label

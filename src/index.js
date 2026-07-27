@@ -16,6 +16,12 @@ import {
   runScheduledContinuityVerification,
   validateCandidateCheckpoint
 } from "./continuity.js";
+import { GraphMemoryError } from "./graph-memory/contracts.js";
+import {
+  deleteMemoryScope,
+  exportMemoryScope,
+  rebuildMemoryProjection
+} from "./graph-memory/privacy.js";
 
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
@@ -99,6 +105,9 @@ const CAPABILITY = Object.freeze({
   MEMORY_CANDIDATE_READ_OWN: "memory.candidate.read.own",
   MEMORY_INGEST: "memory.ingest",
   MEMORY_HASH: "memory.hash",
+  MEMORY_EXPORT: "memory.export",
+  MEMORY_DELETE: "memory.delete",
+  MEMORY_PROJECTION_REBUILD: "memory.projection.rebuild",
 
   SKILLS_RETRIEVAL: "skills.retrieval",
   HISTORY_RETRIEVAL: "history.retrieval",
@@ -170,7 +179,10 @@ const ROOT_CAPABILITIES = Object.freeze([
   CAPABILITY.CONTINUITY_WRITE,
   CAPABILITY.CONTINUITY_PUBLISH,
   CAPABILITY.CONTINUITY_INVALIDATE,
-  CAPABILITY.CONTINUITY_AUDIT
+  CAPABILITY.CONTINUITY_AUDIT,
+  CAPABILITY.MEMORY_EXPORT,
+  CAPABILITY.MEMORY_DELETE,
+  CAPABILITY.MEMORY_PROJECTION_REBUILD
 ]);
 
 // Specialist GPTs: read-only memory, skills, mandates, their own exchange inbox,
@@ -642,6 +654,42 @@ export default {
         return handleExchangeHistory(env, principal);
       }
 
+      if (
+        url.pathname === "/v1/admin/memory/export" &&
+        method === "GET"
+      ) {
+        requireCapability(principal, CAPABILITY.MEMORY_EXPORT);
+        return Response.json(await exportMemoryScope({
+          env,
+          principal,
+          scope: privacyScopeFromUrl(url)
+        }));
+      }
+
+      if (
+        url.pathname === "/v1/admin/memory/scope" &&
+        method === "DELETE"
+      ) {
+        requireCapability(principal, CAPABILITY.MEMORY_DELETE);
+        return Response.json(await deleteMemoryScope({
+          env,
+          principal,
+          scope: await request.json()
+        }));
+      }
+
+      if (
+        url.pathname === "/v1/admin/memory/projection/rebuild" &&
+        method === "POST"
+      ) {
+        requireCapability(principal, CAPABILITY.MEMORY_PROJECTION_REBUILD);
+        return Response.json(await rebuildMemoryProjection({
+          env,
+          principal,
+          scope: await request.json()
+        }));
+      }
+
       const artifactMatch = url.pathname.match(
         /^\/v1\/exchanges\/([^/]+)\/artifact$/
       );
@@ -668,6 +716,13 @@ export default {
             error: error.code,
             ...(error.details === undefined ? {} : { details: error.details })
           },
+          { status: error.status }
+        );
+      }
+
+      if (error instanceof GraphMemoryError) {
+        return Response.json(
+          { ok: false, error: error.code },
           { status: error.status }
         );
       }
@@ -865,6 +920,21 @@ function authenticateRequest(request, env) {
   return {
     ok: true,
     principal
+  };
+}
+
+function privacyScopeFromUrl(url) {
+  return {
+    tenant_id: url.searchParams.get("tenant_id"),
+    ...(url.searchParams.has("project_id")
+      ? { project_id: url.searchParams.get("project_id") }
+      : {}),
+    ...(url.searchParams.has("identity_id")
+      ? { identity_id: url.searchParams.get("identity_id") }
+      : {}),
+    ...(url.searchParams.has("candidate_id")
+      ? { candidate_id: url.searchParams.get("candidate_id") }
+      : {})
   };
 }
 
