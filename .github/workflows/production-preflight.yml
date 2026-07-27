@@ -23,23 +23,32 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
+          cache: npm
       - name: Verify required secrets exist
         shell: bash
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$MNEMOSYNE_D1_DATABASE_ID"
-      - name: Verify merged Worker
-        run: node --test test/*.test.mjs
-      - name: Inspect live bindings without identifiers
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Verify complete Worker
+        run: npm test
+      - name: Run deterministic graph-memory pilot twice
         shell: bash
         run: |
-          npx --yes wrangler@4.111.0 deployments list --json > /tmp/deployments.json
+          node scripts/graph-memory-pilot.mjs --fixture migrations/fixtures/graph-memory-golden.jsonl --output /tmp/pilot-1.json
+          node scripts/graph-memory-pilot.mjs --fixture migrations/fixtures/graph-memory-golden.jsonl --output /tmp/pilot-2.json
+          cmp /tmp/pilot-1.json /tmp/pilot-2.json
+      - name: Inspect and validate live binding shapes
+        shell: bash
+        run: |
+          npx wrangler deployments list --json > /tmp/deployments.json
           VERSION_ID="$(node scripts/cloudflare-binding-preflight.mjs version-id /tmp/deployments.json)"
-          npx --yes wrangler@4.111.0 versions view "$VERSION_ID" --json > /tmp/version.json
-          node --input-type=module -e 'import {readFile} from "node:fs/promises"; import {bindingShapeSummary,bindingSummary} from "./scripts/cloudflare-binding-preflight.mjs"; const value=JSON.parse(await readFile("/tmp/version.json","utf8")); console.log(JSON.stringify({bindings:bindingSummary(value),shapes:bindingShapeSummary(value)}));'
+          npx wrangler versions view "$VERSION_ID" --json > /tmp/version.json
+          node --input-type=module -e 'import {readFile} from "node:fs/promises"; import {bindingShapeSummary,bindingSummary,buildDeploymentConfig} from "./scripts/cloudflare-binding-preflight.mjs"; const value=JSON.parse(await readFile("/tmp/version.json","utf8")); buildDeploymentConfig(value,{databaseId:process.env.MNEMOSYNE_D1_DATABASE_ID,migrationsDir:"migrations",entrypoint:"src/worker.js",oauthKvNamespaceId:"masked-preflight"}); console.log(JSON.stringify({bindings:bindingSummary(value),shapes:bindingShapeSummary(value)}));'
       - name: Verify production migration visibility
         shell: bash
         run: |
           node --input-type=module -e 'import {writeFile} from "node:fs/promises"; const config={name:"mnemosyne-worker",compatibility_date:"2024-01-01",d1_databases:[{binding:"DB",database_name:"pulse-registry",database_id:process.env.MNEMOSYNE_D1_DATABASE_ID,migrations_dir:`${process.env.GITHUB_WORKSPACE}/migrations`}]}; await writeFile("/tmp/wrangler.d1.json",JSON.stringify(config));'
-          npx --yes wrangler@4.111.0 d1 migrations list DB --remote --config /tmp/wrangler.d1.json
+          npx wrangler d1 migrations list DB --remote --config /tmp/wrangler.d1.json

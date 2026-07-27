@@ -24,6 +24,17 @@
 | POST | `/ingest` | ✓ | Validate + embed + upsert |
 | POST | `/query` | ✓ | Semantic search |
 
+## Governed shared graph memory
+
+The Worker now contains an OAuth 2.1, tenant-scoped graph-memory surface.
+Deployment remains progressive and default-off. The public contract contains
+exactly five operations: rehydrate, search, bounded traversal, candidate
+proposal, and own-candidate status. Assistants cannot review, resolve, publish,
+invalidate, delete, export, or repair projections.
+
+See [graph-memory operations](docs/graph-memory-operations.md) for flags,
+deployment order, recovery, and the D1-authoritative privacy model.
+
 ## Reconstructed review surface
 
 The following routes are proposed; not active. Their presence on a review

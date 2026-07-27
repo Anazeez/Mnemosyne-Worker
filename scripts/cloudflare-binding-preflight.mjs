@@ -1,5 +1,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 
+export const GRAPH_MEMORY_DEPLOYMENT_FLAGS = Object.freeze([
+  "GRAPH_MEMORY_READ_ENABLED",
+  "GRAPH_MEMORY_PROPOSE_ENABLED",
+  "GRAPH_MEMORY_REVIEW_ENABLED",
+  "GRAPH_MEMORY_PUBLICATION_ENABLED",
+  "GRAPH_MEMORY_MCP_ENABLED",
+  "GRAPH_MEMORY_ACTIONS_ENABLED",
+]);
+
 export function findVersionId(value) {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -66,7 +75,14 @@ export function collectBindings(value) {
 
 export function buildDeploymentConfig(
   value,
-  { databaseId, migrationsDir, entrypoint, continuityReadEnabled = false },
+  {
+    databaseId,
+    migrationsDir,
+    entrypoint,
+    continuityReadEnabled = false,
+    oauthKvNamespaceId,
+    graphMemoryFlags = {},
+  },
 ) {
   const config = {
     name: "mnemosyne-worker",
@@ -94,8 +110,26 @@ export function buildDeploymentConfig(
   if (continuityReadEnabled) {
     config.vars.CONTINUITY_READ_ENABLED = "1";
   }
+  for (const flag of GRAPH_MEMORY_DEPLOYMENT_FLAGS) {
+    config.vars[flag] = enabled(graphMemoryFlags[flag]) ? "1" : "0";
+  }
+  const hasOAuthKv = config.kv_namespaces?.some(
+    binding => binding.binding === "OAUTH_KV",
+  );
+  if (!hasOAuthKv && oauthKvNamespaceId) {
+    (config.kv_namespaces ??= []).push({
+      binding: "OAUTH_KV",
+      id: oauthKvNamespaceId,
+    });
+  }
   if (Object.keys(config.vars).length === 0) delete config.vars;
   return config;
+}
+
+function enabled(value) {
+  return ["1", "true", "yes", "on"].includes(
+    String(value ?? "").trim().toLowerCase(),
+  );
 }
 
 if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
@@ -112,6 +146,10 @@ if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
       migrationsDir: `${process.env.GITHUB_WORKSPACE}/migrations`,
       entrypoint: `${process.env.GITHUB_WORKSPACE}/src/worker.js`,
       continuityReadEnabled: true,
+      oauthKvNamespaceId: process.env.OAUTH_KV_NAMESPACE_ID,
+      graphMemoryFlags: Object.fromEntries(
+        GRAPH_MEMORY_DEPLOYMENT_FLAGS.map(flag => [flag, process.env[flag]]),
+      ),
     });
     await writeFile(process.argv[4], JSON.stringify(config));
   } else {

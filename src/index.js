@@ -22,6 +22,7 @@ import {
   exportMemoryScope,
   rebuildMemoryProjection
 } from "./graph-memory/privacy.js";
+import { graphMemoryFeatureState } from "./graph-memory/flags.js";
 
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
@@ -324,7 +325,8 @@ export default {
           : "no-queue-binding",
         artifacts: Boolean(env.MATRIX_ARTIFACTS)
           ? "r2-enabled"
-          : "inline-only"
+          : "inline-only",
+        graph_memory: graphMemoryFeatureState(env)
       });
     }
 

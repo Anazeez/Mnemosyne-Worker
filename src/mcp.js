@@ -87,7 +87,7 @@ export const MCP_TOOL_DEFINITIONS = Object.freeze([
   }),
 ]);
 
-const DEFAULT_SERVICES = Object.freeze({
+export const GRAPH_MEMORY_SERVICES = Object.freeze({
   rehydrateAcceptedMemory,
   searchAcceptedMemory,
   traverseAcceptedMemory,
@@ -99,7 +99,7 @@ export async function invokeMemoryTool(name, {
   env,
   principal,
   input,
-  services = DEFAULT_SERVICES,
+  services = GRAPH_MEMORY_SERVICES,
 }) {
   try {
     const output = await executeMemoryOperation(name, {
@@ -131,7 +131,7 @@ export async function executeMemoryOperation(name, {
   env,
   principal,
   input,
-  services = DEFAULT_SERVICES,
+  services = GRAPH_MEMORY_SERVICES,
 }) {
   const operations = {
     memory_rehydrate: () => services.rehydrateAcceptedMemory({
@@ -170,7 +170,7 @@ export async function executeMemoryOperation(name, {
 export async function handleMcpRequest(request, {
   env,
   principal,
-  services = DEFAULT_SERVICES,
+  services = GRAPH_MEMORY_SERVICES,
 }) {
   const server = new McpServer({
     name: "mnemosyne-shared-memory",

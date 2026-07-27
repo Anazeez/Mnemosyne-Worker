@@ -30,6 +30,11 @@ test("deployment config preserves every supported non-secret live binding", () =
     migrationsDir: "/workspace/migrations",
     entrypoint: "/workspace/src/worker.js",
     continuityReadEnabled: true,
+    oauthKvNamespaceId: "oauth-kv",
+    graphMemoryFlags: {
+      GRAPH_MEMORY_READ_ENABLED: true,
+      GRAPH_MEMORY_MCP_ENABLED: true,
+    },
   });
   assert.equal(config.main, "/workspace/src/worker.js");
   assert.equal(config.d1_databases[0].database_id, "new-db");
@@ -39,6 +44,22 @@ test("deployment config preserves every supported non-secret live binding", () =
   assert.equal(config.vars.FLAG, "on");
   assert.deepEqual(config.vars.POLICY, { root: true });
   assert.equal(config.vars.CONTINUITY_READ_ENABLED, "1");
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(config.vars).filter(([name]) =>
+      name.startsWith("GRAPH_MEMORY_"))),
+    {
+      GRAPH_MEMORY_READ_ENABLED: "1",
+      GRAPH_MEMORY_PROPOSE_ENABLED: "0",
+      GRAPH_MEMORY_REVIEW_ENABLED: "0",
+      GRAPH_MEMORY_PUBLICATION_ENABLED: "0",
+      GRAPH_MEMORY_MCP_ENABLED: "1",
+      GRAPH_MEMORY_ACTIONS_ENABLED: "0",
+    },
+  );
+  assert.deepEqual(
+    config.kv_namespaces.find(binding => binding.binding === "OAUTH_KV"),
+    { binding: "OAUTH_KV", id: "oauth-kv" },
+  );
   assert.deepEqual(
     Object.keys(config.vars).filter((name) =>
       name.startsWith("CONTINUITY_") && name !== "CONTINUITY_READ_ENABLED"

@@ -6,16 +6,30 @@ import {
   createOAuthDefaultHandler,
 } from "./oauth.js";
 import { principalFromOAuthClaims } from "./graph-memory/policy.js";
-import { handleMcpRequest } from "./mcp.js";
+import {
+  GRAPH_MEMORY_SERVICES,
+  handleMcpRequest,
+} from "./mcp.js";
 import { handleOpenApiRequest } from "./openapi.js";
+import {
+  featureGatedGraphServices,
+  graphMemoryFeatureState,
+} from "./graph-memory/flags.js";
 
 const protectedApi = {
   async fetch(request, env, ctx) {
     const principal = principalFromOAuthClaims(ctx?.props);
-    if (new URL(request.url).pathname === "/mcp") {
-      return handleMcpRequest(request, { env, principal });
+    const path = new URL(request.url).pathname;
+    const featureState = graphMemoryFeatureState(env);
+    const services = featureGatedGraphServices(env, GRAPH_MEMORY_SERVICES);
+    if (path === "/mcp") {
+      if (!featureState.mcp) return new Response("Not found", { status: 404 });
+      return handleMcpRequest(request, { env, principal, services });
     }
-    return handleOpenApiRequest(request, { env, principal });
+    if (!featureState.actions) {
+      return new Response("Not found", { status: 404 });
+    }
+    return handleOpenApiRequest(request, { env, principal, services });
   },
 };
 
