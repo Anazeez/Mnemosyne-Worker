@@ -11,17 +11,13 @@ const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
 export const PUBLIC_OAUTH_SCOPES = Object.freeze(Object.keys(PUBLIC_SCOPE_CAPABILITIES));
 export const HUMAN_REVIEW_SCOPE = "memory:review";
-const ALL_OAUTH_SCOPES = Object.freeze([
-  ...PUBLIC_OAUTH_SCOPES,
-  HUMAN_REVIEW_SCOPE,
-]);
 
 export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
   apiRoute: Object.freeze(["/mcp", "/v1/memory/", "/admin/memory/"]),
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
-  scopesSupported: ALL_OAUTH_SCOPES,
+  scopesSupported: PUBLIC_OAUTH_SCOPES,
   allowImplicitFlow: false,
   allowPlainPKCE: false,
   allowTokenExchangeGrant: false,
@@ -30,7 +26,7 @@ export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
   refreshTokenTTL: 2592000,
   clientRegistrationTTL: 7776000,
   resourceMetadata: Object.freeze({
-    scopes_supported: ALL_OAUTH_SCOPES,
+    scopes_supported: PUBLIC_OAUTH_SCOPES,
     bearer_methods_supported: Object.freeze(["header"]),
     resource_name: "Mnemosyne Shared Memory",
   }),

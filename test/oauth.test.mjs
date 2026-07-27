@@ -47,6 +47,20 @@ test("OAuth provider requires S256 PKCE and disables implicit and token exchange
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowPlainPKCE, false);
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowImplicitFlow, false);
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowTokenExchangeGrant, false);
+  assert.deepEqual(OAUTH_PROVIDER_OPTIONS.scopesSupported, [
+    "memory:read",
+    "memory:search",
+    "memory:propose",
+    "memory:candidate:read",
+  ]);
+  assert.deepEqual(
+    OAUTH_PROVIDER_OPTIONS.resourceMetadata.scopes_supported,
+    OAUTH_PROVIDER_OPTIONS.scopesSupported,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(OAUTH_PROVIDER_OPTIONS.resourceMetadata),
+    /memory:review/,
+  );
   assert.deepEqual(OAUTH_PROVIDER_OPTIONS.apiRoute, [
     "/mcp",
     "/v1/memory/",

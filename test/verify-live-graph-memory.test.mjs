@@ -24,7 +24,6 @@ test("live verification binds metadata to the expected HTTPS origin", async () =
           "memory:search",
           "memory:propose",
           "memory:candidate:read",
-          "memory:review",
         ],
       }),
     ],

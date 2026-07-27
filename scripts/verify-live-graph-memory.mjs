@@ -45,7 +45,6 @@ export async function verifyLiveGraphMemory({
     "memory:candidate:read",
     "memory:propose",
     "memory:read",
-    "memory:review",
     "memory:search",
   ];
   assert(
