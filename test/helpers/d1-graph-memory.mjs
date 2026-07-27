@@ -9,11 +9,16 @@ const graphMigration = new URL(
   "../../migrations/003_graph_memory.sql",
   import.meta.url
 );
+const privateGrantMigration = new URL(
+  "../../migrations/004_private_memory_grants.sql",
+  import.meta.url
+);
 
 export async function migratedGraphMemoryEnvironment(overrides = {}) {
   const database = new DatabaseSync(":memory:");
   database.exec(await readFile(continuityMigration, "utf8"));
   database.exec(await readFile(graphMigration, "utf8"));
+  database.exec(await readFile(privateGrantMigration, "utf8"));
   return {
     DB: new GraphMemoryD1(database),
     ...overrides

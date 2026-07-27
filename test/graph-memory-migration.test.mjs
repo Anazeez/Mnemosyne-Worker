@@ -11,6 +11,10 @@ const graphMigration = new URL(
   "../migrations/003_graph_memory.sql",
   import.meta.url
 );
+const privateGrantMigration = new URL(
+  "../migrations/004_private_memory_grants.sql",
+  import.meta.url
+);
 const goldenFixture = new URL(
   "../migrations/fixtures/graph-memory-golden.jsonl",
   import.meta.url
@@ -21,6 +25,7 @@ async function migratedDatabase() {
   db.exec(await readFile(continuityMigration, "utf8"));
   seedLegacyContinuity(db);
   db.exec(await readFile(graphMigration, "utf8"));
+  db.exec(await readFile(privateGrantMigration, "utf8"));
   return db;
 }
 
@@ -184,6 +189,33 @@ test("accepted assertions require linked evidence and decision", async () => {
     `).run(),
     /accepted assertion requires evidence and decision/
   );
+});
+
+test("private grant migration is forward-only and receipt-backed", async () => {
+  const sql = await readFile(privateGrantMigration, "utf8");
+  assert.match(sql, /CREATE TABLE memory_access_grants/);
+  assert.match(sql, /owner_github_id INTEGER NOT NULL/);
+  assert.match(sql, /assistant_id TEXT NOT NULL/);
+  assert.match(sql, /project_id TEXT NOT NULL/);
+  assert.match(sql, /capabilities_json TEXT NOT NULL/);
+  assert.match(sql, /expires_at TEXT/);
+  assert.match(sql, /CHECK \(status IN \('active', 'revoked'\)\)/);
+  assert.match(sql, /CREATE TABLE memory_authorization_receipts/);
+  assert.match(sql, /authorization receipt is immutable/);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+
+  const db = await migratedDatabase();
+  for (const table of [
+    "memory_access_grants",
+    "memory_authorization_receipts"
+  ]) {
+    assert.equal(
+      db.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+      ).get(table)?.["1"],
+      1
+    );
+  }
 });
 
 test("golden pilot fixture is representative and bounded", async () => {
