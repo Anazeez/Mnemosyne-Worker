@@ -1,27 +1,19 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { promisify } from "node:util";
 
 const repositoryRoot = new URL("../", import.meta.url);
+const executeFile = promisify(execFile);
 
-async function repositoryFiles(directory = repositoryRoot, prefix = "") {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-
-  for (const entry of entries) {
-    if (entry.name === ".git") {
-      continue;
-    }
-
-    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) {
-      files.push(...await repositoryFiles(new URL(`${entry.name}/`, directory), path));
-    } else {
-      files.push(path);
-    }
-  }
-
-  return files.sort();
+async function repositoryFiles() {
+  const { stdout } = await executeFile(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard"],
+    { cwd: repositoryRoot }
+  );
+  return stdout.trim().split("\n").filter(Boolean).sort();
 }
 
 test("generated local state is ignored and absent from the Git tree", async () => {
