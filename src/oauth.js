@@ -14,6 +14,7 @@ import {
   getOwnerReviewCandidate,
   reviewMemoryCandidate,
 } from "./graph-memory/human-review.js";
+import { repairPendingProjections } from "./graph-memory/projection.js";
 
 const OAUTH_STATE_TTL_SECONDS = 600;
 const OWNER_VALIDATION_STATE_PREFIX = "owner-validation.";
@@ -228,7 +229,7 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
               headers: { Allow: "GET, POST" },
             });
           }
-          return await beginOwnerCandidateAction(request, env);
+          return await beginOwnerCandidateAction(request, env, ctx);
         }
         if (url.pathname === "/authorize" && request.method === "GET") {
           return await beginConsent(request, env);
@@ -263,7 +264,7 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
   };
 }
 
-async function beginOwnerCandidateAction(request, env) {
+async function beginOwnerCandidateAction(request, env, ctx) {
   requireOAuthBindings(env);
   const url = new URL(request.url);
   const match = url.pathname.match(
@@ -303,6 +304,7 @@ async function beginOwnerCandidateAction(request, env) {
     return finishOwnerCommitDecision(
       request,
       env,
+      ctx,
       config,
       candidateId,
       target
@@ -673,6 +675,7 @@ async function renderOwnerCommitDecision({
 async function finishOwnerCommitDecision(
   request,
   env,
+  ctx,
   config,
   candidateId,
   target,
@@ -716,6 +719,9 @@ async function finishOwnerCommitDecision(
     target,
     candidateId,
   });
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(repairPendingProjections({ env, limit: 10 }));
+  }
   return Response.json(result, {
     headers: { "Cache-Control": "no-store" },
   });

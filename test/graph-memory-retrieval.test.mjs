@@ -136,6 +136,48 @@ test("search returns accepted evidence and material temporal conflicts", async (
   assert.equal(result.accepted_generation, 2);
 });
 
+test("search matches compound terms across accepted assertion fields", async () => {
+  const env = await migratedGraphMemoryEnvironment();
+  await seedAcceptedGraph(env);
+
+  const result = await searchAcceptedMemory({
+    env,
+    principal: portal(),
+    body: {
+      tenant_id: "tenant-a",
+      project_id: "project.one",
+      query: "Project One implementation",
+      top_k: 10
+    }
+  });
+
+  assert.deepEqual(
+    result.assertions.map(assertion => assertion.assertion_id),
+    ["assertion-new"]
+  );
+  assert.equal(result.accepted_generation, 2);
+  assert.equal(result.retrieval.lexical_used, true);
+});
+
+test("search reports project generation when no assertion matches", async () => {
+  const env = await migratedGraphMemoryEnvironment();
+  await seedAcceptedGraph(env);
+
+  const result = await searchAcceptedMemory({
+    env,
+    principal: portal(),
+    body: {
+      tenant_id: "tenant-a",
+      project_id: "project.one",
+      query: "does not exist",
+      top_k: 10
+    }
+  });
+
+  assert.deepEqual(result.assertions, []);
+  assert.equal(result.accepted_generation, 2);
+});
+
 test("traversal returns an authorized bounded two-hop path", async () => {
   const env = await migratedGraphMemoryEnvironment();
   await seedAcceptedGraph(env);

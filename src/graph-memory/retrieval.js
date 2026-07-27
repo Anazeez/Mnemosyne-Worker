@@ -99,12 +99,19 @@ export async function searchAcceptedMemory({ env, principal, body }) {
   }
   const topK = normalizeInteger(body?.top_k, 10, 1, 25, "INVALID_TOP_K");
   const asOf = normalizeAsOf(body?.as_of);
-  const acceptedRows = (await env.DB.prepare(SQL.ACCEPTED_ASSERTIONS).bind(
-    target.tenant_id,
-    target.project_id,
-    asOf,
-    asOf
-  ).all()).results || [];
+  const [acceptedResult, generationRow] = await Promise.all([
+    env.DB.prepare(SQL.ACCEPTED_ASSERTIONS).bind(
+      target.tenant_id,
+      target.project_id,
+      asOf,
+      asOf
+    ).all(),
+    env.DB.prepare(SQL.MAX_GENERATION).bind(
+      target.tenant_id,
+      target.project_id
+    ).first()
+  ]);
+  const acceptedRows = acceptedResult.results || [];
   const allowedAssertionIds = new Set(
     acceptedRows.map(row => String(row.assertion_id))
   );
@@ -165,13 +172,7 @@ export async function searchAcceptedMemory({ env, principal, body }) {
   return {
     tenant_id: target.tenant_id,
     project_id: target.project_id,
-    accepted_generation: assertions.reduce(
-      (maximum, assertion) => Math.max(
-        maximum,
-        assertion.accepted_generation
-      ),
-      0
-    ),
+    accepted_generation: Number(generationRow?.generation || 0),
     assertions,
     conflicts: materialConflicts(assertions),
     retrieval: {
@@ -498,8 +499,22 @@ async function lexicalAssertionIds({
     row.object_json
   ].some(value => String(value || "").toLocaleLowerCase()
     .includes(normalizedQuery))).map(row => String(row.assertion_id));
-  const terms = query.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
-  if (terms.length === 0) return literalIds.slice(0, topK);
+  const terms = [...new Set(
+    normalizedQuery.match(/[\p{L}\p{N}]+/gu) || []
+  )];
+  const crossFieldIds = acceptedRows.filter(row => {
+    const document = [
+      row.canonical_label,
+      row.predicate,
+      row.object_json
+    ].map(value => String(value || "").toLocaleLowerCase()).join(" ");
+    return terms.length > 0 && terms.every(term => document.includes(term));
+  }).map(row => String(row.assertion_id));
+  const deterministicIds = [...new Set([
+    ...literalIds,
+    ...crossFieldIds
+  ])];
+  if (terms.length === 0) return deterministicIds.slice(0, topK);
 
   try {
     const expression = terms.slice(0, 20)
@@ -512,11 +527,11 @@ async function lexicalAssertionIds({
       topK
     ).all()).results || [];
     return [...new Set([
-      ...literalIds,
+      ...deterministicIds,
       ...ftsRows.map(row => String(row.assertion_id))
     ])].slice(0, topK);
   } catch {
-    return literalIds.slice(0, topK);
+    return deterministicIds.slice(0, topK);
   }
 }
 

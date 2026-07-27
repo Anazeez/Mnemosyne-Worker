@@ -112,6 +112,12 @@ outbox, publication decision, and append-only owner commit receipt. Replays
 return the original receipt. General review and publication rollout flags
 remain disabled.
 
+The accepted D1 assertion is immediately searchable through a deterministic
+cross-field fallback; search responses report the project's accepted generation
+even when no assertion matches. The commit response also schedules bounded FTS
+and Vectorize repair in the Worker execution context. Projection failure leaves
+the outbox in `repair_queued` and never reverses the canonical D1 commit.
+
 ## Owner identity and project grants
 
 Only immutable GitHub user ID `277895262` may complete OAuth. OAuth clients

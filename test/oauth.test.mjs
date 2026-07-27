@@ -429,11 +429,22 @@ test("owner review stays unavailable when its rollout flag is off", async () => 
 
 test("allowlisted owner explicitly controlled-commits one approved candidate", async () => {
   const kv = memoryKv();
+  const vectorUpserts = [];
   const env = await migratedGraphMemoryEnvironment({
     ...oauthEnvironment(kv),
     AUTHORIZED_GITHUB_USER_IDS: "277895262",
     MEMORY_TENANT_ID: "personal",
     GRAPH_MEMORY_OWNER_COMMIT_ENABLED: "1",
+    AI: {
+      async run() {
+        return { data: [[0.1, 0.2]] };
+      },
+    },
+    MATRIX_KNOWLEDGE: {
+      async upsert(records) {
+        vectorUpserts.push(...records);
+      },
+    },
   });
   const candidate = await createMemoryCandidate({
     env,
@@ -518,6 +529,7 @@ test("allowlisted owner explicitly controlled-commits one approved candidate", a
   const confirmationHtml = await confirmation.text();
   const commitRequest = confirmationHtml.match(/commit_request=([^"]+)/)[1];
   const commitCsrf = confirmationHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const backgroundTasks = [];
   const committed = await handler.fetch(new Request(
     `${commitUrl}&commit_request=${commitRequest}`,
     {
@@ -528,8 +540,19 @@ test("allowlisted owner explicitly controlled-commits one approved candidate", a
       },
       body: `csrf=${encodeURIComponent(commitCsrf)}`,
     },
-  ), env);
+  ), env, {
+    waitUntil(promise) {
+      backgroundTasks.push(promise);
+    },
+  });
   const body = await committed.json();
+  await Promise.all(backgroundTasks);
+  const projection = await env.DB.prepare(`
+    SELECT state, attempt_count, last_reason_code
+      FROM memory_projection_outbox
+     WHERE tenant_id = 'personal' AND project_id = 'global-canon'
+     LIMIT 1
+  `).first();
 
   assert.equal(consent.status, 200);
   assert.match(consentHtml, /Controlled memory commit/);
@@ -547,6 +570,12 @@ test("allowlisted owner explicitly controlled-commits one approved candidate", a
     await env.DB.count("memory_assertions", "lifecycle_state = 'accepted'"),
     1,
   );
+  assert.equal(backgroundTasks.length, 1);
+  assert.equal(projection.state, "complete");
+  assert.equal(projection.attempt_count, 1);
+  assert.equal(projection.last_reason_code, null);
+  assert.equal(await env.DB.count("memory_assertion_search"), 1);
+  assert.equal(vectorUpserts.length, 1);
 });
 
 test("owner controlled commit stays unavailable when its rollout flag is off", async () => {
