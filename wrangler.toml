@@ -1,6 +1,9 @@
 name = "mnemosyne-worker"
-main = "src/index.js"
+main = "src/worker.js"
 compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
 
 [ai]
 binding = "AI"

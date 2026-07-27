@@ -810,9 +810,15 @@ class AuthzError extends Error {
 }
 
 function authenticateRequest(request, env) {
-  const authKey =
-    request.headers.get("X-Matrix-Key") ||
-    request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+  const authorization = request.headers.get("Authorization");
+  if (authorization) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Bearer authentication is only accepted on OAuth-protected routes"
+    };
+  }
+  const authKey = request.headers.get("X-Matrix-Key");
 
   if (!authKey) {
     return {

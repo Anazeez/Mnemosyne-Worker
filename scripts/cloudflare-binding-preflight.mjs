@@ -110,7 +110,7 @@ if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
     const config = buildDeploymentConfig(version, {
       databaseId: process.env.MNEMOSYNE_D1_DATABASE_ID,
       migrationsDir: `${process.env.GITHUB_WORKSPACE}/migrations`,
-      entrypoint: `${process.env.GITHUB_WORKSPACE}/src/index.js`,
+      entrypoint: `${process.env.GITHUB_WORKSPACE}/src/worker.js`,
       continuityReadEnabled: true,
     });
     await writeFile(process.argv[4], JSON.stringify(config));

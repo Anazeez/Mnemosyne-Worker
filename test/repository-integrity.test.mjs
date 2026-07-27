@@ -47,6 +47,7 @@ test("new tracked evidence does not duplicate account-style identifiers", async 
   const emailLike = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
   const candidates = (await repositoryFiles()).filter(path =>
     path !== "src/index.js" &&
+    path !== "src/worker.js" &&
     !path.endsWith(".sqlite") &&
     !path.endsWith(".sqlite-shm") &&
     !path.endsWith(".sqlite-wal")

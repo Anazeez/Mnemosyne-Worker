@@ -28,10 +28,10 @@ test("deployment config preserves every supported non-secret live binding", () =
   ] }, {
     databaseId: "new-db",
     migrationsDir: "/workspace/migrations",
-    entrypoint: "/workspace/src/index.js",
+    entrypoint: "/workspace/src/worker.js",
     continuityReadEnabled: true,
   });
-  assert.equal(config.main, "/workspace/src/index.js");
+  assert.equal(config.main, "/workspace/src/worker.js");
   assert.equal(config.d1_databases[0].database_id, "new-db");
   assert.equal(config.kv_namespaces[0].id, "kv");
   assert.equal(config.durable_objects.bindings[0].script_name, "alarm-worker");
