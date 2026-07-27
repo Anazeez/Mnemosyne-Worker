@@ -17,6 +17,10 @@ const hybridRetrievalMigration = new URL(
   "../../migrations/005_hybrid_retrieval.sql",
   import.meta.url
 );
+const humanReviewMigration = new URL(
+  "../../migrations/006_human_review.sql",
+  import.meta.url
+);
 
 export async function migratedGraphMemoryEnvironment(overrides = {}) {
   const database = new DatabaseSync(":memory:");
@@ -24,6 +28,7 @@ export async function migratedGraphMemoryEnvironment(overrides = {}) {
   database.exec(await readFile(graphMigration, "utf8"));
   database.exec(await readFile(privateGrantMigration, "utf8"));
   database.exec(await readFile(hybridRetrievalMigration, "utf8"));
+  database.exec(await readFile(humanReviewMigration, "utf8"));
   return {
     DB: new GraphMemoryD1(database),
     ...overrides

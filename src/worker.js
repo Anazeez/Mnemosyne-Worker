@@ -19,6 +19,7 @@ import {
   featureGatedGraphServices,
   graphMemoryFeatureState,
 } from "./graph-memory/flags.js";
+import { handleHumanReviewRequest } from "./graph-memory/human-review.js";
 
 const protectedApi = {
   async fetch(request, env, ctx) {
@@ -29,6 +30,12 @@ const protectedApi = {
     if (path === "/mcp") {
       if (!featureState.mcp) return new Response("Not found", { status: 404 });
       return handleMcpRequest(request, { env, principal, services });
+    }
+    if (path.startsWith("/admin/memory/candidates")) {
+      if (!featureState.review || !featureState.publication) {
+        return new Response("Not found", { status: 404 });
+      }
+      return handleHumanReviewRequest(request, { env, principal });
     }
     if (!featureState.actions) {
       return new Response("Not found", { status: 404 });

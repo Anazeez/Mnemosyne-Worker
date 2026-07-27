@@ -27,7 +27,8 @@ export const GRAPH_LIMITS = Object.freeze({
   assertions: 100,
   evidence: 100,
   scalar_chars: 4_000,
-  source_ref_chars: 2_048
+  source_ref_chars: 2_048,
+  evidence_excerpt_chars: 4_000
 });
 
 export const CANDIDATE_STATES = Object.freeze([
@@ -202,10 +203,27 @@ function normalizeEvidence(value) {
     );
   }
 
+  const sourceExcerpt = value.source_excerpt === undefined
+    ? null
+    : String(value.source_excerpt).trim();
+  if (
+    sourceExcerpt !== null &&
+    (
+      sourceExcerpt.length < 1 ||
+      sourceExcerpt.length > GRAPH_LIMITS.evidence_excerpt_chars
+    )
+  ) {
+    throw graphError(
+      "INVALID_EVIDENCE",
+      "Evidence source_excerpt must be a bounded non-empty string"
+    );
+  }
+
   return {
     source_ref: sourceRef,
     content_hash: contentHash,
-    observed_at: new Date(observedAt).toISOString()
+    observed_at: new Date(observedAt).toISOString(),
+    ...(sourceExcerpt !== null ? { source_excerpt: sourceExcerpt } : {})
   };
 }
 

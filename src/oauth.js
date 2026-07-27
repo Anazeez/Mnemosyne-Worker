@@ -10,13 +10,18 @@ const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
 export const PUBLIC_OAUTH_SCOPES = Object.freeze(Object.keys(PUBLIC_SCOPE_CAPABILITIES));
+export const HUMAN_REVIEW_SCOPE = "memory:review";
+const ALL_OAUTH_SCOPES = Object.freeze([
+  ...PUBLIC_OAUTH_SCOPES,
+  HUMAN_REVIEW_SCOPE,
+]);
 
 export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
-  apiRoute: Object.freeze(["/mcp", "/v1/memory/"]),
+  apiRoute: Object.freeze(["/mcp", "/v1/memory/", "/admin/memory/"]),
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
-  scopesSupported: PUBLIC_OAUTH_SCOPES,
+  scopesSupported: ALL_OAUTH_SCOPES,
   allowImplicitFlow: false,
   allowPlainPKCE: false,
   allowTokenExchangeGrant: false,
@@ -25,14 +30,17 @@ export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
   refreshTokenTTL: 2592000,
   clientRegistrationTTL: 7776000,
   resourceMetadata: Object.freeze({
-    scopes_supported: PUBLIC_OAUTH_SCOPES,
+    scopes_supported: ALL_OAUTH_SCOPES,
     bearer_methods_supported: Object.freeze(["header"]),
     resource_name: "Mnemosyne Shared Memory",
   }),
 });
 
-export function narrowRequestedScopes(requested) {
-  const supported = new Set(PUBLIC_OAUTH_SCOPES);
+export function narrowRequestedScopes(requested, { allowReview = false } = {}) {
+  const supported = new Set([
+    ...PUBLIC_OAUTH_SCOPES,
+    ...(allowReview ? [HUMAN_REVIEW_SCOPE] : []),
+  ]);
   const narrowed = [...new Set(requested ?? [])].filter(scope => supported.has(scope));
   if (narrowed.length === 0) throw new Error("no_supported_scope_requested");
   return narrowed;
@@ -126,14 +134,18 @@ export function buildGrantClaims({
   assistantId,
   projectIds = [],
   requestedScopes,
+  allowOwnerReview = false,
 }) {
-  const scope = narrowRequestedScopes(requestedScopes);
+  const scope = narrowRequestedScopes(requestedScopes, {
+    allowReview: allowOwnerReview,
+  });
+  const isOwnerReview = scope.includes(HUMAN_REVIEW_SCOPE);
   const numericId = Number(githubUser?.id);
   if (!Number.isSafeInteger(numericId) || numericId <= 0) {
     throw new Error("invalid_github_identity");
   }
   if (!tenantId || typeof tenantId !== "string") throw new Error("invalid_tenant");
-  if (!/^oauth-[a-f0-9]{32}$/.test(String(assistantId || ""))) {
+  if (!isOwnerReview && !/^oauth-[a-f0-9]{32}$/.test(String(assistantId || ""))) {
     throw new Error("invalid_assistant_identity");
   }
   const login = String(githubUser.login ?? "");
@@ -148,9 +160,9 @@ export function buildGrantClaims({
       props: {
         auth_source: "oauth",
         credential_id: `github-${numericId}`,
-        assistant_id: assistantId,
-        principal_id: `github:${numericId}`,
-        role: "portal",
+        principal_id: isOwnerReview ? "owner" : `github:${numericId}`,
+        role: isOwnerReview ? "owner" : "portal",
+        assistant_id: isOwnerReview ? "human-review-console" : assistantId,
         tenant_id: tenantId,
         project_ids: [...new Set(projectIds.map(String))],
         identity_ids: [],
@@ -319,12 +331,20 @@ async function beginConsent(request, env) {
   const authRequest = await env.OAUTH_PROVIDER.parseAuthRequest(request);
   const client = await env.OAUTH_PROVIDER.lookupClient(authRequest.clientId);
   if (!client) return Response.json({ error: "unknown_client" }, { status: 400 });
-  const scopes = narrowRequestedScopes(authRequest.scope);
+  const reviewClients = parseCsv(env.MEMORY_REVIEW_CLIENT_IDS);
+  const allowReview = reviewClients.includes(String(authRequest.clientId));
+  const scopes = narrowRequestedScopes(authRequest.scope, { allowReview });
   const requestId = randomToken();
   const csrf = randomToken();
   await env.OAUTH_KV.put(
     stateKey(requestId),
-    JSON.stringify({ stage: "consent", authRequest, scopes, csrf }),
+    JSON.stringify({
+      stage: "consent",
+      authRequest,
+      scopes,
+      csrf,
+      allowOwnerReview: allowReview,
+    }),
     { expirationTtl: OAUTH_STATE_TTL_SECONDS },
   );
   const clientName = escapeHtml(client.clientName || client.client_name || authRequest.clientId);
@@ -362,6 +382,7 @@ async function acceptConsent(request, env) {
       stage: "github",
       authRequest: stored.authRequest,
       scopes: stored.scopes,
+      allowOwnerReview: stored.allowOwnerReview,
     }),
     { expirationTtl: OAUTH_STATE_TTL_SECONDS },
   );
@@ -429,6 +450,9 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
     assistantId,
     projectIds: grant.project_ids,
     requestedScopes: stored.scopes,
+    allowOwnerReview:
+      Boolean(stored.allowOwnerReview) &&
+      parseCsv(env.MEMORY_OWNER_GITHUB_IDS).includes(String(githubUser.id)),
   });
   const resolverToken = String(env.GRANT_RESOLVER_TOKEN || "");
   if (resolverToken.length < 32) {
@@ -519,6 +543,17 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function parseCsv(value) {
+  return String(value || "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function parseProjectIds(value) {
+  return parseCsv(value);
 }
 
 function statusError(message, status) {

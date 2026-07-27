@@ -19,6 +19,10 @@ const hybridRetrievalMigration = new URL(
   "../migrations/005_hybrid_retrieval.sql",
   import.meta.url
 );
+const humanReviewMigration = new URL(
+  "../migrations/006_human_review.sql",
+  import.meta.url
+);
 const goldenFixture = new URL(
   "../migrations/fixtures/graph-memory-golden.jsonl",
   import.meta.url
@@ -31,6 +35,7 @@ async function migratedDatabase() {
   db.exec(await readFile(graphMigration, "utf8"));
   db.exec(await readFile(privateGrantMigration, "utf8"));
   db.exec(await readFile(hybridRetrievalMigration, "utf8"));
+  db.exec(await readFile(humanReviewMigration, "utf8"));
   return db;
 }
 
@@ -236,6 +241,16 @@ test("hybrid retrieval migration creates rebuildable search projections", async 
 
   assert.match(searchTable.sql, /VIRTUAL TABLE memory_assertion_search USING fts5/i);
   assert.match(outboxTable.sql, /CREATE TABLE memory_projection_outbox/i);
+});
+
+test("human review migration records immutable edits and idempotent actions", async () => {
+  const db = await migratedDatabase();
+  for (const table of ["memory_candidate_edits", "memory_review_actions"]) {
+    const row = db.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?
+    `).get(table);
+    assert.match(row.sql, new RegExp(`CREATE TABLE ${table}`, "i"));
+  }
 });
 
 test("golden pilot fixture is representative and bounded", async () => {

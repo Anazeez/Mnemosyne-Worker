@@ -97,7 +97,7 @@ export async function createMemoryCandidate({
       candidateId,
       evidence.source_ref,
       evidence.content_hash,
-      null,
+      evidence.source_excerpt || null,
       evidence.observed_at,
       principal.credential_id,
       JSON.stringify(["tenant", "project"]),

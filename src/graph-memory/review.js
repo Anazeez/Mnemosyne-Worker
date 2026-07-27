@@ -20,6 +20,11 @@ const SQL = Object.freeze({
       snapshot_id, decision_type, outcome, reason_code, receipt_hash,
       decided_by_credential_id, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  INSERT_CANDIDATE_EDIT: `
+    INSERT INTO memory_candidate_edits (
+      edit_id, candidate_id, tenant_id, project_id, edited_payload_json,
+      edited_payload_hash, reason_code, edited_by_credential_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   LIST_EVIDENCE: `
     SELECT * FROM memory_evidence
      WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?
@@ -256,6 +261,8 @@ export async function publishMemoryCandidate({
   env,
   principal,
   candidateId,
+  payloadOverride = null,
+  editRecord = null,
   now = () => new Date(),
   randomUUID = () => crypto.randomUUID()
 }) {
@@ -273,7 +280,9 @@ export async function publishMemoryCandidate({
     );
   }
 
-  const payload = normalizeCandidatePayload(JSON.parse(candidate.payload_json));
+  const payload = normalizeCandidatePayload(
+    payloadOverride ?? JSON.parse(candidate.payload_json)
+  );
   const evidence = (await env.DB.prepare(SQL.LIST_EVIDENCE).bind(
     candidate.tenant_id,
     candidate.project_id,
@@ -314,6 +323,20 @@ export async function publishMemoryCandidate({
       createdAt
     )
   ];
+  if (editRecord) {
+    const editedPayloadJson = JSON.stringify(payload);
+    statements.push(env.DB.prepare(SQL.INSERT_CANDIDATE_EDIT).bind(
+      editRecord.edit_id,
+      candidate.candidate_id,
+      candidate.tenant_id,
+      candidate.project_id,
+      editedPayloadJson,
+      await canonicalHash(payload),
+      editRecord.reason_code || null,
+      principal.credential_id,
+      createdAt
+    ));
+  }
 
   for (const [index, assertion] of payload.assertions.entries()) {
     const entityId = normalizeEntityId(assertion.subject);

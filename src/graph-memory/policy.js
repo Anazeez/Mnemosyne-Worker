@@ -11,6 +11,14 @@ export const PUBLIC_SCOPE_CAPABILITIES = Object.freeze({
   "memory:propose": Object.freeze(["memory.propose"]),
   "memory:candidate:read": Object.freeze(["memory.candidate.read.own"])
 });
+export const OWNER_SCOPE_CAPABILITIES = Object.freeze({
+  "memory:review": Object.freeze([
+    "memory.review",
+    "memory.validate",
+    "memory.resolve",
+    "memory.publish"
+  ])
+});
 
 export function principalFromOAuthClaims(claims) {
   if (!claims || typeof claims !== "object" || Array.isArray(claims)) {
@@ -31,15 +39,18 @@ export function principalFromOAuthClaims(claims) {
     !tenantId ||
     !credentialId ||
     !assistantId ||
-    role !== "portal" ||
+    !["portal", "owner"].includes(role) ||
     projectIds.length === 0
   ) {
     throw invalidClaims();
   }
 
   const capabilities = [];
+  const scopeCapabilities = role === "owner"
+    ? { ...PUBLIC_SCOPE_CAPABILITIES, ...OWNER_SCOPE_CAPABILITIES }
+    : PUBLIC_SCOPE_CAPABILITIES;
   for (const scope of scopes) {
-    for (const capability of PUBLIC_SCOPE_CAPABILITIES[scope] || []) {
+    for (const capability of scopeCapabilities[scope] || []) {
       if (!capabilities.includes(capability)) {
         capabilities.push(capability);
       }
@@ -54,7 +65,7 @@ export function principalFromOAuthClaims(claims) {
     role,
     project_ids: projectIds,
     identity_ids: identityIds,
-    scopes: scopes.filter(scope => scope in PUBLIC_SCOPE_CAPABILITIES),
+    scopes: scopes.filter(scope => scope in scopeCapabilities),
     capabilities
   };
 }

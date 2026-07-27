@@ -33,13 +33,25 @@ test("OAuth requests are narrowed to supported public scopes", () => {
     () => narrowRequestedScopes(["admin"]),
     /no_supported_scope_requested/,
   );
+  assert.throws(
+    () => narrowRequestedScopes(["memory:review"]),
+    /no_supported_scope_requested/,
+  );
+  assert.deepEqual(
+    narrowRequestedScopes(["memory:review"], { allowReview: true }),
+    ["memory:review"],
+  );
 });
 
 test("OAuth provider requires S256 PKCE and disables implicit and token exchange grants", () => {
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowPlainPKCE, false);
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowImplicitFlow, false);
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowTokenExchangeGrant, false);
-  assert.deepEqual(OAUTH_PROVIDER_OPTIONS.apiRoute, ["/mcp", "/v1/memory/"]);
+  assert.deepEqual(OAUTH_PROVIDER_OPTIONS.apiRoute, [
+    "/mcp",
+    "/v1/memory/",
+    "/admin/memory/",
+  ]);
 });
 
 test("only the immutable authorized GitHub owner ID is accepted", () => {
@@ -399,6 +411,39 @@ test("OpenAI Apps challenge is absent when unconfigured and rejects writes", asy
     { OPENAI_APPS_CHALLENGE: "openai-domain-challenge-token" },
   );
   assert.equal(write.status, 405);
+});
+
+test("owner review grants require both owner identity and review client", () => {
+  assert.deepEqual(
+    buildGrantClaims({
+      githubUser: { id: 42, login: "owner" },
+      tenantId: "personal",
+      projectIds: ["mnemosyne"],
+      requestedScopes: ["memory:review"],
+      allowOwnerReview: true,
+    }).props,
+    {
+      auth_source: "oauth",
+      credential_id: "github-42",
+      assistant_id: "human-review-console",
+      principal_id: "owner",
+      role: "owner",
+      tenant_id: "personal",
+      project_ids: ["mnemosyne"],
+      identity_ids: [],
+      scopes: ["memory:review"],
+    },
+  );
+  assert.throws(
+    () => buildGrantClaims({
+      githubUser: { id: 42, login: "owner" },
+      tenantId: "personal",
+      projectIds: ["mnemosyne"],
+      requestedScopes: ["memory:review"],
+      allowOwnerReview: false,
+    }),
+    /no_supported_scope_requested/,
+  );
 });
 
 test("an invalid Authorization header never falls back to X-Matrix-Key", async () => {

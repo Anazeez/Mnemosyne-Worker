@@ -54,6 +54,26 @@ test("unrecognized scopes never expand portal authority", () => {
   ]);
 });
 
+test("human review scope maps only for an owner principal", () => {
+  const owner = principalFromOAuthClaims(claims({
+    credential_id: "github-42",
+    assistant_id: "human-review-console",
+    role: "owner",
+    scopes: ["memory:review"]
+  }));
+  assert.deepEqual(owner.capabilities, [
+    "memory.review",
+    "memory.validate",
+    "memory.resolve",
+    "memory.publish"
+  ]);
+
+  const portal = principalFromOAuthClaims(claims({
+    scopes: ["memory:review"]
+  }));
+  assert.deepEqual(portal.capabilities, []);
+});
+
 test("graph access requires exact tenant project and capability", () => {
   const principal = principalFromOAuthClaims(claims());
   assert.doesNotThrow(() => assertGraphAccess(
