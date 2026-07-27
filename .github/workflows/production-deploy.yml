@@ -94,10 +94,6 @@ jobs:
               fi
             done
           fi
-          if [[ -n "$MNEMOSYNE_CUSTOM_DOMAIN" && -z "$OPENAI_APPS_CHALLENGE" ]]; then
-            echo "OPENAI_APPS_CHALLENGE is required for the permanent custom domain."
-            exit 1
-          fi
       - name: Build binding-preserving ephemeral configuration
         shell: bash
         run: |

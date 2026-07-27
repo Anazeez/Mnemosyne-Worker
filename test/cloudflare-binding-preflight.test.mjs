@@ -131,6 +131,10 @@ test("production workflow requires private OAuth inputs before activation", asyn
   assert.match(workflow, /put_secret GITHUB_CLIENT_SECRET/);
   assert.match(workflow, /put_secret GRANT_RESOLVER_TOKEN/);
   assert.match(workflow, /put_secret OPENAI_APPS_CHALLENGE/);
+  assert.doesNotMatch(
+    workflow,
+    /MNEMOSYNE_CUSTOM_DOMAIN" && -z "\$OPENAI_APPS_CHALLENGE/,
+  );
   assert.match(workflow, /GRAPH_MEMORY_REVIEW_ENABLED: "0"/);
   assert.match(workflow, /GRAPH_MEMORY_PUBLICATION_ENABLED: "0"/);
 });
