@@ -115,13 +115,14 @@ test("production workflow requires private OAuth inputs before activation", asyn
   );
   for (const name of [
     "OAUTH_KV_NAMESPACE_ID",
-    "GITHUB_CLIENT_ID",
-    "GITHUB_CLIENT_SECRET",
+    "OAUTH_GITHUB_CLIENT_ID",
+    "OAUTH_GITHUB_CLIENT_SECRET",
     "GRANT_RESOLVER_TOKEN",
     "OPENAI_APPS_CHALLENGE",
   ]) {
     assert.match(workflow, new RegExp(`secrets\\.${name}`));
   }
+  assert.doesNotMatch(workflow, /secrets\.GITHUB_/);
   assert.match(workflow, /AUTHORIZED_GITHUB_USER_IDS: "277895262"/);
   assert.match(workflow, /MEMORY_TENANT_ID: "personal"/);
   assert.match(workflow, /memory\.azzayezz\.com/);
