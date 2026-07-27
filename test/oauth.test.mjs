@@ -18,6 +18,7 @@ import { buildDeploymentConfig } from "../scripts/cloudflare-binding-preflight.m
 import {
   migratedGraphMemoryEnvironment,
 } from "./helpers/d1-graph-memory.mjs";
+import { createMemoryCandidate } from "../src/graph-memory/candidates.js";
 
 test("OAuth requests are narrowed to supported public scopes", () => {
   assert.deepEqual(
@@ -88,6 +89,206 @@ test("only the immutable authorized GitHub owner ID is accepted", () => {
     () => parseAllowedGithubUserIds("not-an-id"),
     /github_allowlist_missing/,
   );
+});
+
+test("allowlisted GitHub owner can validate one candidate without publication capability", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment({
+    ...oauthEnvironment(kv),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+    GRAPH_MEMORY_VALIDATION_ENABLED: "1",
+  });
+  const candidate = await createMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: "personal",
+      credential_id: "assistant-one",
+      assistant_id: "assistant-one",
+      project_ids: ["global-canon"],
+      capabilities: ["memory.propose"],
+    },
+    body: {
+      tenant_id: "personal",
+      project_id: "global-canon",
+      idempotency_key: "owner-validation-test",
+      assertions: [{
+        subject: "Athar",
+        predicate: "is_a",
+        object: "lineage framework persona",
+        confidence: 1,
+      }],
+      evidence: [{
+        source_ref: "conversation:owner-validation-test",
+        content_hash: "a".repeat(64),
+        source_excerpt: "Athar is a lineage framework persona.",
+        observed_at: "2026-07-27T00:00:00.000Z",
+      }],
+    },
+    randomUUID: () => "owner-validation-candidate",
+  });
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+    fetchImpl: async url => String(url).includes("access_token")
+      ? Response.json({ access_token: "github-access" })
+      : Response.json({ id: 277895262, login: "Anazeez" }),
+  });
+  const validationUrl =
+    `https://memory.example/owner/memory/candidates/${candidate.candidate_id}/validate` +
+      "?tenant_id=personal&project_id=global-canon";
+  const consent = await handler.fetch(new Request(validationUrl), env);
+  const consentHtml = await consent.text();
+  const requestId = consentHtml.match(/request=([^"]+)/)[1];
+  const csrf = consentHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const start = await handler.fetch(new Request(
+    `${validationUrl}&request=${requestId}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_owner_validation_csrf=${csrf}`,
+      },
+      body: `csrf=${encodeURIComponent(csrf)}`,
+    },
+  ), env);
+  const githubState = new URL(start.headers.get("location"))
+    .searchParams.get("state");
+  const result = await handler.fetch(new Request(
+    `https://memory.example/callback?state=${githubState}&code=github-code`,
+  ), env);
+  const body = await result.json();
+
+  assert.equal(consent.status, 200);
+  assert.match(consentHtml, /Validate candidate/);
+  assert.equal(start.status, 302);
+  assert.equal(result.status, 200, JSON.stringify(body));
+  assert.equal(body.candidate_id, candidate.candidate_id);
+  assert.equal(body.state, "pending_review");
+  assert.equal(await env.DB.count("memory_decisions"), 1);
+  assert.equal(await env.DB.count("memory_assertions"), 0);
+  assert.equal(await env.DB.count("memory_snapshots"), 0);
+});
+
+test("owner candidate validation stays unavailable when its rollout flag is off", async () => {
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const response = await handler.fetch(new Request(
+    "https://memory.example/owner/memory/candidates/candidate_example-12345678/validate" +
+      "?tenant_id=personal&project_id=global-canon",
+  ), {
+    ...oauthEnvironment(memoryKv()),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+  });
+
+  assert.equal(response.status, 404);
+});
+
+test("owner candidate validation rejects a mismatched confirmation token", async () => {
+  const env = {
+    ...oauthEnvironment(memoryKv()),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+    GRAPH_MEMORY_VALIDATION_ENABLED: "1",
+  };
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const validationUrl =
+    "https://memory.example/owner/memory/candidates/" +
+    "candidate_confirmation-12345678/validate" +
+    "?tenant_id=personal&project_id=global-canon";
+  const consent = await handler.fetch(new Request(validationUrl), env);
+  const consentHtml = await consent.text();
+  const requestId = consentHtml.match(/request=([^"]+)/)[1];
+  const response = await handler.fetch(new Request(
+    `${validationUrl}&request=${requestId}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "mnemosyne_owner_validation_csrf=wrong",
+      },
+      body: "csrf=also-wrong",
+    },
+  ), env);
+
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("location"), null);
+});
+
+test("non-owner GitHub identity cannot validate a candidate", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment({
+    ...oauthEnvironment(kv),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+    GRAPH_MEMORY_VALIDATION_ENABLED: "1",
+  });
+  const candidate = await createMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: "personal",
+      credential_id: "assistant-one",
+      assistant_id: "assistant-one",
+      project_ids: ["global-canon"],
+      capabilities: ["memory.propose"],
+    },
+    body: {
+      tenant_id: "personal",
+      project_id: "global-canon",
+      idempotency_key: "denied-validation-test",
+      assertions: [{
+        subject: "Athar",
+        predicate: "is_a",
+        object: "lineage framework persona",
+        confidence: 1,
+      }],
+      evidence: [{
+        source_ref: "conversation:denied-validation-test",
+        content_hash: "b".repeat(64),
+        observed_at: "2026-07-27T00:00:00.000Z",
+      }],
+    },
+    randomUUID: () => "denied-validation-candidate",
+  });
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+    fetchImpl: async url => String(url).includes("access_token")
+      ? Response.json({ access_token: "github-access" })
+      : Response.json({ id: 7, login: "not-owner" }),
+  });
+  const validationUrl =
+    `https://memory.example/owner/memory/candidates/${candidate.candidate_id}/validate` +
+      "?tenant_id=personal&project_id=global-canon";
+  const consent = await handler.fetch(new Request(validationUrl), env);
+  const consentHtml = await consent.text();
+  const requestId = consentHtml.match(/request=([^"]+)/)[1];
+  const csrf = consentHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const start = await handler.fetch(new Request(
+    `${validationUrl}&request=${requestId}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_owner_validation_csrf=${csrf}`,
+      },
+      body: `csrf=${encodeURIComponent(csrf)}`,
+    },
+  ), env);
+  const githubState = new URL(start.headers.get("location"))
+    .searchParams.get("state");
+  const result = await handler.fetch(new Request(
+    `https://memory.example/callback?state=${githubState}&code=github-code`,
+  ), env);
+  const stored = env.DB.database.prepare(
+    "SELECT state FROM memory_candidates WHERE candidate_id = ?",
+  ).get(candidate.candidate_id);
+
+  assert.equal(result.status, 403);
+  assert.equal(stored.state, "pending_validation");
+  assert.equal(await env.DB.count("memory_decisions"), 0);
 });
 
 test("assistant attribution is stable and bound to the OAuth client", async () => {

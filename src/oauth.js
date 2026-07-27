@@ -4,8 +4,12 @@ import {
   resolveAssistantGrant,
   revokeAssistantGrant,
 } from "./graph-memory/grants.js";
+import { normalizeGraphTarget } from "./graph-memory/contracts.js";
+import { validateMemoryCandidate } from "./graph-memory/review.js";
 
 const OAUTH_STATE_TTL_SECONDS = 600;
+const OWNER_VALIDATION_STATE_PREFIX = "owner-validation.";
+const CANDIDATE_ID_PATTERN = /^candidate_[a-zA-Z0-9._:-]{8,128}$/;
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
@@ -206,6 +210,15 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
         ) {
           return await administerPrivateGrant(request, env);
         }
+        if (url.pathname.startsWith("/owner/memory/candidates/")) {
+          if (!["GET", "POST"].includes(request.method)) {
+            return new Response("Method not allowed", {
+              status: 405,
+              headers: { Allow: "GET, POST" },
+            });
+          }
+          return await beginOwnerCandidateValidation(request, env);
+        }
         if (url.pathname === "/authorize" && request.method === "GET") {
           return await beginConsent(request, env);
         }
@@ -213,6 +226,16 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
           return await acceptConsent(request, env);
         }
         if (url.pathname === "/callback" && request.method === "GET") {
+          if (
+            String(url.searchParams.get("state") || "")
+              .startsWith(OWNER_VALIDATION_STATE_PREFIX)
+          ) {
+            return await finishOwnerCandidateValidation(
+              request,
+              env,
+              fetchImpl,
+            );
+          }
           return await finishGitHubIdentity(request, env, fetchImpl);
         }
         return await legacyWorker.fetch(request, env, ctx);
@@ -224,6 +247,138 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
       }
     },
   };
+}
+
+async function beginOwnerCandidateValidation(request, env) {
+  requireOwnerValidationEnabled(env);
+  requireOAuthBindings(env);
+  const url = new URL(request.url);
+  const match = url.pathname.match(
+    /^\/owner\/memory\/candidates\/([^/]+)\/validate$/,
+  );
+  const candidateId = match ? decodeURIComponent(match[1]) : "";
+  if (!CANDIDATE_ID_PATTERN.test(candidateId)) {
+    throw statusError("candidate_unavailable", 404);
+  }
+  const target = normalizeGraphTarget({
+    tenant_id: url.searchParams.get("tenant_id"),
+    project_id: url.searchParams.get("project_id"),
+  });
+  if (target.tenant_id !== String(env.MEMORY_TENANT_ID || "personal")) {
+    throw statusError("owner_validation_target_denied", 403);
+  }
+  if (request.method === "GET") {
+    const requestId = randomToken();
+    const csrf = randomToken();
+    await env.OAUTH_KV.put(
+      stateKey(requestId),
+      JSON.stringify({
+        stage: "owner_validation_consent",
+        candidate_id: candidateId,
+        target,
+        csrf,
+      }),
+      { expirationTtl: OAUTH_STATE_TTL_SECONDS },
+    );
+    const action = new URL(url);
+    action.searchParams.set("request", requestId);
+    return new Response(
+      `<!doctype html><html><head><meta charset="utf-8">` +
+      `<title>Validate memory candidate</title></head><body><main>` +
+      `<h1>Validate candidate</h1>` +
+      `<p><code>${escapeHtml(candidateId)}</code></p>` +
+      `<p>This runs deterministic validation only. It does not accept or publish memory.</p>` +
+      `<form method="post" action="${escapeHtml(action)}">` +
+      `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+      `<button type="submit">Continue with GitHub</button></form>` +
+      `</main></body></html>`,
+      {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": ownerValidationCsrfCookie(csrf),
+        },
+      },
+    );
+  }
+  const requestId = url.searchParams.get("request");
+  const stored = await readState(
+    env,
+    requestId,
+    "owner_validation_consent",
+  );
+  const form = await request.formData();
+  const csrf = String(form.get("csrf") ?? "");
+  if (
+    !csrf ||
+    csrf !== stored.csrf ||
+    csrf !== readCookie(request, "mnemosyne_owner_validation_csrf")
+  ) {
+    throw statusError("csrf_validation_failed", 403);
+  }
+  if (
+    stored.candidate_id !== candidateId ||
+    stored.target.tenant_id !== target.tenant_id ||
+    stored.target.project_id !== target.project_id
+  ) {
+    throw statusError("owner_validation_target_denied", 403);
+  }
+  await env.OAUTH_KV.delete(stateKey(requestId));
+  const state = `${OWNER_VALIDATION_STATE_PREFIX}${randomToken()}`;
+  await env.OAUTH_KV.put(
+    stateKey(state),
+    JSON.stringify({
+      stage: "owner_validation",
+      candidate_id: stored.candidate_id,
+      target: stored.target,
+    }),
+    { expirationTtl: OAUTH_STATE_TTL_SECONDS },
+  );
+  const destination = new URL(GITHUB_AUTHORIZE_URL);
+  destination.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
+  destination.searchParams.set("redirect_uri", `${url.origin}/callback`);
+  destination.searchParams.set("scope", "read:user");
+  destination.searchParams.set("state", state);
+  return Response.redirect(destination, 302);
+}
+
+async function finishOwnerCandidateValidation(request, env, fetchImpl) {
+  requireOwnerValidationEnabled(env);
+  requireOAuthBindings(env);
+  const url = new URL(request.url);
+  const state = url.searchParams.get("state");
+  const code = url.searchParams.get("code");
+  if (
+    !state?.startsWith(OWNER_VALIDATION_STATE_PREFIX) ||
+    !code
+  ) {
+    throw statusError("invalid_github_callback", 400);
+  }
+  const stored = await readState(env, state, "owner_validation");
+  await env.OAUTH_KV.delete(stateKey(state));
+  const githubUser = await exchangeGithubIdentity(url, env, fetchImpl);
+  const ownerGithubId = assertAllowedGithubUser(
+    githubUser,
+    parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
+  );
+  if (!env.DB) throw statusError("owner_validation_database_missing", 503);
+  const result = await validateMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: stored.target.tenant_id,
+      credential_id: `github-${ownerGithubId}`,
+      assistant_id: "human-validation-console",
+      principal_id: "owner",
+      role: "owner",
+      project_ids: [stored.target.project_id],
+      identity_ids: [],
+      capabilities: ["memory.validate"],
+    },
+    candidateId: stored.candidate_id,
+  });
+  return Response.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 async function administerPrivateGrant(request, env) {
@@ -399,33 +554,8 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
   if (!state || !code) throw statusError("invalid_github_callback", 400);
   const stored = await readState(env, state, "github");
   await env.OAUTH_KV.delete(stateKey(state));
+  const githubUser = await exchangeGithubIdentity(url, env, fetchImpl);
 
-  const tokenResponse = await fetchImpl(GITHUB_TOKEN_URL, {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_id: env.GITHUB_CLIENT_ID,
-      client_secret: env.GITHUB_CLIENT_SECRET,
-      code,
-      redirect_uri: `${url.origin}/callback`,
-    }),
-  });
-  const tokenBody = await tokenResponse.json();
-  if (!tokenResponse.ok || !tokenBody.access_token) {
-    throw statusError(`github_token_exchange_failed status=${tokenResponse.status}`, 502);
-  }
-  const userResponse = await fetchImpl(GITHUB_USER_URL, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${tokenBody.access_token}`,
-      "User-Agent": "mnemosyne-shared-memory",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
-  const githubUser = await userResponse.json();
-  if (!userResponse.ok) {
-    throw statusError(`github_identity_failed status=${userResponse.status}`, 502);
-  }
   const ownerGithubId = assertAllowedGithubUser(
     githubUser,
     parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
@@ -466,10 +596,49 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
   return Response.redirect(redirectTo, 302);
 }
 
+async function exchangeGithubIdentity(url, env, fetchImpl) {
+  const code = url.searchParams.get("code");
+  const tokenResponse = await fetchImpl(GITHUB_TOKEN_URL, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: env.GITHUB_CLIENT_ID,
+      client_secret: env.GITHUB_CLIENT_SECRET,
+      code,
+      redirect_uri: `${url.origin}/callback`,
+    }),
+  });
+  const tokenBody = await tokenResponse.json();
+  if (!tokenResponse.ok || !tokenBody.access_token) {
+    throw statusError(`github_token_exchange_failed status=${tokenResponse.status}`, 502);
+  }
+  const userResponse = await fetchImpl(GITHUB_USER_URL, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${tokenBody.access_token}`,
+      "User-Agent": "mnemosyne-shared-memory",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  const githubUser = await userResponse.json();
+  if (!userResponse.ok) {
+    throw statusError(`github_identity_failed status=${userResponse.status}`, 502);
+  }
+  return githubUser;
+}
+
 function requireOAuthBindings(env) {
   if (!env.OAUTH_KV || !env.OAUTH_PROVIDER) throw statusError("oauth_binding_missing", 503);
   if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
     throw statusError("github_oauth_not_configured", 503);
+  }
+}
+
+function requireOwnerValidationEnabled(env) {
+  if (!["1", "true", "yes", "on"].includes(
+    String(env.GRAPH_MEMORY_VALIDATION_ENABLED || "").trim().toLowerCase(),
+  )) {
+    throw statusError("owner_validation_disabled", 404);
   }
 }
 
@@ -496,6 +665,12 @@ function stateKey(value) {
 
 function csrfCookie(value) {
   return `mnemosyne_csrf=${value}; Path=/authorize; HttpOnly; Secure; SameSite=Lax; Max-Age=${OAUTH_STATE_TTL_SECONDS}`;
+}
+
+function ownerValidationCsrfCookie(value) {
+  return `mnemosyne_owner_validation_csrf=${value}; ` +
+    `Path=/owner/memory/candidates/; HttpOnly; Secure; SameSite=Lax; ` +
+    `Max-Age=${OAUTH_STATE_TTL_SECONDS}`;
 }
 
 function readCookie(request, name) {

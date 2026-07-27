@@ -12,12 +12,13 @@ test("all graph memory rollout flags default off", () => {
   assert.deepEqual(graphMemoryFeatureState({}), {
     read: false,
     propose: false,
+    validation: false,
     review: false,
     publication: false,
     mcp: false,
     actions: false,
   });
-  assert.equal(Object.keys(GRAPH_MEMORY_FLAGS).length, 6);
+  assert.equal(Object.keys(GRAPH_MEMORY_FLAGS).length, 7);
 });
 
 test("feature-gated services deny before calling implementations", async () => {
@@ -81,6 +82,7 @@ test("public health reports the exact rollout state", async () => {
   assert.deepEqual(body.graph_memory, {
     read: true,
     propose: false,
+    validation: false,
     review: false,
     publication: false,
     mcp: true,

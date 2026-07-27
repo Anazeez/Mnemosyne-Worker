@@ -3,6 +3,7 @@ import { GraphMemoryError } from "./contracts.js";
 export const GRAPH_MEMORY_FLAGS = Object.freeze({
   read: "GRAPH_MEMORY_READ_ENABLED",
   propose: "GRAPH_MEMORY_PROPOSE_ENABLED",
+  validation: "GRAPH_MEMORY_VALIDATION_ENABLED",
   review: "GRAPH_MEMORY_REVIEW_ENABLED",
   publication: "GRAPH_MEMORY_PUBLICATION_ENABLED",
   mcp: "GRAPH_MEMORY_MCP_ENABLED",

@@ -70,8 +70,14 @@ test("known-good candidate reaches pending review but never self-publishes", asy
     now: () => new Date("2026-07-27T12:10:00.000Z"),
     randomUUID: () => "validation-good"
   });
+  const replay = await validateMemoryCandidate({
+    env,
+    principal: reviewer(),
+    candidateId: candidate.candidate_id
+  });
 
   assert.equal(result.state, "pending_review");
+  assert.equal(replay.state, "pending_review");
   assert.equal(await env.DB.count("memory_assertions", "lifecycle_state = 'accepted'"), 0);
   assert.equal(await env.DB.count("memory_decisions", "decision_type = 'validation'"), 1);
 });

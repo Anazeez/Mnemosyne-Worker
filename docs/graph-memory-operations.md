@@ -7,13 +7,15 @@ projection. Public OAuth clients can only rehydrate, search, traverse, propose,
 and read their own candidate status.
 
 All rollout flags default off. Production deployment accepts explicit inputs
-for read, MCP, Actions, and proposal. Review and publication are fixed to off
-in deployment automation and remain manual internal operations.
+for read, MCP, Actions, proposal, and owner-authenticated validation. Review
+and publication are fixed to off in deployment automation and remain manual
+internal operations.
 
 | Flag | Effect |
 |---|---|
 | `GRAPH_MEMORY_READ_ENABLED` | Permit accepted retrieval and own status |
 | `GRAPH_MEMORY_PROPOSE_ENABLED` | Permit immutable candidate intake |
+| `GRAPH_MEMORY_VALIDATION_ENABLED` | Permit one-candidate validation after allowlisted GitHub owner authentication |
 | `GRAPH_MEMORY_REVIEW_ENABLED` | Internal review gate; deployment keeps off |
 | `GRAPH_MEMORY_PUBLICATION_ENABLED` | Internal publication gate; deployment keeps off |
 | `GRAPH_MEMORY_MCP_ENABLED` | Serve OAuth-protected Streamable HTTP MCP |
@@ -36,9 +38,26 @@ in deployment automation and remain manual internal operations.
 7. Enable read for the synthetic tenant.
 8. Enable MCP and Actions, then verify five tools with an owner-scoped token.
 9. Enable proposal and prove it creates only `pending_validation`.
+10. Enable owner validation and prove it advances a valid candidate only to
+    `pending_review`, with no accepted assertion or snapshot.
 
 Do not enable review or publication through public rollout automation.
 MCP and Actions deployment fails closed when `OAUTH_KV` cannot be resolved.
+
+## Owner validation
+
+With validation enabled, open the candidate-specific URL in a browser:
+
+```text
+https://memory.azzayezz.com/owner/memory/candidates/CANDIDATE_ID/validate?tenant_id=personal&project_id=PROJECT_ID
+```
+
+The Worker displays a non-mutating confirmation page, binds the confirmation
+to a one-time CSRF value, and then verifies the immutable GitHub owner ID.
+Successful deterministic validation advances the candidate only from
+`pending_validation` to `pending_review`. Invalid candidates are quarantined
+with a stable reason code. This flow issues no reusable review credential and
+cannot accept or publish memory.
 
 ## Owner identity and project grants
 
