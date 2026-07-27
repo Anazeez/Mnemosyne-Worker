@@ -31,7 +31,7 @@ test("OAuth provider requires S256 PKCE and disables implicit and token exchange
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowPlainPKCE, false);
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowImplicitFlow, false);
   assert.equal(OAUTH_PROVIDER_OPTIONS.allowTokenExchangeGrant, false);
-  assert.deepEqual(OAUTH_PROVIDER_OPTIONS.apiRoute, ["/mcp", "/openapi/"]);
+  assert.deepEqual(OAUTH_PROVIDER_OPTIONS.apiRoute, ["/mcp", "/v1/memory/"]);
 });
 
 test("grant claims bind tenant, subject, and narrowed scopes", () => {

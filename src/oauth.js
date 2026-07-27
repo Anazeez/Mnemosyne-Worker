@@ -7,7 +7,7 @@ const GITHUB_USER_URL = "https://api.github.com/user";
 export const PUBLIC_OAUTH_SCOPES = Object.freeze(Object.keys(PUBLIC_SCOPE_CAPABILITIES));
 
 export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
-  apiRoute: Object.freeze(["/mcp", "/openapi/"]),
+  apiRoute: Object.freeze(["/mcp", "/v1/memory/"]),
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
