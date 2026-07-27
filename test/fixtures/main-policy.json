@@ -70,6 +70,8 @@
     ["specialist", "ariadne.core.openai_test"],
     ["specialist", "continuity.read"],
     ["specialist", "continuity.write"],
+    ["portal", "memory.propose"],
+    ["portal", "memory.candidate.read.own"],
     ["portal", "continuity.read"],
     ["dashboard", "dashboard.overview"],
     ["inspector", "continuity.read"],

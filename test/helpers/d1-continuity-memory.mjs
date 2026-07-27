@@ -29,14 +29,26 @@ export class ContinuityMemoryD1 {
   }
 
   seedRunway(row) {
-    this.runways.set(row.runway_id, clone(row));
+    this.runways.set(row.runway_id, clone({
+      tenant_id: "personal",
+      ...row
+    }));
     return this;
   }
 
   seedHead(row) {
+    const normalized = clone({
+      tenant_id: "personal",
+      ...row
+    });
     this.heads.set(
-      headKey(row.identity_id, row.project_id, row.scope_key),
-      clone(row)
+      headKey(
+        normalized.tenant_id,
+        normalized.identity_id,
+        normalized.project_id,
+        normalized.scope_key
+      ),
+      normalized
     );
     return this;
   }
@@ -109,28 +121,41 @@ class MemoryStatement {
 
     switch (this.operation) {
       case "get-head": {
-        const [identityId, projectId, scopeKey] = this.values;
-        return clone(db.heads.get(headKey(identityId, projectId, scopeKey)) || null);
+        const [tenantId, identityId, projectId, scopeKey] = this.values;
+        return clone(
+          db.heads.get(headKey(tenantId, identityId, projectId, scopeKey)) ||
+          null
+        );
       }
       case "get-runway":
         return clone(db.runways.get(this.values[0]) || null);
+      case "get-runway-for-tenant": {
+        const [tenantId, runwayId] = this.values;
+        const row = db.runways.get(runwayId);
+        return clone(row?.tenant_id === tenantId ? row : null);
+      }
       case "get-idempotent": {
-        const [credentialId, idempotencyKey] = this.values;
+        const [tenantId, credentialId, idempotencyKey] = this.values;
         return clone([...db.runways.values()].find(row =>
+          row.tenant_id === tenantId &&
           row.created_by_credential_id === credentialId &&
           row.idempotency_key === idempotencyKey
         ) || null);
       }
       case "get-latest-validation": {
-        const [runwayId] = this.values;
+        const [tenantId, runwayId] = this.values;
         const rows = [...db.validations.values()]
-          .filter(row => row.runway_id === runwayId)
+          .filter(row =>
+            row.tenant_id === tenantId &&
+            row.runway_id === runwayId
+          )
           .sort((left, right) => right.created_at.localeCompare(left.created_at));
         return clone(rows[0] || null);
       }
       case "get-genesis": {
-        const [identityId, projectId] = this.values;
+        const [tenantId, identityId, projectId] = this.values;
         return clone([...db.runways.values()].find(row =>
+          row.tenant_id === tenantId &&
           row.identity_id === identityId &&
           row.project_id === projectId &&
           Number(row.generation) === 1 &&
@@ -138,8 +163,9 @@ class MemoryStatement {
         ) || null);
       }
       case "get-backfilled": {
-        const [identityId, projectId, scopeKey] = this.values;
+        const [tenantId, identityId, projectId, scopeKey] = this.values;
         const rows = [...db.runways.values()].filter(row =>
+          row.tenant_id === tenantId &&
           row.identity_id === identityId &&
           row.project_id === projectId &&
           row.scope_key === scopeKey &&
@@ -150,10 +176,16 @@ class MemoryStatement {
       }
       case "get-invalidation":
         return clone(db.invalidations.get(this.values[0]) || null);
-      case "get-retrieval-receipt":
-        return clone(db.receipts.get(this.values[0]) || null);
-      case "get-invocation":
-        return clone(db.invocations.get(this.values[0]) || null);
+      case "get-retrieval-receipt": {
+        const [tenantId, receiptId] = this.values;
+        const row = db.receipts.get(receiptId);
+        return clone(row?.tenant_id === tenantId ? row : null);
+      }
+      case "get-invocation": {
+        const [tenantId, invocationId] = this.values;
+        const row = db.invocations.get(invocationId);
+        return clone(row?.tenant_id === tenantId ? row : null);
+      }
       default:
         throw new Error(`Operation ${this.operation} does not support first()`);
     }
@@ -165,45 +197,73 @@ class MemoryStatement {
 
     switch (this.operation) {
       case "list-runway-records":
+        {
+          const [tenantId, runwayId] = this.values;
         return {
-          results: clone(db.records.filter(row => row.runway_id === this.values[0]))
+          results: clone(db.records.filter(row =>
+            (row.tenant_id || "personal") === tenantId &&
+            row.runway_id === runwayId
+          ))
         };
+        }
       case "list-validations":
+        {
+          const [tenantId, runwayId] = this.values;
         return {
           results: clone([...db.validations.values()].filter(row =>
-            row.runway_id === this.values[0]
+            row.tenant_id === tenantId &&
+            row.runway_id === runwayId
           ))
         };
+        }
       case "list-invalidations":
+        {
+          const [tenantId, runwayId] = this.values;
         return {
           results: clone([...db.invalidations.values()].filter(row =>
-            row.runway_id === this.values[0]
+            row.tenant_id === tenantId &&
+            row.runway_id === runwayId
           ))
         };
+        }
       case "list-publication-attempts":
+        {
+          const [tenantId, runwayId] = this.values;
         return {
           results: clone([...db.attempts.values()].filter(row =>
-            row.runway_id === this.values[0]
+            row.tenant_id === tenantId &&
+            row.runway_id === runwayId
           ))
         };
+        }
       case "list-history": {
-        const [identityId, projectId, scopeKey] = this.values;
+        const [tenantId, identityId, projectId, scopeKey] = this.values;
         return {
           results: clone([...db.runways.values()].filter(row =>
+            row.tenant_id === tenantId &&
             row.identity_id === identityId &&
             row.project_id === projectId &&
             row.scope_key === scopeKey
           ).sort((left, right) => Number(right.generation) - Number(left.generation)))
         };
       }
-      case "list-heads":
-        return { results: clone([...db.heads.values()]) };
-      case "list-continuity-health":
+      case "list-heads": {
+        const [tenantId] = this.values;
+        return {
+          results: clone([...db.heads.values()].filter(row =>
+            row.tenant_id === tenantId
+          ))
+        };
+      }
+      case "list-continuity-health": {
+        const [tenantId] = this.values;
         return {
           results: clone([...db.runways.values()].filter(row =>
+            row.tenant_id === tenantId &&
             ["candidate", "publication_failed", "published"].includes(row.state)
           ))
         };
+      }
       default:
         throw new Error(`Operation ${this.operation} does not support all()`);
     }
@@ -220,6 +280,7 @@ class MemoryStatement {
           throw new Error("UNIQUE constraint failed: context_runways.runway_id");
         }
         const duplicate = [...db.runways.values()].find(existing =>
+          existing.tenant_id === row.tenant_id &&
           existing.created_by_credential_id === row.created_by_credential_id &&
           existing.idempotency_key === row.idempotency_key
         );
@@ -235,9 +296,16 @@ class MemoryStatement {
         return changed(1);
       }
       case "set-runway-validation-state": {
-        const [state, integrityState, completenessScore, validatedAt, runwayId] = this.values;
+        const [
+          state,
+          integrityState,
+          completenessScore,
+          validatedAt,
+          tenantId,
+          runwayId
+        ] = this.values;
         const row = db.runways.get(runwayId);
-        if (!row) return changed(0);
+        if (!row || row.tenant_id !== tenantId) return changed(0);
         Object.assign(row, {
           state,
           integrity_state: integrityState,
@@ -284,10 +352,11 @@ class MemoryStatement {
           requestedDomainsJson,
           permittedDomainsJson,
           receiptHash,
+          tenantId,
           receiptId
         ] = this.values;
         const row = db.receipts.get(receiptId);
-        if (!row) return changed(0);
+        if (!row || row.tenant_id !== tenantId) return changed(0);
         Object.assign(row, {
           supplemental_search_used: supplementalUsed,
           supplemental_result_count: supplementalCount,
@@ -304,9 +373,16 @@ class MemoryStatement {
         return changed(1);
       }
       case "update-publication-attempt": {
-        const [status, errorCode, errorMessage, completedAt, attemptId] = this.values;
+        const [
+          status,
+          errorCode,
+          errorMessage,
+          completedAt,
+          tenantId,
+          attemptId
+        ] = this.values;
         const row = db.attempts.get(attemptId);
-        if (!row) return changed(0);
+        if (!row || row.tenant_id !== tenantId) return changed(0);
         Object.assign(row, {
           status,
           error_code: errorCode,
@@ -316,9 +392,13 @@ class MemoryStatement {
         return changed(1);
       }
       case "seal-runway": {
-        const [sealedAt, indexingState, runwayId] = this.values;
+        const [sealedAt, indexingState, tenantId, runwayId] = this.values;
         const row = db.runways.get(runwayId);
-        if (!row || row.state !== "validated") return changed(0);
+        if (
+          !row ||
+          row.tenant_id !== tenantId ||
+          row.state !== "validated"
+        ) return changed(0);
         Object.assign(row, {
           state: "sealed",
           sealed_at: sealedAt,
@@ -327,23 +407,27 @@ class MemoryStatement {
         return changed(1);
       }
       case "set-indexing-state": {
-        const [indexingState, state, runwayId] = this.values;
+        const [indexingState, state, tenantId, runwayId] = this.values;
         const row = db.runways.get(runwayId);
-        if (!row) return changed(0);
+        if (!row || row.tenant_id !== tenantId) return changed(0);
         Object.assign(row, { indexing_state: indexingState, state });
         return changed(1);
       }
       case "set-artifact-ref": {
-        const [artifactRef, runwayId] = this.values;
+        const [artifactRef, tenantId, runwayId] = this.values;
         const row = db.runways.get(runwayId);
-        if (!row) return changed(0);
+        if (!row || row.tenant_id !== tenantId) return changed(0);
         row.portable_artifact_ref = artifactRef;
         return changed(1);
       }
       case "set-publication-failed": {
-        const [indexingState, runwayId] = this.values;
+        const [indexingState, tenantId, runwayId] = this.values;
         const row = db.runways.get(runwayId);
-        if (!row || row.state === "published") return changed(0);
+        if (
+          !row ||
+          row.tenant_id !== tenantId ||
+          row.state === "published"
+        ) return changed(0);
         Object.assign(row, {
           state: "publication_failed",
           indexing_state: indexingState
@@ -352,6 +436,7 @@ class MemoryStatement {
       }
       case "publish-head-cas": {
         const [
+          tenantId,
           identityId,
           projectId,
           scopeKey,
@@ -362,7 +447,7 @@ class MemoryStatement {
           expectedGeneration,
           expectedPredecessor
         ] = this.values;
-        const key = headKey(identityId, projectId, scopeKey);
+        const key = headKey(tenantId, identityId, projectId, scopeKey);
         const current = db.heads.get(key) || null;
         const matches = current
           ? Number(current.generation) === Number(expectedGeneration) &&
@@ -380,6 +465,7 @@ class MemoryStatement {
           row.published_at = publishedAt;
         }
         db.heads.set(key, {
+          tenant_id: tenantId,
           identity_id: identityId,
           project_id: projectId,
           scope_key: scopeKey,
@@ -391,9 +477,9 @@ class MemoryStatement {
         return changed(1);
       }
       case "invalidate-runway": {
-        const [invalidatedAt, reason, runwayId] = this.values;
+        const [invalidatedAt, reason, tenantId, runwayId] = this.values;
         const row = db.runways.get(runwayId);
-        if (!row) return changed(0);
+        if (!row || row.tenant_id !== tenantId) return changed(0);
         const wasPublished = row.state === "published";
         Object.assign(row, {
           state: "invalidated",
@@ -401,7 +487,12 @@ class MemoryStatement {
           invalidation_reason: reason
         });
         if (wasPublished) {
-          const key = headKey(row.identity_id, row.project_id, row.scope_key);
+          const key = headKey(
+            row.tenant_id,
+            row.identity_id,
+            row.project_id,
+            row.scope_key
+          );
           const current = db.heads.get(key);
           if (current?.runway_id === row.runway_id) {
             if (row.predecessor_runway_id) {
@@ -409,6 +500,7 @@ class MemoryStatement {
               if (predecessor) {
                 predecessor.state = "published";
                 db.heads.set(key, {
+                  tenant_id: predecessor.tenant_id,
                   identity_id: predecessor.identity_id,
                   project_id: predecessor.project_id,
                   scope_key: predecessor.scope_key,
@@ -473,9 +565,9 @@ class MemoryStatement {
         return changed(1);
       }
       case "set-invocation-rehydrated": {
-        const [runwayId, receiptId, invocationId] = this.values;
+        const [runwayId, receiptId, tenantId, invocationId] = this.values;
         const row = db.invocations.get(invocationId);
-        if (!row) return changed(0);
+        if (!row || row.tenant_id !== tenantId) return changed(0);
         Object.assign(row, {
           resolved_runway_id: runwayId,
           retrieval_receipt_id: receiptId,
@@ -484,9 +576,20 @@ class MemoryStatement {
         return changed(1);
       }
       case "complete-invocation": {
-        const [state, outcome, completedAt, invocationId, credentialId] = this.values;
+        const [
+          state,
+          outcome,
+          completedAt,
+          tenantId,
+          invocationId,
+          credentialId
+        ] = this.values;
         const row = db.invocations.get(invocationId);
-        if (!row || row.credential_id !== credentialId) return changed(0);
+        if (
+          !row ||
+          row.tenant_id !== tenantId ||
+          row.credential_id !== credentialId
+        ) return changed(0);
         Object.assign(row, {
           state,
           continuity_outcome: outcome,
@@ -503,6 +606,7 @@ class MemoryStatement {
 function runwayFromValues(values) {
   const fields = [
     "runway_id",
+    "tenant_id",
     "schema_version",
     "identity_id",
     "project_id",
@@ -532,6 +636,7 @@ function runwayFromValues(values) {
 function validationFromValues(values) {
   const fields = [
     "validation_id",
+    "tenant_id",
     "runway_id",
     "validator_credential_id",
     "status",
@@ -548,6 +653,7 @@ function validationFromValues(values) {
 function receiptFromValues(values) {
   const fields = [
     "receipt_id",
+    "tenant_id",
     "requesting_credential_id",
     "identity_id",
     "project_id",
@@ -571,6 +677,7 @@ function receiptFromValues(values) {
 function publicationAttemptFromValues(values) {
   const fields = [
     "attempt_id",
+    "tenant_id",
     "runway_id",
     "expected_generation",
     "observed_generation",
@@ -586,6 +693,7 @@ function publicationAttemptFromValues(values) {
 function invalidationFromValues(values) {
   const fields = [
     "invalidation_id",
+    "tenant_id",
     "runway_id",
     "invalidated_by_credential_id",
     "reason",
@@ -600,6 +708,7 @@ function invalidationFromValues(values) {
 function invocationFromValues(values) {
   const fields = [
     "invocation_id",
+    "tenant_id",
     "identity_id",
     "project_id",
     "scope_key",
@@ -614,8 +723,14 @@ function invocationFromValues(values) {
   return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
 }
 
-function headKey(identityId, projectId, scopeKey) {
-  return `${identityId}\u0000${projectId}\u0000${scopeKey}`;
+function headKey(tenantId, identityId, projectId, scopeKey) {
+  if (scopeKey === undefined) {
+    scopeKey = projectId;
+    projectId = identityId;
+    identityId = tenantId;
+    tenantId = "personal";
+  }
+  return `${tenantId}\u0000${identityId}\u0000${projectId}\u0000${scopeKey}`;
 }
 
 function changed(changes) {

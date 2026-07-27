@@ -95,6 +95,8 @@ const VALID_STATUS_VALUES = ["intake", "canon", "sealed"];
 const CAPABILITY = Object.freeze({
   MEMORY_READ: "memory.read",
   MEMORY_SEARCH: "memory.search",
+  MEMORY_PROPOSE: "memory.propose",
+  MEMORY_CANDIDATE_READ_OWN: "memory.candidate.read.own",
   MEMORY_INGEST: "memory.ingest",
   MEMORY_HASH: "memory.hash",
 
@@ -190,6 +192,8 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
 // Portal GPTs: observation only. No inbox, dispatch, mandates, skills, or router.
 const PORTAL_CAPABILITIES = Object.freeze([
   ...READ_ONLY_MEMORY,
+  CAPABILITY.MEMORY_PROPOSE,
+  CAPABILITY.MEMORY_CANDIDATE_READ_OWN,
   CAPABILITY.SKILLS_RETRIEVAL,
   CAPABILITY.EXCHANGES_HISTORY,
   CAPABILITY.MEMORY_SEARCH,
@@ -271,6 +275,7 @@ const ROLE_POLICIES = Object.freeze({
 });
 
 const ARCHITECTUS_PRINCIPAL = Object.freeze({
+  tenant_id: "personal",
   credential_id: "architectus",
   principal_id: "root",
   role: "root",
@@ -828,6 +833,7 @@ function authenticateRequest(request, env) {
     return {
       ok: true,
       principal: {
+        tenant_id: "personal",
         credential_id: "command-center",
         principal_id: "dashboard",
         role: "dashboard",
@@ -954,6 +960,7 @@ function resolveCredentialPrincipal(record) {
   }
 
   return {
+    tenant_id: normalizeTenantId(record.tenant_id) || "personal",
     credential_id: credentialId,
     principal_id: role,
     role,
@@ -963,6 +970,13 @@ function resolveCredentialPrincipal(record) {
     identity_ids: resolveEffectiveIdentityIds(record, role, credentialId),
     receives_mandates: Boolean(policy.receives_mandates)
   };
+}
+
+function normalizeTenantId(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{1,63}$/.test(normalized)
+    ? normalized
+    : null;
 }
 
 function resolveContinuityServicePrincipal(env) {
