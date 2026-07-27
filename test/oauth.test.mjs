@@ -10,9 +10,14 @@ import {
   createOAuthDefaultHandler,
   narrowRequestedScopes,
   parseAllowedGithubUserIds,
+  refreshGrantProps,
   redactOAuthError,
 } from "../src/oauth.js";
+import { approveAssistantGrant } from "../src/graph-memory/grants.js";
 import { buildDeploymentConfig } from "../scripts/cloudflare-binding-preflight.mjs";
+import {
+  migratedGraphMemoryEnvironment,
+} from "./helpers/d1-graph-memory.mjs";
 
 test("OAuth requests are narrowed to supported public scopes", () => {
   assert.deepEqual(
@@ -96,6 +101,262 @@ test("grant claims bind tenant, subject, and narrowed scopes", () => {
       },
     },
   );
+});
+
+test("OAuth authorization resolves project claims from D1 grants", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment(oauthEnvironment(kv));
+  env.AUTHORIZED_GITHUB_USER_IDS = "277895262";
+  env.MEMORY_TENANT_ID = "personal";
+  env.GRANT_RESOLVER_TOKEN = "resolver-token-with-at-least-32-characters";
+  let completed;
+  env.OAUTH_PROVIDER.completeAuthorization = async claims => {
+    completed = claims;
+    return { redirectTo: "https://client.example/callback?code=issued" };
+  };
+  const assistantId = await assistantIdForOAuthClient("client");
+  await approveAssistantGrant(env.DB, {
+    tenant_id: "personal",
+    owner_github_id: 277895262,
+    assistant_id: assistantId,
+    project_id: "project-alpha",
+    capabilities: ["memory.read", "memory.search"],
+    approved_by: "owner:277895262",
+    reason: "owner approved project access",
+    idempotency_key: "grant-project-alpha",
+    permanent: true,
+    now: "2026-07-27T00:00:00.000Z",
+  });
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+    fetchImpl: async (url) => {
+      if (String(url).includes("access_token")) {
+        return Response.json({ access_token: "github-access" });
+      }
+      return Response.json({ id: 277895262, login: "Anazeez" });
+    },
+  });
+
+  const consent = await handler.fetch(
+    new Request("https://memory.example/authorize?client_id=client"),
+    env,
+  );
+  const html = await consent.text();
+  const requestId = html.match(/request=([^"]+)/)[1];
+  const csrf = html.match(/name="csrf" value="([^"]+)/)[1];
+  const githubRedirect = await handler.fetch(
+    new Request(`https://memory.example/authorize?request=${requestId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_csrf=${csrf}`,
+      },
+      body: `csrf=${encodeURIComponent(csrf)}`,
+    }),
+    env,
+  );
+  const githubState = new URL(
+    githubRedirect.headers.get("location"),
+  ).searchParams.get("state");
+  const callback = await handler.fetch(
+    new Request(
+      `https://memory.example/callback?state=${githubState}&code=github-code`,
+    ),
+    env,
+  );
+
+  assert.equal(callback.status, 302);
+  assert.deepEqual(completed.props.project_ids, [
+    "global-canon",
+    "project-alpha",
+  ]);
+  assert.match(completed.props.grant_version, /^[a-f0-9]{64}$/);
+  assert.equal(completed.props.owner_github_id, 277895262);
+  assert.equal(completed.props.assistant_id, assistantId);
+  assert.equal(
+    completed.props.grant_resolver_url,
+    "https://memory.example/internal/oauth/grants",
+  );
+  assert.equal(
+    completed.props.grant_resolver_token,
+    "resolver-token-with-at-least-32-characters",
+  );
+});
+
+test("refresh resolves the current project grant through the private resolver", async () => {
+  const calls = [];
+  const props = {
+    owner_github_id: 277895262,
+    assistant_id: "oauth-0123456789abcdef0123456789abcdef",
+    tenant_id: "personal",
+    project_ids: ["global-canon"],
+    grant_version: "old-version",
+    grant_resolver_url: "https://memory.example/internal/oauth/grants",
+    grant_resolver_token: "resolver-token-with-at-least-32-characters",
+  };
+  const refreshed = await refreshGrantProps(props, {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      return Response.json({
+        project_ids: ["global-canon", "project-alpha"],
+        grant_version: "b".repeat(64),
+      });
+    },
+  });
+
+  assert.deepEqual(refreshed.project_ids, [
+    "global-canon",
+    "project-alpha",
+  ]);
+  assert.equal(refreshed.grant_version, "b".repeat(64));
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].init.headers.Authorization,
+    "Bearer resolver-token-with-at-least-32-characters",
+  );
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    tenant_id: "personal",
+    owner_github_id: 277895262,
+    assistant_id: "oauth-0123456789abcdef0123456789abcdef",
+  });
+});
+
+test("refresh denies a failed private grant resolution", async () => {
+  await assert.rejects(
+    refreshGrantProps({
+      owner_github_id: 277895262,
+      assistant_id: "oauth-0123456789abcdef0123456789abcdef",
+      tenant_id: "personal",
+      grant_resolver_url: "https://memory.example/internal/oauth/grants",
+      grant_resolver_token: "resolver-token-with-at-least-32-characters",
+    }, {
+      fetchImpl: async () => Response.json(
+        { error: "grant_denied" },
+        { status: 403 },
+      ),
+    }),
+    /grant_refresh_denied/,
+  );
+});
+
+test("private grant resolver requires its secret and returns current D1 grants", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment(oauthEnvironment(kv));
+  env.AUTHORIZED_GITHUB_USER_IDS = "277895262";
+  env.GRANT_RESOLVER_TOKEN = "resolver-token-with-at-least-32-characters";
+  const assistantId = await assistantIdForOAuthClient("client");
+  await approveAssistantGrant(env.DB, {
+    tenant_id: "personal",
+    owner_github_id: 277895262,
+    assistant_id: assistantId,
+    project_id: "project-alpha",
+    capabilities: ["memory.read"],
+    approved_by: "owner:277895262",
+    reason: "owner approved project access",
+    idempotency_key: "grant-resolver-alpha",
+    permanent: true,
+    now: "2026-07-27T00:00:00.000Z",
+  });
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const body = JSON.stringify({
+    tenant_id: "personal",
+    owner_github_id: 277895262,
+    assistant_id: assistantId,
+  });
+  const denied = await handler.fetch(
+    new Request("https://memory.example/internal/oauth/grants", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer wrong",
+        "Content-Type": "application/json",
+      },
+      body,
+    }),
+    env,
+  );
+  assert.equal(denied.status, 403);
+
+  const allowed = await handler.fetch(
+    new Request("https://memory.example/internal/oauth/grants", {
+      method: "POST",
+      headers: {
+        Authorization:
+          "Bearer resolver-token-with-at-least-32-characters",
+        "Content-Type": "application/json",
+      },
+      body,
+    }),
+    env,
+  );
+  assert.equal(allowed.status, 200);
+  assert.deepEqual((await allowed.json()).project_ids, [
+    "global-canon",
+    "project-alpha",
+  ]);
+});
+
+test("private grant administration requires the root key and writes receipts", async () => {
+  const env = await migratedGraphMemoryEnvironment({
+    ...oauthEnvironment(memoryKv()),
+    MATRIX_AUTH_KEY: "root-key-with-at-least-20-characters",
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+  });
+  const assistantId = await assistantIdForOAuthClient("orchestrator-client");
+  const operation = {
+    command: "approve",
+    dryRun: false,
+    input: {
+      tenant_id: "personal",
+      owner_github_id: 277895262,
+      assistant_id: assistantId,
+      project_id: "*",
+      capabilities: ["memory.read", "memory.search"],
+      approved_by: "owner:277895262",
+      reason: "owner approved orchestrator project access",
+      idempotency_key: "grant-orchestrator-all",
+      now: "2026-07-27T12:00:00.000Z",
+      starts_at: "2026-07-27T12:00:00.000Z",
+      expires_at: null,
+      permanent: true,
+    },
+  };
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const denied = await handler.fetch(
+    new Request("https://memory.example/internal/admin/memory/grants", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Matrix-Key": "wrong",
+      },
+      body: JSON.stringify(operation),
+    }),
+    env,
+  );
+  assert.equal(denied.status, 403);
+  assert.equal(await env.DB.count("memory_access_grants"), 0);
+
+  const approved = await handler.fetch(
+    new Request("https://memory.example/internal/admin/memory/grants", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Matrix-Key": "root-key-with-at-least-20-characters",
+      },
+      body: JSON.stringify(operation),
+    }),
+    env,
+  );
+  assert.equal(approved.status, 200);
+  const result = await approved.json();
+  assert.equal(result.project_id, "*");
+  assert.equal(result.assistant_id, assistantId);
+  assert.equal(await env.DB.count("memory_access_grants"), 1);
+  assert.equal(await env.DB.count("memory_authorization_receipts"), 1);
 });
 
 test("an invalid Authorization header never falls back to X-Matrix-Key", async () => {

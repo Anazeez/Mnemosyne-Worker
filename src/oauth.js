@@ -1,4 +1,9 @@
 import { PUBLIC_SCOPE_CAPABILITIES } from "./graph-memory/policy.js";
+import {
+  approveAssistantGrant,
+  resolveAssistantGrant,
+  revokeAssistantGrant,
+} from "./graph-memory/grants.js";
 
 const OAUTH_STATE_TTL_SECONDS = 600;
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
@@ -70,6 +75,51 @@ export async function assistantIdForOAuthClient(clientId) {
   return `oauth-${suffix}`;
 }
 
+export async function refreshGrantProps(props, { fetchImpl = fetch } = {}) {
+  const url = new URL(String(props?.grant_resolver_url || ""));
+  if (
+    url.protocol !== "https:" ||
+    url.pathname !== "/internal/oauth/grants" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("grant_refresh_denied");
+  }
+  const resolverToken = String(props?.grant_resolver_token || "");
+  if (resolverToken.length < 32) {
+    throw new Error("grant_refresh_denied");
+  }
+  const response = await fetchImpl(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${resolverToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      tenant_id: props.tenant_id,
+      owner_github_id: props.owner_github_id,
+      assistant_id: props.assistant_id,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error("grant_refresh_denied");
+  }
+  const grant = await response.json();
+  if (
+    !Array.isArray(grant?.project_ids) ||
+    !grant.project_ids.every(value => typeof value === "string") ||
+    !/^[a-f0-9]{64}$/.test(String(grant?.grant_version || ""))
+  ) {
+    throw new Error("grant_refresh_denied");
+  }
+  return {
+    ...props,
+    project_ids: [...new Set(grant.project_ids)].sort(),
+    grant_version: grant.grant_version,
+  };
+}
+
 export function buildGrantClaims({
   githubUser,
   tenantId,
@@ -120,6 +170,18 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
     async fetch(request, env, ctx) {
       const url = new URL(request.url);
       try {
+        if (
+          url.pathname === "/internal/oauth/grants" &&
+          request.method === "POST"
+        ) {
+          return await resolvePrivateGrant(request, env);
+        }
+        if (
+          url.pathname === "/internal/admin/memory/grants" &&
+          request.method === "POST"
+        ) {
+          return await administerPrivateGrant(request, env);
+        }
         if (url.pathname === "/authorize" && request.method === "GET") {
           return await beginConsent(request, env);
         }
@@ -138,6 +200,102 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
       }
     },
   };
+}
+
+async function administerPrivateGrant(request, env) {
+  const configuredKey = String(env.MATRIX_AUTH_KEY || "");
+  const suppliedKey = request.headers.get("X-Matrix-Key") || "";
+  if (
+    configuredKey.length < 20 ||
+    !(await constantTimeEqual(configuredKey, suppliedKey))
+  ) {
+    return Response.json({ error: "grant_admin_denied" }, { status: 403 });
+  }
+  if (!env.DB) {
+    return Response.json({ error: "grant_admin_unavailable" }, { status: 503 });
+  }
+  const operation = await request.json();
+  if (operation?.dryRun === true) {
+    return Response.json({ error: "dry_run_is_local_only" }, { status: 400 });
+  }
+  const input = operation?.input || {};
+  assertAdminGrantTarget(input, env);
+  if (operation?.command === "approve") {
+    return Response.json(await approveAssistantGrant(env.DB, input), {
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+  if (operation?.command === "revoke") {
+    return Response.json(await revokeAssistantGrant(env.DB, input), {
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+  if (operation?.command === "list-active") {
+    const grant = await resolveAssistantGrant(env.DB, {
+      tenantId: input.tenant_id,
+      ownerGithubId: input.owner_github_id,
+      assistantId: input.assistant_id,
+      now: input.now,
+    });
+    return Response.json({
+      assistant_id: input.assistant_id,
+      status: "active",
+      project_ids: grant.project_ids,
+      grant_version: grant.grant_version,
+    }, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+  return Response.json({ error: "grant_admin_command_invalid" }, { status: 400 });
+}
+
+function assertAdminGrantTarget(input, env) {
+  const ownerGithubId = Number(input?.owner_github_id);
+  if (input?.grant_id) return;
+  assertAllowedGithubUser(
+    { id: ownerGithubId },
+    parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
+  );
+  const tenantId = String(env.MEMORY_TENANT_ID || "personal");
+  if (input?.tenant_id !== tenantId) {
+    throw statusError("grant_admin_tenant_denied", 403);
+  }
+}
+
+async function resolvePrivateGrant(request, env) {
+  const configuredToken = String(env.GRANT_RESOLVER_TOKEN || "");
+  const suppliedToken = bearerToken(request);
+  if (
+    configuredToken.length < 32 ||
+    !(await constantTimeEqual(configuredToken, suppliedToken))
+  ) {
+    return Response.json({ error: "grant_resolution_denied" }, { status: 403 });
+  }
+  if (!env.DB) {
+    return Response.json(
+      { error: "grant_resolution_unavailable" },
+      { status: 503 },
+    );
+  }
+  const body = await request.json();
+  const ownerGithubId = Number(body?.owner_github_id);
+  assertAllowedGithubUser(
+    { id: ownerGithubId },
+    parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
+  );
+  const tenantId = String(env.MEMORY_TENANT_ID || "personal");
+  if (body?.tenant_id !== tenantId) {
+    return Response.json({ error: "grant_resolution_denied" }, { status: 403 });
+  }
+  const grant = await resolveAssistantGrant(env.DB, {
+    tenantId,
+    ownerGithubId,
+    assistantId: body?.assistant_id,
+    now: new Date().toISOString(),
+  });
+  return Response.json(grant, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 async function beginConsent(request, env) {
@@ -235,20 +393,36 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
   if (!userResponse.ok) {
     throw statusError(`github_identity_failed status=${userResponse.status}`, 502);
   }
-  assertAllowedGithubUser(
+  const ownerGithubId = assertAllowedGithubUser(
     githubUser,
     parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
   );
   const assistantId = await assistantIdForOAuthClient(
     stored.authRequest.clientId,
   );
+  if (!env.DB) throw statusError("grant_database_missing", 503);
+  const grant = await resolveAssistantGrant(env.DB, {
+    tenantId: env.MEMORY_TENANT_ID || "personal",
+    ownerGithubId,
+    assistantId,
+    now: new Date().toISOString(),
+  });
   const claims = buildGrantClaims({
     githubUser,
     tenantId: env.MEMORY_TENANT_ID || "personal",
     assistantId,
-    projectIds: parseProjectIds(env.MEMORY_PROJECT_IDS),
+    projectIds: grant.project_ids,
     requestedScopes: stored.scopes,
   });
+  const resolverToken = String(env.GRANT_RESOLVER_TOKEN || "");
+  if (resolverToken.length < 32) {
+    throw statusError("grant_resolver_not_configured", 503);
+  }
+  claims.props.owner_github_id = ownerGithubId;
+  claims.props.grant_version = grant.grant_version;
+  claims.props.grant_resolver_url =
+    `${url.origin}/internal/oauth/grants`;
+  claims.props.grant_resolver_token = resolverToken;
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
     request: stored.authRequest,
     ...claims,
@@ -297,6 +471,31 @@ function readCookie(request, name) {
   return "";
 }
 
+function bearerToken(request) {
+  const value = request.headers.get("Authorization") || "";
+  return value.startsWith("Bearer ") ? value.slice(7) : "";
+}
+
+async function constantTimeEqual(expected, actual) {
+  const left = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(String(expected)),
+    ),
+  );
+  const right = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(String(actual)),
+    ),
+  );
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference === 0;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -304,13 +503,6 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-function parseProjectIds(value) {
-  return String(value || "")
-    .split(",")
-    .map(item => item.trim())
-    .filter(Boolean);
 }
 
 function statusError(message, status) {

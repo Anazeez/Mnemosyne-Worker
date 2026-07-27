@@ -1,9 +1,13 @@
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
+import {
+  OAuthError,
+  OAuthProvider,
+} from "@cloudflare/workers-oauth-provider";
 
 import legacyWorker from "./index.js";
 import {
   OAUTH_PROVIDER_OPTIONS,
   createOAuthDefaultHandler,
+  refreshGrantProps,
 } from "./oauth.js";
 import { principalFromOAuthClaims } from "./graph-memory/policy.js";
 import {
@@ -47,6 +51,17 @@ const publicAndLegacyApi = {
 
 export const oauthWorker = new OAuthProvider({
   ...OAUTH_PROVIDER_OPTIONS,
+  tokenExchangeCallback: async options => {
+    if (options.grantType !== "refresh_token") return;
+    try {
+      const newProps = await refreshGrantProps(options.props);
+      return { accessTokenProps: newProps, newProps };
+    } catch {
+      throw new OAuthError("invalid_grant", {
+        description: "grant_refresh_denied",
+      });
+    }
+  },
   apiHandler: protectedApi,
   defaultHandler: createOAuthDefaultHandler({ legacyWorker: publicAndLegacyApi }),
 });
