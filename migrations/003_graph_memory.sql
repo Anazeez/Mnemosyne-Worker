@@ -441,27 +441,28 @@ END;
 
 CREATE TRIGGER memory_assertions_require_acceptance_receipts
 BEFORE UPDATE OF lifecycle_state ON memory_assertions
-WHEN NEW.lifecycle_state = 'accepted' AND OLD.lifecycle_state <> 'accepted'
+WHEN NEW.lifecycle_state = 'accepted'
+ AND OLD.lifecycle_state <> 'accepted'
+ AND (
+   NOT EXISTS (
+     SELECT 1
+       FROM memory_assertion_evidence
+      WHERE tenant_id = NEW.tenant_id
+        AND project_id = NEW.project_id
+        AND assertion_id = NEW.assertion_id
+   )
+   OR NOT EXISTS (
+     SELECT 1
+       FROM memory_decisions
+      WHERE tenant_id = NEW.tenant_id
+        AND project_id = NEW.project_id
+        AND assertion_id = NEW.assertion_id
+        AND decision_type IN ('review', 'publication')
+        AND outcome = 'accepted'
+   )
+ )
 BEGIN
-  SELECT CASE
-    WHEN NOT EXISTS (
-      SELECT 1
-        FROM memory_assertion_evidence
-       WHERE tenant_id = NEW.tenant_id
-         AND project_id = NEW.project_id
-         AND assertion_id = NEW.assertion_id
-    )
-    OR NOT EXISTS (
-      SELECT 1
-        FROM memory_decisions
-       WHERE tenant_id = NEW.tenant_id
-         AND project_id = NEW.project_id
-         AND assertion_id = NEW.assertion_id
-         AND decision_type IN ('review', 'publication')
-         AND outcome = 'accepted'
-    )
-    THEN RAISE(ABORT, 'accepted assertion requires evidence and decision')
-  END;
+  SELECT RAISE(ABORT, 'accepted assertion requires evidence and decision');
 END;
 
 CREATE TRIGGER memory_evidence_reject_update
