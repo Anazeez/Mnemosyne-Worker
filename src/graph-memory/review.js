@@ -4,6 +4,7 @@ import {
   normalizeCandidatePayload
 } from "./contracts.js";
 import { assertGraphAccess } from "./policy.js";
+import { buildProjectionOutboxStatement } from "./projection.js";
 
 const SQL = Object.freeze({
   GET_CANDIDATE: `
@@ -66,6 +67,27 @@ const SQL = Object.freeze({
        SET lifecycle_state = 'superseded'
      WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?
        AND lifecycle_state = 'accepted'`,
+  LIST_ACCEPTED_CANDIDATE_ASSERTIONS: `
+    SELECT a.assertion_id, a.tenant_id, a.project_id, a.predicate,
+           a.object_json, a.accepted_generation, e.canonical_label,
+           GROUP_CONCAT(COALESCE(me.source_excerpt, ''), CHAR(10))
+             AS evidence_excerpt
+      FROM memory_assertions a
+      JOIN memory_entities e
+        ON e.tenant_id = a.tenant_id
+       AND e.project_id = a.project_id
+       AND e.entity_id = a.subject_entity_id
+      LEFT JOIN memory_assertion_evidence ae
+        ON ae.tenant_id = a.tenant_id
+       AND ae.project_id = a.project_id
+       AND ae.assertion_id = a.assertion_id
+      LEFT JOIN memory_evidence me
+        ON me.tenant_id = ae.tenant_id
+       AND me.project_id = ae.project_id
+       AND me.evidence_id = ae.evidence_id
+     WHERE a.tenant_id = ? AND a.project_id = ? AND a.candidate_id = ?
+       AND a.lifecycle_state = 'accepted'
+     GROUP BY a.assertion_id`,
   SUPERSEDE_ORPHAN_ENTITIES: `
     UPDATE memory_entities
        SET lifecycle_state = 'superseded', updated_at = ?
@@ -365,6 +387,24 @@ export async function publishMemoryCandidate({
       candidate.project_id,
       assertionId
     ));
+    const projection = await buildProjectionOutboxStatement({
+      db: env.DB,
+      assertion: {
+        assertion_id: assertionId,
+        tenant_id: candidate.tenant_id,
+        project_id: candidate.project_id,
+        canonical_label: assertion.subject,
+        predicate: assertion.predicate,
+        object_json: JSON.stringify(assertion.object),
+        evidence_excerpt: evidence
+          .map(item => item.source_excerpt || "")
+          .filter(Boolean)
+          .join("\n"),
+        accepted_generation: generation
+      },
+      now
+    });
+    statements.push(projection.statement);
   }
 
   const publicationReceiptHash = await canonicalHash({
@@ -441,7 +481,14 @@ export async function rollbackMemoryDecision({
 
   const createdAt = now().toISOString();
   const rollbackDecisionId = `decision_${randomUUID()}`;
-  await env.DB.batch([
+  const supersededAssertions = (await env.DB.prepare(
+    SQL.LIST_ACCEPTED_CANDIDATE_ASSERTIONS
+  ).bind(
+    decision.tenant_id,
+    decision.project_id,
+    decision.candidate_id
+  ).all()).results || [];
+  const statements = [
     env.DB.prepare(SQL.SUPERSEDE_ASSERTIONS).bind(
       decision.tenant_id,
       decision.project_id,
@@ -470,7 +517,17 @@ export async function rollbackMemoryDecision({
       principal.credential_id,
       createdAt
     )
-  ]);
+  ];
+  for (const assertion of supersededAssertions) {
+    const projection = await buildProjectionOutboxStatement({
+      db: env.DB,
+      assertion,
+      operation: "delete",
+      now
+    });
+    statements.push(projection.statement);
+  }
+  await env.DB.batch(statements);
   const restored = await acceptedView(
     env,
     decision.tenant_id,

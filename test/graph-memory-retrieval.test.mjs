@@ -193,14 +193,45 @@ test("rehydration records the accepted generation and selected assertions", asyn
 
   assert.equal(result.accepted_generation, 2);
   assert.equal(result.assertions.length, 2);
+  assert.ok(result.context_package.estimated_tokens <= 2_000);
+  assert.equal(result.context_package.budget_tokens, 2_000);
   assert.equal(await env.DB.count("memory_invocations"), 1);
 });
 
+test("rehydration rejects a context budget above the hard cap", async () => {
+  const env = await migratedGraphMemoryEnvironment();
+  await seedAcceptedGraph(env);
+
+  await assert.rejects(
+    rehydrateAcceptedMemory({
+      env,
+      principal: portal(),
+      body: {
+        tenant_id: "tenant-a",
+        project_id: "project.one",
+        query: "status",
+        invocation_id: "memory-invocation-over-budget",
+        budget_tokens: 2_001
+      }
+    }),
+    error => error.code === "CONTEXT_BUDGET_EXCEEDED"
+  );
+});
+
 test("cross-tenant search fails before semantic retrieval", async () => {
+  let embeddingCalls = 0;
+  let vectorCalls = 0;
   const env = await migratedGraphMemoryEnvironment({
+    AI: {
+      async run() {
+        embeddingCalls += 1;
+        return { data: [[0.1]] };
+      }
+    },
     MATRIX_KNOWLEDGE: {
       async query() {
-        throw new Error("Vectorize must not be called");
+        vectorCalls += 1;
+        return { matches: [] };
       }
     }
   });
@@ -216,4 +247,80 @@ test("cross-tenant search fails before semantic retrieval", async () => {
     }),
     error => error.code === "TENANT_SCOPE_DENIED"
   );
+  assert.equal(embeddingCalls, 0);
+  assert.equal(vectorCalls, 0);
+});
+
+test("semantic retrieval finds an accepted paraphrase missed by lexical search", async () => {
+  const env = await migratedGraphMemoryEnvironment({
+    AI: {
+      async run() {
+        return { data: [[0.1, 0.2]] };
+      }
+    },
+    MATRIX_KNOWLEDGE: {
+      async query(vector, options) {
+        assert.deepEqual(vector, [0.1, 0.2]);
+        assert.deepEqual(options.filter, {
+          tenant_id: "tenant-a",
+          project_id: "project.one"
+        });
+        return {
+          matches: [{
+            id: "assertion:tenant-a:project.one:assertion-new",
+            score: 0.91,
+            metadata: { assertion_id: "assertion-new" }
+          }]
+        };
+      }
+    }
+  });
+  await seedAcceptedGraph(env);
+
+  const result = await searchAcceptedMemory({
+    env,
+    principal: portal(),
+    body: {
+      tenant_id: "tenant-a",
+      project_id: "project.one",
+      query: "the project has moved into the building phase",
+      top_k: 10
+    }
+  });
+
+  assert.deepEqual(
+    result.assertions.map(assertion => assertion.assertion_id),
+    ["assertion-new"]
+  );
+  assert.equal(result.retrieval.semantic_used, true);
+});
+
+test("embedding failure degrades explicitly to authorized D1 results", async () => {
+  const env = await migratedGraphMemoryEnvironment({
+    AI: {
+      async run() {
+        throw new Error("embedding unavailable");
+      }
+    },
+    MATRIX_KNOWLEDGE: { async query() { return { matches: [] }; } }
+  });
+  await seedAcceptedGraph(env);
+
+  const result = await searchAcceptedMemory({
+    env,
+    principal: portal(),
+    body: {
+      tenant_id: "tenant-a",
+      project_id: "project.one",
+      query: "status",
+      top_k: 10
+    }
+  });
+
+  assert.equal(result.assertions.length, 2);
+  assert.deepEqual(result.retrieval, {
+    lexical_used: true,
+    semantic_used: false,
+    semantic_reason: "EMBEDDING_SERVICE_UNAVAILABLE"
+  });
 });

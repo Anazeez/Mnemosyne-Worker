@@ -15,6 +15,10 @@ const privateGrantMigration = new URL(
   "../migrations/004_private_memory_grants.sql",
   import.meta.url
 );
+const hybridRetrievalMigration = new URL(
+  "../migrations/005_hybrid_retrieval.sql",
+  import.meta.url
+);
 const goldenFixture = new URL(
   "../migrations/fixtures/graph-memory-golden.jsonl",
   import.meta.url
@@ -26,6 +30,7 @@ async function migratedDatabase() {
   seedLegacyContinuity(db);
   db.exec(await readFile(graphMigration, "utf8"));
   db.exec(await readFile(privateGrantMigration, "utf8"));
+  db.exec(await readFile(hybridRetrievalMigration, "utf8"));
   return db;
 }
 
@@ -216,6 +221,21 @@ test("private grant migration is forward-only and receipt-backed", async () => {
       1
     );
   }
+});
+
+test("hybrid retrieval migration creates rebuildable search projections", async () => {
+  const db = await migratedDatabase();
+  const searchTable = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_assertion_search'
+  `).get();
+  const outboxTable = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_projection_outbox'
+  `).get();
+
+  assert.match(searchTable.sql, /VIRTUAL TABLE memory_assertion_search USING fts5/i);
+  assert.match(outboxTable.sql, /CREATE TABLE memory_projection_outbox/i);
 });
 
 test("golden pilot fixture is representative and bounded", async () => {

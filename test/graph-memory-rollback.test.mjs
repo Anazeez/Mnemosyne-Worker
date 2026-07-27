@@ -78,4 +78,11 @@ test("rollback restores the verified pre-publication accepted view", async () =>
   assert.equal(await env.DB.count("memory_assertions", "lifecycle_state = 'accepted'"), 0);
   assert.equal(await env.DB.count("memory_assertions", "lifecycle_state = 'superseded'"), 1);
   assert.equal(await env.DB.count("memory_decisions", "decision_type = 'rollback'"), 1);
+  assert.equal(
+    await env.DB.count(
+      "memory_projection_outbox",
+      "operation = 'delete' AND state = 'pending'"
+    ),
+    1
+  );
 });

@@ -179,4 +179,8 @@ test("reviewed publication creates accepted assertions with evidence and snapsho
   assert.equal(await env.DB.count("memory_assertions", "lifecycle_state = 'accepted'"), 1);
   assert.equal(await env.DB.count("memory_assertion_evidence"), 1);
   assert.equal(await env.DB.count("memory_snapshots"), 1);
+  assert.equal(
+    await env.DB.count("memory_projection_outbox", "state = 'pending'"),
+    1
+  );
 });

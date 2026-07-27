@@ -22,6 +22,29 @@ const root = {
 test("tenant deletion removes authoritative and retrieval projections", async () => {
   const vector = vectorHarness();
   const env = await seededEnvironment({ MATRIX_KNOWLEDGE: vector });
+  env.DB.database.prepare(`
+    INSERT INTO memory_assertion_search
+      (assertion_id, tenant_id, project_id, document)
+    VALUES
+      ('assertion-a', 'tenant-a', 'project-one', 'tenant a document'),
+      ('assertion-b', 'tenant-b', 'project-one', 'tenant b document')
+  `).run();
+  for (const tenantId of ["tenant-a", "tenant-b"]) {
+    env.DB.database.prepare(`
+      INSERT INTO memory_projection_outbox (
+        projection_id, assertion_id, tenant_id, project_id, content_hash,
+        accepted_generation, embedding_model, operation, state, created_at,
+        updated_at
+      ) VALUES (?, ?, ?, 'project-one', ?, 1, 'test-model', 'upsert',
+        'complete', '2026-07-27T00:00:00.000Z',
+        '2026-07-27T00:00:00.000Z')
+    `).run(
+      `assertion:${tenantId}:project-one:assertion-${tenantId.at(-1)}`,
+      `assertion-${tenantId.at(-1)}`,
+      tenantId,
+      tenantId.at(-1).repeat(64)
+    );
+  }
   const receipt = await deleteMemoryScope({
     env,
     principal: root,
@@ -42,6 +65,22 @@ test("tenant deletion removes authoritative and retrieval projections", async ()
     "entity:tenant-a:project-one:entity-a",
   ]);
   assert.equal(await env.DB.count("memory_deletion_receipts"), 1);
+  assert.equal(
+    await env.DB.count("memory_assertion_search", "tenant_id = 'tenant-a'"),
+    0
+  );
+  assert.equal(
+    await env.DB.count("memory_assertion_search", "tenant_id = 'tenant-b'"),
+    1
+  );
+  assert.equal(
+    await env.DB.count("memory_projection_outbox", "tenant_id = 'tenant-a'"),
+    0
+  );
+  assert.equal(
+    await env.DB.count("memory_projection_outbox", "tenant_id = 'tenant-b'"),
+    1
+  );
 });
 
 test("portal cannot call privacy administration", async () => {

@@ -4,6 +4,14 @@ import {
   normalizeGraphTarget
 } from "./contracts.js";
 import { assertGraphAccess } from "./policy.js";
+import {
+  buildContextPackage,
+  DEFAULT_CONTEXT_BUDGET_TOKENS,
+  MAX_CONTEXT_BUDGET_TOKENS,
+  MIN_CONTEXT_BUDGET_TOKENS
+} from "./context-package.js";
+import { EMBEDDING_MODEL } from "./projection.js";
+import { fuseRankedAssertionIds } from "./ranking.js";
 
 export const GRAPH_TRAVERSAL_LIMITS = Object.freeze({
   default_depth: 2,
@@ -17,7 +25,7 @@ export const GRAPH_TRAVERSAL_LIMITS = Object.freeze({
 });
 
 const SQL = Object.freeze({
-  SEARCH_ASSERTIONS: `
+  ACCEPTED_ASSERTIONS: `
     SELECT a.assertion_id, a.subject_entity_id, e.canonical_label,
            a.predicate, a.object_json, a.confidence, a.lifecycle_state,
            a.valid_from, a.valid_to, a.observed_at, a.accepted_generation
@@ -29,12 +37,16 @@ const SQL = Object.freeze({
      WHERE a.tenant_id = ?
        AND a.project_id = ?
        AND a.lifecycle_state = 'accepted'
-       AND (
-         a.predicate LIKE ? ESCAPE '\\'
-         OR a.object_json LIKE ? ESCAPE '\\'
-         OR e.canonical_label LIKE ? ESCAPE '\\'
-       )
+       AND (a.valid_from IS NULL OR a.valid_from <= ?)
+       AND (a.valid_to IS NULL OR a.valid_to >= ?)
      ORDER BY a.accepted_generation DESC, a.assertion_id
+     LIMIT 250`,
+  SEARCH_FTS: `
+    SELECT assertion_id
+      FROM memory_assertion_search
+     WHERE tenant_id = ? AND project_id = ?
+       AND memory_assertion_search MATCH ?
+     ORDER BY rank
      LIMIT ?`,
   ASSERTION_EVIDENCE: `
     SELECT e.evidence_id, e.source_ref, e.content_hash, e.observed_at,
@@ -86,15 +98,40 @@ export async function searchAcceptedMemory({ env, principal, body }) {
     );
   }
   const topK = normalizeInteger(body?.top_k, 10, 1, 25, "INVALID_TOP_K");
-  const pattern = `%${escapeLike(query)}%`;
-  const rows = (await env.DB.prepare(SQL.SEARCH_ASSERTIONS).bind(
+  const asOf = normalizeAsOf(body?.as_of);
+  const acceptedRows = (await env.DB.prepare(SQL.ACCEPTED_ASSERTIONS).bind(
     target.tenant_id,
     target.project_id,
-    pattern,
-    pattern,
-    pattern,
-    topK
+    asOf,
+    asOf
   ).all()).results || [];
+  const allowedAssertionIds = new Set(
+    acceptedRows.map(row => String(row.assertion_id))
+  );
+  const lexicalIds = await lexicalAssertionIds({
+    env,
+    target,
+    query,
+    topK,
+    acceptedRows
+  });
+  const semantic = await semanticAcceptedAssertionIds({
+    env,
+    target,
+    query,
+    allowedAssertionIds,
+    topK
+  });
+  const rankedIds = fuseRankedAssertionIds({
+    lexicalIds,
+    semanticMatches: semantic.matches,
+    allowedAssertionIds,
+    limit: topK
+  });
+  const rowsById = new Map(
+    acceptedRows.map(row => [String(row.assertion_id), row])
+  );
+  const rows = rankedIds.map(id => rowsById.get(id)).filter(Boolean);
   const assertions = [];
 
   for (const row of rows) {
@@ -137,11 +174,87 @@ export async function searchAcceptedMemory({ env, principal, body }) {
     ),
     assertions,
     conflicts: materialConflicts(assertions),
+    retrieval: {
+      lexical_used: lexicalIds.length > 0,
+      semantic_used: semantic.used,
+      semantic_reason: semantic.reason
+    },
     semantic_search: {
-      used: false,
-      reason: "D1 accepted graph satisfied the bounded query"
+      used: semantic.used,
+      reason: semantic.reason
     }
   };
+}
+
+export async function semanticAcceptedAssertionIds({
+  env,
+  target,
+  query,
+  allowedAssertionIds,
+  topK
+}) {
+  if (!env?.MATRIX_KNOWLEDGE?.query) {
+    return {
+      matches: [],
+      used: false,
+      reason: "VECTORIZE_BINDING_UNAVAILABLE"
+    };
+  }
+  if (!env?.AI?.run) {
+    return {
+      matches: [],
+      used: false,
+      reason: "EMBEDDING_SERVICE_UNAVAILABLE"
+    };
+  }
+
+  let embedding;
+  try {
+    embedding = await env.AI.run(EMBEDDING_MODEL, { text: [query] });
+  } catch {
+    return {
+      matches: [],
+      used: false,
+      reason: "EMBEDDING_SERVICE_UNAVAILABLE"
+    };
+  }
+  const vector = embedding?.data?.[0];
+  if (!Array.isArray(vector)) {
+    return {
+      matches: [],
+      used: false,
+      reason: "EMBEDDING_SERVICE_UNAVAILABLE"
+    };
+  }
+
+  try {
+    const result = await env.MATRIX_KNOWLEDGE.query(vector, {
+      topK: Math.min(Math.max(topK * 3, 10), 50),
+      returnMetadata: "all",
+      filter: {
+        tenant_id: target.tenant_id,
+        project_id: target.project_id
+      }
+    });
+    const matches = (result?.matches || []).map(match => ({
+      id: String(
+        match?.metadata?.assertion_id ||
+        String(match?.id || "").split(":").at(-1)
+      ),
+      score: Number(match?.score || 0)
+    })).filter(match => allowedAssertionIds.has(match.id));
+    return {
+      matches,
+      used: true,
+      reason: "SEMANTIC_RESULTS_FUSED"
+    };
+  } catch {
+    return {
+      matches: [],
+      used: false,
+      reason: "SEMANTIC_QUERY_UNAVAILABLE"
+    };
+  }
 }
 
 export async function traverseAcceptedMemory({ env, principal, body }) {
@@ -216,7 +329,19 @@ export async function rehydrateAcceptedMemory({
   body,
   now = () => new Date()
 }) {
+  const budgetTokens = normalizeInteger(
+    body?.budget_tokens,
+    DEFAULT_CONTEXT_BUDGET_TOKENS,
+    MIN_CONTEXT_BUDGET_TOKENS,
+    MAX_CONTEXT_BUDGET_TOKENS,
+    "CONTEXT_BUDGET_EXCEEDED"
+  );
   const result = await searchAcceptedMemory({ env, principal, body });
+  const contextPackage = buildContextPackage({
+    assertions: result.assertions,
+    conflicts: result.conflicts,
+    budgetTokens
+  });
   const invocationId = String(body?.invocation_id ?? "").trim();
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/.test(invocationId)) {
     throw new GraphMemoryError(
@@ -226,7 +351,8 @@ export async function rehydrateAcceptedMemory({
     );
   }
   const startedAt = now().toISOString();
-  const assertionIds = result.assertions.map(item => item.assertion_id);
+  const assertionIds = contextPackage.assertions
+    .map(item => item.assertion_id);
   const receiptHash = await canonicalHash({
     invocation_id: invocationId,
     tenant_id: result.tenant_id,
@@ -250,6 +376,7 @@ export async function rehydrateAcceptedMemory({
 
   return {
     ...result,
+    context_package: contextPackage,
     invocation_id: invocationId,
     retrieval_receipt_hash: receiptHash
   };
@@ -357,8 +484,55 @@ function normalizeEntityId(value) {
   return normalized;
 }
 
-function escapeLike(value) {
-  return value.replace(/[\\%_]/g, character => `\\${character}`);
+async function lexicalAssertionIds({
+  env,
+  target,
+  query,
+  topK,
+  acceptedRows
+}) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const literalIds = acceptedRows.filter(row => [
+    row.canonical_label,
+    row.predicate,
+    row.object_json
+  ].some(value => String(value || "").toLocaleLowerCase()
+    .includes(normalizedQuery))).map(row => String(row.assertion_id));
+  const terms = query.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  if (terms.length === 0) return literalIds.slice(0, topK);
+
+  try {
+    const expression = terms.slice(0, 20)
+      .map(term => `"${term.replaceAll('"', '""')}"`)
+      .join(" OR ");
+    const ftsRows = (await env.DB.prepare(SQL.SEARCH_FTS).bind(
+      target.tenant_id,
+      target.project_id,
+      expression,
+      topK
+    ).all()).results || [];
+    return [...new Set([
+      ...literalIds,
+      ...ftsRows.map(row => String(row.assertion_id))
+    ])].slice(0, topK);
+  } catch {
+    return literalIds.slice(0, topK);
+  }
+}
+
+function normalizeAsOf(value) {
+  if (value === undefined || value === null || value === "") {
+    return new Date().toISOString();
+  }
+  const normalized = String(value);
+  if (!Number.isFinite(Date.parse(normalized))) {
+    throw new GraphMemoryError(
+      "INVALID_AS_OF",
+      "as_of must be a valid timestamp",
+      400
+    );
+  }
+  return new Date(normalized).toISOString();
 }
 
 function parseJson(value) {

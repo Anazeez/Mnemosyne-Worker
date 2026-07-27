@@ -292,6 +292,15 @@ function deletionStatements(db, scope) {
         .bind(...selection.bindings),
     );
   };
+  const projectionSelection = projectionTableScope(scope);
+  statements.push(
+    db.prepare(
+      `DELETE FROM memory_assertion_search WHERE ${projectionSelection.sql}`
+    ).bind(...projectionSelection.bindings),
+    db.prepare(
+      `DELETE FROM memory_projection_outbox WHERE ${projectionSelection.sql}`
+    ).bind(...projectionSelection.bindings)
+  );
   remove("memory_assertion_evidence");
   remove("memory_decisions");
   remove("memory_evidence");
@@ -319,6 +328,36 @@ function deletionStatements(db, scope) {
     remove(table);
   }
   return statements;
+}
+
+function projectionTableScope(scope) {
+  if (scope.kind === "tenant" || scope.kind === "project") {
+    return {
+      sql: `tenant_id = ?${scope.project_id ? " AND project_id = ?" : ""}`,
+      bindings: [
+        scope.tenant_id,
+        ...(scope.project_id ? [scope.project_id] : [])
+      ]
+    };
+  }
+  const selector = scope.kind === "identity"
+    ? ["assistant_id = ?", scope.identity_id]
+    : ["candidate_id = ?", scope.candidate_id];
+  return {
+    sql: `tenant_id = ? AND assertion_id IN (
+      SELECT assertion_id FROM memory_assertions
+       WHERE tenant_id = ? AND candidate_id IN (
+         SELECT candidate_id FROM memory_candidates
+          WHERE tenant_id = ? AND ${selector[0]}
+       )
+    )`,
+    bindings: [
+      scope.tenant_id,
+      scope.tenant_id,
+      scope.tenant_id,
+      selector[1]
+    ]
+  };
 }
 
 function tableScope(scope, table) {
