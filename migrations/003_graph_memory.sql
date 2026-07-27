@@ -3,7 +3,6 @@
 -- Existing continuity data belongs to the verified publisher tenant: personal.
 
 PRAGMA foreign_keys = OFF;
-BEGIN IMMEDIATE;
 
 DROP TRIGGER IF EXISTS context_runway_heads_publish_insert;
 DROP TRIGGER IF EXISTS context_runway_heads_publish_update;
@@ -483,5 +482,4 @@ BEGIN
   SELECT RAISE(ABORT, 'snapshot is immutable');
 END;
 
-COMMIT;
 PRAGMA foreign_keys = ON;
