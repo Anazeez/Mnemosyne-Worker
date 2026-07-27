@@ -19,7 +19,10 @@ import {
   migratedGraphMemoryEnvironment,
 } from "./helpers/d1-graph-memory.mjs";
 import { createMemoryCandidate } from "../src/graph-memory/candidates.js";
-import { validateMemoryCandidate } from "../src/graph-memory/review.js";
+import {
+  resolveMemoryCandidate,
+  validateMemoryCandidate,
+} from "../src/graph-memory/review.js";
 
 test("OAuth requests are narrowed to supported public scopes", () => {
   assert.deepEqual(
@@ -296,6 +299,133 @@ test("owner candidate resolution stays unavailable when its rollout flag is off"
   assert.equal(response.status, 404);
 });
 
+test("allowlisted owner reviews exact resolved evidence without publishing", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment({
+    ...oauthEnvironment(kv),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+    GRAPH_MEMORY_OWNER_REVIEW_ENABLED: "1",
+  });
+  const candidate = await createMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: "personal",
+      credential_id: "assistant-one",
+      assistant_id: "assistant-one",
+      project_ids: ["global-canon"],
+      capabilities: ["memory.propose"],
+    },
+    body: {
+      tenant_id: "personal",
+      project_id: "global-canon",
+      idempotency_key: "owner-review-browser-test",
+      assertions: [{
+        subject: "Athar",
+        predicate: "is_a",
+        object: "lineage framework persona",
+        confidence: 1,
+      }],
+      evidence: [{
+        source_ref: "conversation:owner-review-browser-test",
+        content_hash: "e".repeat(64),
+        source_excerpt: "Athar is a lineage framework persona.",
+        observed_at: "2026-07-27T00:00:00.000Z",
+      }],
+    },
+    randomUUID: () => "owner-review-browser-candidate",
+  });
+  await validateMemoryCandidate({
+    env,
+    principal: ownerStagePrincipal("memory.validate"),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "owner-review-browser-validation",
+  });
+  await resolveMemoryCandidate({
+    env,
+    principal: ownerStagePrincipal("memory.resolve"),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "owner-review-browser-resolution",
+  });
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+    fetchImpl: async url => String(url).includes("access_token")
+      ? Response.json({ access_token: "github-access" })
+      : Response.json({ id: 277895262, login: "Anazeez" }),
+  });
+  const reviewUrl =
+    `https://memory.example/owner/memory/candidates/${candidate.candidate_id}/review` +
+      "?tenant_id=personal&project_id=global-canon";
+  const consent = await handler.fetch(new Request(reviewUrl), env);
+  const consentHtml = await consent.text();
+  const consentRequest = consentHtml.match(/request=([^"]+)/)[1];
+  const consentCsrf = consentHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const start = await handler.fetch(new Request(
+    `${reviewUrl}&request=${consentRequest}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_owner_review_csrf=${consentCsrf}`,
+      },
+      body: `csrf=${encodeURIComponent(consentCsrf)}`,
+    },
+  ), env);
+  const githubState = new URL(start.headers.get("location"))
+    .searchParams.get("state");
+  const review = await handler.fetch(new Request(
+    `https://memory.example/callback?state=${githubState}&code=github-code`,
+  ), env);
+  const reviewHtml = await review.text();
+  const decisionRequest = reviewHtml.match(/decision_request=([^"]+)/)[1];
+  const decisionCsrf = reviewHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const decision = await handler.fetch(new Request(
+    `${reviewUrl}&decision_request=${decisionRequest}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_owner_review_decision_csrf=${decisionCsrf}`,
+      },
+      body:
+        `csrf=${encodeURIComponent(decisionCsrf)}` +
+        "&decision=approve_for_commit",
+    },
+  ), env);
+  const body = await decision.json();
+
+  assert.equal(consent.status, 200);
+  assert.match(consentHtml, /Review resolved candidate/);
+  assert.equal(start.status, 302);
+  assert.equal(review.status, 200);
+  assert.match(reviewHtml, /Athar/);
+  assert.match(reviewHtml, /lineage framework persona/);
+  assert.match(reviewHtml, /new_entity/);
+  assert.match(reviewHtml, /Approve for controlled commit/);
+  assert.equal(decision.status, 200, JSON.stringify(body));
+  assert.equal(body.decision, "approve_for_commit");
+  assert.equal(body.state, "pending_review");
+  assert.equal(await env.DB.count("memory_owner_review_receipts"), 1);
+  assert.equal(await env.DB.count("memory_assertions"), 0);
+  assert.equal(await env.DB.count("memory_snapshots"), 0);
+});
+
+test("owner review stays unavailable when its rollout flag is off", async () => {
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const response = await handler.fetch(new Request(
+    "https://memory.example/owner/memory/candidates/candidate_example-12345678/review" +
+      "?tenant_id=personal&project_id=global-canon",
+  ), {
+    ...oauthEnvironment(memoryKv()),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+  });
+
+  assert.equal(response.status, 404);
+});
+
 test("owner candidate validation rejects a mismatched confirmation token", async () => {
   const env = {
     ...oauthEnvironment(memoryKv()),
@@ -408,6 +538,19 @@ test("assistant attribution is stable and bound to the OAuth client", async () =
   assert.notEqual(first, await assistantIdForOAuthClient("client-b"));
   assert.match(first, /^oauth-[a-f0-9]{32}$/);
 });
+
+function ownerStagePrincipal(capability) {
+  return {
+    tenant_id: "personal",
+    credential_id: "github-277895262",
+    assistant_id: "human-owner-console",
+    principal_id: "owner",
+    role: "owner",
+    project_ids: ["global-canon"],
+    identity_ids: [],
+    capabilities: [capability],
+  };
+}
 
 test("grant claims bind tenant, subject, and narrowed scopes", () => {
   assert.deepEqual(

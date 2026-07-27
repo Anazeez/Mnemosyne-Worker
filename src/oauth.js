@@ -9,10 +9,15 @@ import {
   resolveMemoryCandidate,
   validateMemoryCandidate,
 } from "./graph-memory/review.js";
+import {
+  getOwnerReviewCandidate,
+  reviewMemoryCandidate,
+} from "./graph-memory/human-review.js";
 
 const OAUTH_STATE_TTL_SECONDS = 600;
 const OWNER_VALIDATION_STATE_PREFIX = "owner-validation.";
 const OWNER_RESOLUTION_STATE_PREFIX = "owner-resolution.";
+const OWNER_REVIEW_STATE_PREFIX = "owner-review.";
 const CANDIDATE_ID_PATTERN = /^candidate_[a-zA-Z0-9._:-]{8,128}$/;
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -233,7 +238,8 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
           const ownerState = String(url.searchParams.get("state") || "");
           if (
             ownerState.startsWith(OWNER_VALIDATION_STATE_PREFIX) ||
-            ownerState.startsWith(OWNER_RESOLUTION_STATE_PREFIX)
+            ownerState.startsWith(OWNER_RESOLUTION_STATE_PREFIX) ||
+            ownerState.startsWith(OWNER_REVIEW_STATE_PREFIX)
           ) {
             return await finishOwnerCandidateAction(
               request,
@@ -258,7 +264,7 @@ async function beginOwnerCandidateAction(request, env) {
   requireOAuthBindings(env);
   const url = new URL(request.url);
   const match = url.pathname.match(
-    /^\/owner\/memory\/candidates\/([^/]+)\/(validate|resolve)$/,
+    /^\/owner\/memory\/candidates\/([^/]+)\/(validate|resolve|review)$/,
   );
   const candidateId = match ? decodeURIComponent(match[1]) : "";
   const operation = match?.[2] || "";
@@ -272,6 +278,19 @@ async function beginOwnerCandidateAction(request, env) {
   });
   if (target.tenant_id !== String(env.MEMORY_TENANT_ID || "personal")) {
     throw statusError(config.targetDeniedCode, 403);
+  }
+  if (
+    operation === "review" &&
+    request.method === "POST" &&
+    url.searchParams.has("decision_request")
+  ) {
+    return finishOwnerReviewDecision(
+      request,
+      env,
+      config,
+      candidateId,
+      target
+    );
   }
   if (request.method === "GET") {
     const requestId = randomToken();
@@ -360,6 +379,8 @@ async function finishOwnerCandidateAction(request, env, fetchImpl) {
     ? "validate"
     : state?.startsWith(OWNER_RESOLUTION_STATE_PREFIX)
       ? "resolve"
+      : state?.startsWith(OWNER_REVIEW_STATE_PREFIX)
+        ? "review"
       : "";
   const config = ownerCandidateActionConfig(action, env);
   if (!state || !code) {
@@ -386,6 +407,15 @@ async function finishOwnerCandidateAction(request, env, fetchImpl) {
     identity_ids: [],
     capabilities: [config.capability],
   };
+  if (action === "review") {
+    return renderOwnerReviewDecision({
+      request,
+      env,
+      principal,
+      candidateId: stored.candidate_id,
+      target: stored.target,
+    });
+  }
   const input = {
     env,
     principal,
@@ -394,6 +424,135 @@ async function finishOwnerCandidateAction(request, env, fetchImpl) {
   const result = action === "validate"
     ? await validateMemoryCandidate(input)
     : await resolveMemoryCandidate(input);
+  return Response.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
+async function renderOwnerReviewDecision({
+  request,
+  env,
+  principal,
+  candidateId,
+  target,
+}) {
+  const detail = await getOwnerReviewCandidate({
+    env,
+    principal,
+    target,
+    candidateId,
+  });
+  const decisionRequest = randomToken();
+  const csrf = randomToken();
+  await env.OAUTH_KV.put(
+    stateKey(decisionRequest),
+    JSON.stringify({
+      stage: "owner_review_decision",
+      candidate_id: candidateId,
+      target,
+      credential_id: principal.credential_id,
+      csrf,
+    }),
+    { expirationTtl: OAUTH_STATE_TTL_SECONDS },
+  );
+  const actionUrl = new URL(
+    `/owner/memory/candidates/${encodeURIComponent(candidateId)}/review`,
+    new URL(request.url).origin,
+  );
+  actionUrl.searchParams.set("tenant_id", target.tenant_id);
+  actionUrl.searchParams.set("project_id", target.project_id);
+  actionUrl.searchParams.set("decision_request", decisionRequest);
+  return new Response(
+    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<title>Review resolved candidate</title></head><body><main>` +
+    `<h1>Review resolved candidate</h1>` +
+    `<h2>Assertions</h2><pre>${escapeHtml(JSON.stringify(
+      detail.candidate.payload.assertions,
+      null,
+      2,
+    ))}</pre>` +
+    `<h2>Evidence</h2><pre>${escapeHtml(JSON.stringify(
+      detail.evidence,
+      null,
+      2,
+    ))}</pre>` +
+    `<h2>Entity resolution</h2><pre>${escapeHtml(JSON.stringify(
+      {
+        resolution_receipt_id: detail.resolution.resolution_receipt_id,
+        resolutions: detail.resolution.resolutions,
+      },
+      null,
+      2,
+    ))}</pre>` +
+    `<p>Approval records permission for a later controlled commit. ` +
+    `It does not publish memory.</p>` +
+    `<form method="post" action="${escapeHtml(actionUrl)}">` +
+    `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+    `<button name="decision" value="approve_for_commit" type="submit">` +
+    `Approve for controlled commit</button>` +
+    `<button name="decision" value="reject" type="submit">Reject</button>` +
+    `<button name="decision" value="quarantine" type="submit">Quarantine</button>` +
+    `</form></main></body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Set-Cookie":
+          `mnemosyne_owner_review_decision_csrf=${csrf}; ` +
+          `Path=/owner/memory/candidates/; HttpOnly; Secure; SameSite=Lax; ` +
+          `Max-Age=${OAUTH_STATE_TTL_SECONDS}`,
+      },
+    },
+  );
+}
+
+async function finishOwnerReviewDecision(
+  request,
+  env,
+  config,
+  candidateId,
+  target,
+) {
+  const url = new URL(request.url);
+  const decisionRequest = url.searchParams.get("decision_request");
+  const stored = await readState(
+    env,
+    decisionRequest,
+    "owner_review_decision",
+  );
+  const form = await request.formData();
+  const csrf = String(form.get("csrf") || "");
+  if (
+    !csrf ||
+    csrf !== stored.csrf ||
+    csrf !== readCookie(request, "mnemosyne_owner_review_decision_csrf")
+  ) {
+    throw statusError("csrf_validation_failed", 403);
+  }
+  if (
+    stored.candidate_id !== candidateId ||
+    stored.target.tenant_id !== target.tenant_id ||
+    stored.target.project_id !== target.project_id
+  ) {
+    throw statusError(config.targetDeniedCode, 403);
+  }
+  await env.OAUTH_KV.delete(stateKey(decisionRequest));
+  const result = await reviewMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: target.tenant_id,
+      credential_id: stored.credential_id,
+      assistant_id: "human-owner-review-console",
+      principal_id: "owner",
+      role: "owner",
+      project_ids: [target.project_id],
+      identity_ids: [],
+      capabilities: ["memory.review"],
+    },
+    target,
+    candidateId,
+    decision: String(form.get("decision") || ""),
+  });
   return Response.json(result, {
     headers: { "Cache-Control": "no-store" },
   });
@@ -668,6 +827,14 @@ function requireOwnerResolutionEnabled(env) {
   }
 }
 
+function requireOwnerReviewEnabled(env) {
+  if (!["1", "true", "yes", "on"].includes(
+    String(env.GRAPH_MEMORY_OWNER_REVIEW_ENABLED || "").trim().toLowerCase(),
+  )) {
+    throw statusError("owner_review_disabled", 404);
+  }
+}
+
 function ownerCandidateActionConfig(action, env) {
   if (action === "validate") {
     requireOwnerValidationEnabled(env);
@@ -699,6 +866,22 @@ function ownerCandidateActionConfig(action, env) {
       databaseMissingCode: "owner_resolution_database_missing",
       assistantId: "human-resolution-console",
       capability: "memory.resolve",
+    };
+  }
+  if (action === "review") {
+    requireOwnerReviewEnabled(env);
+    return {
+      statePrefix: OWNER_REVIEW_STATE_PREFIX,
+      consentStage: "owner_review_consent",
+      stateStage: "owner_review",
+      csrfCookieName: "mnemosyne_owner_review_csrf",
+      heading: "Review resolved candidate",
+      explanation:
+        "Authenticate to inspect assertions, evidence, and resolution before recording a review decision.",
+      targetDeniedCode: "owner_review_target_denied",
+      databaseMissingCode: "owner_review_database_missing",
+      assistantId: "human-owner-review-console",
+      capability: "memory.review",
     };
   }
   throw statusError("candidate_unavailable", 404);

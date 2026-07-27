@@ -33,6 +33,11 @@ on:
         required: true
         type: boolean
         default: false
+      enable_owner_review:
+        description: Enable owner-authenticated review receipts
+        required: true
+        type: boolean
+        default: false
       enable_custom_domain:
         description: Attach memory.azzayezz.com after the retired Tunnel route is removed
         required: true
@@ -68,6 +73,7 @@ jobs:
       GRAPH_MEMORY_PROPOSE_ENABLED: ${{ inputs.enable_propose && '1' || '0' }}
       GRAPH_MEMORY_VALIDATION_ENABLED: ${{ inputs.enable_validation && '1' || '0' }}
       GRAPH_MEMORY_RESOLUTION_ENABLED: ${{ inputs.enable_resolution && '1' || '0' }}
+      GRAPH_MEMORY_OWNER_REVIEW_ENABLED: ${{ inputs.enable_owner_review && '1' || '0' }}
       GRAPH_MEMORY_REVIEW_ENABLED: "0"
       GRAPH_MEMORY_PUBLICATION_ENABLED: "0"
     steps:
@@ -90,7 +96,7 @@ jobs:
           if node scripts/ensure-oauth-kv.mjs; then
             exit 0
           fi
-          if [[ "$GRAPH_MEMORY_MCP_ENABLED" == "1" || "$GRAPH_MEMORY_ACTIONS_ENABLED" == "1" || "$GRAPH_MEMORY_VALIDATION_ENABLED" == "1" || "$GRAPH_MEMORY_RESOLUTION_ENABLED" == "1" ]]; then
+          if [[ "$GRAPH_MEMORY_MCP_ENABLED" == "1" || "$GRAPH_MEMORY_ACTIONS_ENABLED" == "1" || "$GRAPH_MEMORY_VALIDATION_ENABLED" == "1" || "$GRAPH_MEMORY_RESOLUTION_ENABLED" == "1" || "$GRAPH_MEMORY_OWNER_REVIEW_ENABLED" == "1" ]]; then
             echo "OAuth KV is required before enabling public adapters."
             exit 1
           fi
@@ -98,7 +104,7 @@ jobs:
       - name: Verify private activation inputs
         shell: bash
         run: |
-          if [[ "$GRAPH_MEMORY_MCP_ENABLED" == "1" || "$GRAPH_MEMORY_ACTIONS_ENABLED" == "1" || "$GRAPH_MEMORY_VALIDATION_ENABLED" == "1" || "$GRAPH_MEMORY_RESOLUTION_ENABLED" == "1" ]]; then
+          if [[ "$GRAPH_MEMORY_MCP_ENABLED" == "1" || "$GRAPH_MEMORY_ACTIONS_ENABLED" == "1" || "$GRAPH_MEMORY_VALIDATION_ENABLED" == "1" || "$GRAPH_MEMORY_RESOLUTION_ENABLED" == "1" || "$GRAPH_MEMORY_OWNER_REVIEW_ENABLED" == "1" ]]; then
             for name in OAUTH_KV_NAMESPACE_ID GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GRANT_RESOLVER_TOKEN; do
               if [[ -z "${!name}" ]]; then
                 echo "Required private activation input is missing: $name"

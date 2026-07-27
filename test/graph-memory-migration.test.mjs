@@ -27,6 +27,10 @@ const memoryResolutionMigration = new URL(
   "../migrations/007_memory_resolution_receipts.sql",
   import.meta.url
 );
+const ownerMemoryReviewMigration = new URL(
+  "../migrations/008_owner_memory_review_receipts.sql",
+  import.meta.url
+);
 const goldenFixture = new URL(
   "../migrations/fixtures/graph-memory-golden.jsonl",
   import.meta.url
@@ -41,6 +45,7 @@ async function migratedDatabase() {
   db.exec(await readFile(hybridRetrievalMigration, "utf8"));
   db.exec(await readFile(humanReviewMigration, "utf8"));
   db.exec(await readFile(memoryResolutionMigration, "utf8"));
+  db.exec(await readFile(ownerMemoryReviewMigration, "utf8"));
   return db;
 }
 
@@ -269,6 +274,22 @@ test("resolution migration creates append-only candidate receipts", async () => 
   assert.match(table.sql, /candidate_id TEXT NOT NULL UNIQUE/i);
   assert.match(sql, /memory resolution receipts are immutable/);
   assert.match(sql, /memory resolution receipts are append-only/);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+});
+
+test("owner review migration creates append-only non-publication receipts", async () => {
+  const sql = await readFile(ownerMemoryReviewMigration, "utf8");
+  const db = await migratedDatabase();
+  const table = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_owner_review_receipts'
+  `).get();
+
+  assert.match(table.sql, /approve_for_commit/);
+  assert.match(table.sql, /candidate_id TEXT NOT NULL UNIQUE/i);
+  assert.match(sql, /owner review receipts are immutable/);
+  assert.match(sql, /owner review receipts are append-only/);
+  assert.doesNotMatch(sql, /memory_assertions|memory_snapshots/);
   assert.doesNotMatch(sql, /DROP TABLE/);
 });
 

@@ -25,6 +25,10 @@ const memoryResolutionMigration = new URL(
   "../../migrations/007_memory_resolution_receipts.sql",
   import.meta.url
 );
+const ownerMemoryReviewMigration = new URL(
+  "../../migrations/008_owner_memory_review_receipts.sql",
+  import.meta.url
+);
 
 export async function migratedGraphMemoryEnvironment(overrides = {}) {
   const database = new DatabaseSync(":memory:");
@@ -34,6 +38,7 @@ export async function migratedGraphMemoryEnvironment(overrides = {}) {
   database.exec(await readFile(hybridRetrievalMigration, "utf8"));
   database.exec(await readFile(humanReviewMigration, "utf8"));
   database.exec(await readFile(memoryResolutionMigration, "utf8"));
+  database.exec(await readFile(ownerMemoryReviewMigration, "utf8"));
   return {
     DB: new GraphMemoryD1(database),
     ...overrides

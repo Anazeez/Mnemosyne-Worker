@@ -12,6 +12,11 @@ const DECISIONS = new Set([
   "reject",
   "quarantine"
 ]);
+const OWNER_REVIEW_DECISIONS = new Set([
+  "approve_for_commit",
+  "reject",
+  "quarantine"
+]);
 const IDEMPOTENCY_KEY = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/;
 
 const SQL = Object.freeze({
@@ -38,6 +43,21 @@ const SQL = Object.freeze({
       FROM memory_decisions
      WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?
      ORDER BY created_at, decision_id`,
+  RESOLUTION: `
+    SELECT resolution_receipt_id, resolutions_json, outcome, reason_code,
+           receipt_hash, resolved_by_credential_id, created_at
+      FROM memory_resolution_receipts
+     WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?`,
+  OWNER_REVIEW: `
+    SELECT * FROM memory_owner_review_receipts
+     WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?`,
+  INSERT_OWNER_REVIEW: `
+    INSERT INTO memory_owner_review_receipts (
+      review_receipt_id, decision_id, candidate_id, resolution_receipt_id,
+      tenant_id, project_id, decision, candidate_payload_hash,
+      resolution_receipt_hash, evidence_hashes_json, reason_code, receipt_hash,
+      reviewed_by_credential_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   REPLAY: `
     SELECT response_json FROM memory_review_actions
      WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?
@@ -120,6 +140,170 @@ export async function getReviewCandidate({
       citation: parseJson(row.citation_json)
     })),
     decisions: decisionsResult.results || []
+  };
+}
+
+export async function getOwnerReviewCandidate(input) {
+  const detail = await getReviewCandidate(input);
+  const [resolution, ownerReview] = await Promise.all([
+    input.env.DB.prepare(SQL.RESOLUTION).bind(
+      detail.tenant_id,
+      detail.project_id,
+      detail.candidate.candidate_id
+    ).first(),
+    input.env.DB.prepare(SQL.OWNER_REVIEW).bind(
+      detail.tenant_id,
+      detail.project_id,
+      detail.candidate.candidate_id
+    ).first()
+  ]);
+  if (!resolution || resolution.outcome !== "resolved") {
+    throw new GraphMemoryError(
+      "RESOLUTION_REQUIRED",
+      "Owner review requires a successful entity-resolution receipt",
+      409
+    );
+  }
+  return {
+    ...detail,
+    resolution: {
+      ...resolution,
+      resolutions: parseJson(resolution.resolutions_json)
+    },
+    owner_review: ownerReview ? ownerReviewState(ownerReview) : null
+  };
+}
+
+export async function reviewMemoryCandidate({
+  env,
+  principal,
+  target,
+  candidateId,
+  decision,
+  now = () => new Date(),
+  randomUUID = () => crypto.randomUUID()
+}) {
+  const normalized = requireHumanReview(principal, target);
+  const normalizedDecision = String(decision || "").trim().toLowerCase();
+  if (!OWNER_REVIEW_DECISIONS.has(normalizedDecision)) {
+    throw new GraphMemoryError(
+      "INVALID_OWNER_REVIEW_DECISION",
+      "Owner review decision is invalid",
+      400
+    );
+  }
+  const existing = await env.DB.prepare(SQL.OWNER_REVIEW).bind(
+    normalized.tenant_id,
+    normalized.project_id,
+    String(candidateId)
+  ).first();
+  if (existing) {
+    if (existing.decision !== normalizedDecision) {
+      throw new GraphMemoryError(
+        "REVIEW_DECISION_CONFLICT",
+        "Candidate already has a different owner review decision",
+        409
+      );
+    }
+    return ownerReviewState(existing);
+  }
+
+  const detail = await getOwnerReviewCandidate({
+    env,
+    principal,
+    target: normalized,
+    candidateId
+  });
+  if (detail.candidate.state !== "pending_review") {
+    throw new GraphMemoryError(
+      "CANDIDATE_NOT_REVIEWABLE",
+      "Candidate is not ready for owner review",
+      409
+    );
+  }
+
+  const identifier = randomUUID();
+  const decisionId = `decision_${identifier}`;
+  const reviewReceiptId = `owner_review_${identifier}`;
+  const createdAt = now().toISOString();
+  const state = normalizedDecision === "approve_for_commit"
+    ? "pending_review"
+    : normalizedDecision === "reject"
+      ? "rejected"
+      : "quarantined";
+  const reasonCode = normalizedDecision === "approve_for_commit"
+    ? null
+    : normalizedDecision === "reject"
+      ? "OWNER_REJECTED"
+      : "OWNER_QUARANTINED";
+  const evidenceHashes = detail.evidence
+    .map(item => item.content_hash)
+    .sort();
+  const receipt = {
+    review_receipt_id: reviewReceiptId,
+    decision_id: decisionId,
+    candidate_id: detail.candidate.candidate_id,
+    resolution_receipt_id: detail.resolution.resolution_receipt_id,
+    tenant_id: normalized.tenant_id,
+    project_id: normalized.project_id,
+    decision: normalizedDecision,
+    candidate_payload_hash: detail.candidate.payload_hash,
+    resolution_receipt_hash: detail.resolution.receipt_hash,
+    evidence_hashes: evidenceHashes,
+    reason_code: reasonCode,
+    created_at: createdAt
+  };
+  const receiptHash = await canonicalHash(receipt);
+  const statements = [
+    env.DB.prepare(SQL.INSERT_DECISION).bind(
+      decisionId,
+      normalized.tenant_id,
+      normalized.project_id,
+      detail.candidate.candidate_id,
+      "review",
+      normalizedDecision === "approve_for_commit"
+        ? "approved_for_commit"
+        : state,
+      reasonCode,
+      receiptHash,
+      principal.credential_id,
+      createdAt
+    ),
+    env.DB.prepare(SQL.INSERT_OWNER_REVIEW).bind(
+      reviewReceiptId,
+      decisionId,
+      detail.candidate.candidate_id,
+      detail.resolution.resolution_receipt_id,
+      normalized.tenant_id,
+      normalized.project_id,
+      normalizedDecision,
+      detail.candidate.payload_hash,
+      detail.resolution.receipt_hash,
+      JSON.stringify(evidenceHashes),
+      reasonCode,
+      receiptHash,
+      principal.credential_id,
+      createdAt
+    )
+  ];
+  if (state !== "pending_review") {
+    statements.push(env.DB.prepare(SQL.UPDATE_CANDIDATE).bind(
+      state,
+      reasonCode,
+      createdAt,
+      normalized.tenant_id,
+      normalized.project_id,
+      detail.candidate.candidate_id
+    ));
+  }
+  await env.DB.batch(statements);
+
+  return {
+    candidate_id: detail.candidate.candidate_id,
+    state,
+    review_receipt_id: reviewReceiptId,
+    decision: normalizedDecision,
+    ...(reasonCode ? { reason_code: reasonCode } : {})
   };
 }
 
@@ -368,6 +552,20 @@ function parseJson(value) {
       500
     );
   }
+}
+
+function ownerReviewState(receipt) {
+  return {
+    candidate_id: receipt.candidate_id,
+    state: receipt.decision === "approve_for_commit"
+      ? "pending_review"
+      : receipt.decision === "reject"
+        ? "rejected"
+        : "quarantined",
+    review_receipt_id: receipt.review_receipt_id,
+    decision: receipt.decision,
+    ...(receipt.reason_code ? { reason_code: receipt.reason_code } : {})
+  };
 }
 
 function safeErrorMessage(error) {

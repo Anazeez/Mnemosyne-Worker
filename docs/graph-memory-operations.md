@@ -7,9 +7,9 @@ projection. Public OAuth clients can only rehydrate, search, traverse, propose,
 and read their own candidate status.
 
 All rollout flags default off. Production deployment accepts explicit inputs
-for read, MCP, Actions, proposal, owner-authenticated validation, and
-owner-authenticated entity resolution. Review and publication are fixed to
-off in deployment automation and remain manual internal operations.
+for read, MCP, Actions, proposal, owner-authenticated validation,
+owner-authenticated entity resolution, and owner review receipts. Internal
+review and publication are fixed to off in deployment automation.
 
 | Flag | Effect |
 |---|---|
@@ -17,6 +17,7 @@ off in deployment automation and remain manual internal operations.
 | `GRAPH_MEMORY_PROPOSE_ENABLED` | Permit immutable candidate intake |
 | `GRAPH_MEMORY_VALIDATION_ENABLED` | Permit one-candidate validation after allowlisted GitHub owner authentication |
 | `GRAPH_MEMORY_RESOLUTION_ENABLED` | Permit one-candidate exact entity resolution after allowlisted GitHub owner authentication |
+| `GRAPH_MEMORY_OWNER_REVIEW_ENABLED` | Permit one resolved-candidate owner review receipt without publication |
 | `GRAPH_MEMORY_REVIEW_ENABLED` | Internal review gate; deployment keeps off |
 | `GRAPH_MEMORY_PUBLICATION_ENABLED` | Internal publication gate; deployment keeps off |
 | `GRAPH_MEMORY_MCP_ENABLED` | Serve OAuth-protected Streamable HTTP MCP |
@@ -43,6 +44,8 @@ off in deployment automation and remain manual internal operations.
     `pending_review`, with no accepted assertion or snapshot.
 11. Enable owner resolution and prove it records an append-only receipt while
     leaving the candidate outside accepted memory.
+12. Enable owner review and prove approval records only
+    `approve_for_commit`, with no accepted assertion or snapshot.
 
 Do not enable review or publication through public rollout automation.
 MCP and Actions deployment fails closed when `OAUTH_KV` cannot be resolved.
@@ -76,6 +79,21 @@ recorded as a proposed new entity, and multiple exact matches quarantine the
 candidate with `AMBIGUOUS_ENTITY_MATCH`. It creates only an immutable
 resolution receipt and decision; it does not create entities, assertions,
 snapshots, accepted memory, or reusable review credentials.
+
+## Owner review receipt
+
+With owner review enabled, open:
+
+```text
+https://memory.azzayezz.com/owner/memory/candidates/CANDIDATE_ID/review?tenant_id=personal&project_id=PROJECT_ID
+```
+
+After GitHub owner authentication, the Worker displays the immutable candidate
+assertions, evidence, and resolution receipt. `approve_for_commit` records only
+an append-only review receipt and leaves the candidate `pending_review`.
+Rejection and quarantine use stable reason codes and move the candidate out of
+the review queue. This gate cannot publish; controlled commit remains a
+separate, disabled privilege.
 
 ## Owner identity and project grants
 
