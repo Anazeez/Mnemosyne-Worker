@@ -5,10 +5,14 @@ import {
   revokeAssistantGrant,
 } from "./graph-memory/grants.js";
 import { normalizeGraphTarget } from "./graph-memory/contracts.js";
-import { validateMemoryCandidate } from "./graph-memory/review.js";
+import {
+  resolveMemoryCandidate,
+  validateMemoryCandidate,
+} from "./graph-memory/review.js";
 
 const OAUTH_STATE_TTL_SECONDS = 600;
 const OWNER_VALIDATION_STATE_PREFIX = "owner-validation.";
+const OWNER_RESOLUTION_STATE_PREFIX = "owner-resolution.";
 const CANDIDATE_ID_PATTERN = /^candidate_[a-zA-Z0-9._:-]{8,128}$/;
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -217,7 +221,7 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
               headers: { Allow: "GET, POST" },
             });
           }
-          return await beginOwnerCandidateValidation(request, env);
+          return await beginOwnerCandidateAction(request, env);
         }
         if (url.pathname === "/authorize" && request.method === "GET") {
           return await beginConsent(request, env);
@@ -226,11 +230,12 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
           return await acceptConsent(request, env);
         }
         if (url.pathname === "/callback" && request.method === "GET") {
+          const ownerState = String(url.searchParams.get("state") || "");
           if (
-            String(url.searchParams.get("state") || "")
-              .startsWith(OWNER_VALIDATION_STATE_PREFIX)
+            ownerState.startsWith(OWNER_VALIDATION_STATE_PREFIX) ||
+            ownerState.startsWith(OWNER_RESOLUTION_STATE_PREFIX)
           ) {
-            return await finishOwnerCandidateValidation(
+            return await finishOwnerCandidateAction(
               request,
               env,
               fetchImpl,
@@ -249,14 +254,15 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
   };
 }
 
-async function beginOwnerCandidateValidation(request, env) {
-  requireOwnerValidationEnabled(env);
+async function beginOwnerCandidateAction(request, env) {
   requireOAuthBindings(env);
   const url = new URL(request.url);
   const match = url.pathname.match(
-    /^\/owner\/memory\/candidates\/([^/]+)\/validate$/,
+    /^\/owner\/memory\/candidates\/([^/]+)\/(validate|resolve)$/,
   );
   const candidateId = match ? decodeURIComponent(match[1]) : "";
+  const operation = match?.[2] || "";
+  const config = ownerCandidateActionConfig(operation, env);
   if (!CANDIDATE_ID_PATTERN.test(candidateId)) {
     throw statusError("candidate_unavailable", 404);
   }
@@ -265,7 +271,7 @@ async function beginOwnerCandidateValidation(request, env) {
     project_id: url.searchParams.get("project_id"),
   });
   if (target.tenant_id !== String(env.MEMORY_TENANT_ID || "personal")) {
-    throw statusError("owner_validation_target_denied", 403);
+    throw statusError(config.targetDeniedCode, 403);
   }
   if (request.method === "GET") {
     const requestId = randomToken();
@@ -273,22 +279,23 @@ async function beginOwnerCandidateValidation(request, env) {
     await env.OAUTH_KV.put(
       stateKey(requestId),
       JSON.stringify({
-        stage: "owner_validation_consent",
+        stage: config.consentStage,
+        action: operation,
         candidate_id: candidateId,
         target,
         csrf,
       }),
       { expirationTtl: OAUTH_STATE_TTL_SECONDS },
     );
-    const action = new URL(url);
-    action.searchParams.set("request", requestId);
+    const actionUrl = new URL(url);
+    actionUrl.searchParams.set("request", requestId);
     return new Response(
       `<!doctype html><html><head><meta charset="utf-8">` +
-      `<title>Validate memory candidate</title></head><body><main>` +
-      `<h1>Validate candidate</h1>` +
+      `<title>${escapeHtml(config.heading)}</title></head><body><main>` +
+      `<h1>${escapeHtml(config.heading)}</h1>` +
       `<p><code>${escapeHtml(candidateId)}</code></p>` +
-      `<p>This runs deterministic validation only. It does not accept or publish memory.</p>` +
-      `<form method="post" action="${escapeHtml(action)}">` +
+      `<p>${escapeHtml(config.explanation)}</p>` +
+      `<form method="post" action="${escapeHtml(actionUrl)}">` +
       `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
       `<button type="submit">Continue with GitHub</button></form>` +
       `</main></body></html>`,
@@ -296,7 +303,7 @@ async function beginOwnerCandidateValidation(request, env) {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
-          "Set-Cookie": ownerValidationCsrfCookie(csrf),
+          "Set-Cookie": ownerCandidateCsrfCookie(csrf, config),
         },
       },
     );
@@ -305,30 +312,32 @@ async function beginOwnerCandidateValidation(request, env) {
   const stored = await readState(
     env,
     requestId,
-    "owner_validation_consent",
+    config.consentStage,
   );
   const form = await request.formData();
   const csrf = String(form.get("csrf") ?? "");
   if (
     !csrf ||
     csrf !== stored.csrf ||
-    csrf !== readCookie(request, "mnemosyne_owner_validation_csrf")
+    csrf !== readCookie(request, config.csrfCookieName)
   ) {
     throw statusError("csrf_validation_failed", 403);
   }
   if (
     stored.candidate_id !== candidateId ||
+    stored.action !== operation ||
     stored.target.tenant_id !== target.tenant_id ||
     stored.target.project_id !== target.project_id
   ) {
-    throw statusError("owner_validation_target_denied", 403);
+    throw statusError(config.targetDeniedCode, 403);
   }
   await env.OAUTH_KV.delete(stateKey(requestId));
-  const state = `${OWNER_VALIDATION_STATE_PREFIX}${randomToken()}`;
+  const state = `${config.statePrefix}${randomToken()}`;
   await env.OAUTH_KV.put(
     stateKey(state),
     JSON.stringify({
-      stage: "owner_validation",
+      stage: config.stateStage,
+      action: operation,
       candidate_id: stored.candidate_id,
       target: stored.target,
     }),
@@ -342,40 +351,49 @@ async function beginOwnerCandidateValidation(request, env) {
   return Response.redirect(destination, 302);
 }
 
-async function finishOwnerCandidateValidation(request, env, fetchImpl) {
-  requireOwnerValidationEnabled(env);
+async function finishOwnerCandidateAction(request, env, fetchImpl) {
   requireOAuthBindings(env);
   const url = new URL(request.url);
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
-  if (
-    !state?.startsWith(OWNER_VALIDATION_STATE_PREFIX) ||
-    !code
-  ) {
+  const action = state?.startsWith(OWNER_VALIDATION_STATE_PREFIX)
+    ? "validate"
+    : state?.startsWith(OWNER_RESOLUTION_STATE_PREFIX)
+      ? "resolve"
+      : "";
+  const config = ownerCandidateActionConfig(action, env);
+  if (!state || !code) {
     throw statusError("invalid_github_callback", 400);
   }
-  const stored = await readState(env, state, "owner_validation");
+  const stored = await readState(env, state, config.stateStage);
+  if (stored.action !== action) {
+    throw statusError(config.targetDeniedCode, 403);
+  }
   await env.OAUTH_KV.delete(stateKey(state));
   const githubUser = await exchangeGithubIdentity(url, env, fetchImpl);
   const ownerGithubId = assertAllowedGithubUser(
     githubUser,
     parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
   );
-  if (!env.DB) throw statusError("owner_validation_database_missing", 503);
-  const result = await validateMemoryCandidate({
+  if (!env.DB) throw statusError(config.databaseMissingCode, 503);
+  const principal = {
+    tenant_id: stored.target.tenant_id,
+    credential_id: `github-${ownerGithubId}`,
+    assistant_id: config.assistantId,
+    principal_id: "owner",
+    role: "owner",
+    project_ids: [stored.target.project_id],
+    identity_ids: [],
+    capabilities: [config.capability],
+  };
+  const input = {
     env,
-    principal: {
-      tenant_id: stored.target.tenant_id,
-      credential_id: `github-${ownerGithubId}`,
-      assistant_id: "human-validation-console",
-      principal_id: "owner",
-      role: "owner",
-      project_ids: [stored.target.project_id],
-      identity_ids: [],
-      capabilities: ["memory.validate"],
-    },
+    principal,
     candidateId: stored.candidate_id,
-  });
+  };
+  const result = action === "validate"
+    ? await validateMemoryCandidate(input)
+    : await resolveMemoryCandidate(input);
   return Response.json(result, {
     headers: { "Cache-Control": "no-store" },
   });
@@ -642,6 +660,50 @@ function requireOwnerValidationEnabled(env) {
   }
 }
 
+function requireOwnerResolutionEnabled(env) {
+  if (!["1", "true", "yes", "on"].includes(
+    String(env.GRAPH_MEMORY_RESOLUTION_ENABLED || "").trim().toLowerCase(),
+  )) {
+    throw statusError("owner_resolution_disabled", 404);
+  }
+}
+
+function ownerCandidateActionConfig(action, env) {
+  if (action === "validate") {
+    requireOwnerValidationEnabled(env);
+    return {
+      statePrefix: OWNER_VALIDATION_STATE_PREFIX,
+      consentStage: "owner_validation_consent",
+      stateStage: "owner_validation",
+      csrfCookieName: "mnemosyne_owner_validation_csrf",
+      heading: "Validate candidate",
+      explanation:
+        "This runs deterministic validation only. It does not accept or publish memory.",
+      targetDeniedCode: "owner_validation_target_denied",
+      databaseMissingCode: "owner_validation_database_missing",
+      assistantId: "human-validation-console",
+      capability: "memory.validate",
+    };
+  }
+  if (action === "resolve") {
+    requireOwnerResolutionEnabled(env);
+    return {
+      statePrefix: OWNER_RESOLUTION_STATE_PREFIX,
+      consentStage: "owner_resolution_consent",
+      stateStage: "owner_resolution",
+      csrfCookieName: "mnemosyne_owner_resolution_csrf",
+      heading: "Resolve candidate entities",
+      explanation:
+        "This runs exact entity resolution only. It does not review, accept, or publish memory.",
+      targetDeniedCode: "owner_resolution_target_denied",
+      databaseMissingCode: "owner_resolution_database_missing",
+      assistantId: "human-resolution-console",
+      capability: "memory.resolve",
+    };
+  }
+  throw statusError("candidate_unavailable", 404);
+}
+
 async function readState(env, id, expectedStage) {
   if (!id) throw statusError("oauth_state_missing", 400);
   const raw = await env.OAUTH_KV.get(stateKey(id));
@@ -667,8 +729,8 @@ function csrfCookie(value) {
   return `mnemosyne_csrf=${value}; Path=/authorize; HttpOnly; Secure; SameSite=Lax; Max-Age=${OAUTH_STATE_TTL_SECONDS}`;
 }
 
-function ownerValidationCsrfCookie(value) {
-  return `mnemosyne_owner_validation_csrf=${value}; ` +
+function ownerCandidateCsrfCookie(value, config) {
+  return `${config.csrfCookieName}=${value}; ` +
     `Path=/owner/memory/candidates/; HttpOnly; Secure; SameSite=Lax; ` +
     `Max-Age=${OAUTH_STATE_TTL_SECONDS}`;
 }

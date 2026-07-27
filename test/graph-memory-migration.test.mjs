@@ -23,6 +23,10 @@ const humanReviewMigration = new URL(
   "../migrations/006_human_review.sql",
   import.meta.url
 );
+const memoryResolutionMigration = new URL(
+  "../migrations/007_memory_resolution_receipts.sql",
+  import.meta.url
+);
 const goldenFixture = new URL(
   "../migrations/fixtures/graph-memory-golden.jsonl",
   import.meta.url
@@ -36,6 +40,7 @@ async function migratedDatabase() {
   db.exec(await readFile(privateGrantMigration, "utf8"));
   db.exec(await readFile(hybridRetrievalMigration, "utf8"));
   db.exec(await readFile(humanReviewMigration, "utf8"));
+  db.exec(await readFile(memoryResolutionMigration, "utf8"));
   return db;
 }
 
@@ -251,6 +256,20 @@ test("human review migration records immutable edits and idempotent actions", as
     `).get(table);
     assert.match(row.sql, new RegExp(`CREATE TABLE ${table}`, "i"));
   }
+});
+
+test("resolution migration creates append-only candidate receipts", async () => {
+  const sql = await readFile(memoryResolutionMigration, "utf8");
+  const db = await migratedDatabase();
+  const table = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_resolution_receipts'
+  `).get();
+
+  assert.match(table.sql, /candidate_id TEXT NOT NULL UNIQUE/i);
+  assert.match(sql, /memory resolution receipts are immutable/);
+  assert.match(sql, /memory resolution receipts are append-only/);
+  assert.doesNotMatch(sql, /DROP TABLE/);
 });
 
 test("golden pilot fixture is representative and bounded", async () => {

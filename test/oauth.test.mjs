@@ -19,6 +19,7 @@ import {
   migratedGraphMemoryEnvironment,
 } from "./helpers/d1-graph-memory.mjs";
 import { createMemoryCandidate } from "../src/graph-memory/candidates.js";
+import { validateMemoryCandidate } from "../src/graph-memory/review.js";
 
 test("OAuth requests are narrowed to supported public scopes", () => {
   assert.deepEqual(
@@ -175,6 +176,116 @@ test("owner candidate validation stays unavailable when its rollout flag is off"
   });
   const response = await handler.fetch(new Request(
     "https://memory.example/owner/memory/candidates/candidate_example-12345678/validate" +
+      "?tenant_id=personal&project_id=global-canon",
+  ), {
+    ...oauthEnvironment(memoryKv()),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+  });
+
+  assert.equal(response.status, 404);
+});
+
+test("allowlisted GitHub owner can resolve one validated candidate without accepting it", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment({
+    ...oauthEnvironment(kv),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+    GRAPH_MEMORY_RESOLUTION_ENABLED: "1",
+  });
+  const candidate = await createMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: "personal",
+      credential_id: "assistant-one",
+      assistant_id: "assistant-one",
+      project_ids: ["global-canon"],
+      capabilities: ["memory.propose"],
+    },
+    body: {
+      tenant_id: "personal",
+      project_id: "global-canon",
+      idempotency_key: "owner-resolution-test",
+      assertions: [{
+        subject: "Athar",
+        predicate: "is_a",
+        object: "lineage framework persona",
+        confidence: 1,
+      }],
+      evidence: [{
+        source_ref: "conversation:owner-resolution-test",
+        content_hash: "c".repeat(64),
+        source_excerpt: "Athar is a lineage framework persona.",
+        observed_at: "2026-07-27T00:00:00.000Z",
+      }],
+    },
+    randomUUID: () => "owner-resolution-candidate",
+  });
+  await validateMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: "personal",
+      credential_id: "github-277895262",
+      assistant_id: "human-validation-console",
+      principal_id: "owner",
+      role: "owner",
+      project_ids: ["global-canon"],
+      identity_ids: [],
+      capabilities: ["memory.validate"],
+    },
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "owner-resolution-validation",
+  });
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+    fetchImpl: async url => String(url).includes("access_token")
+      ? Response.json({ access_token: "github-access" })
+      : Response.json({ id: 277895262, login: "Anazeez" }),
+  });
+  const resolutionUrl =
+    `https://memory.example/owner/memory/candidates/${candidate.candidate_id}/resolve` +
+      "?tenant_id=personal&project_id=global-canon";
+  const consent = await handler.fetch(new Request(resolutionUrl), env);
+  const consentHtml = await consent.text();
+  const requestId = consentHtml.match(/request=([^"]+)/)[1];
+  const csrf = consentHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const start = await handler.fetch(new Request(
+    `${resolutionUrl}&request=${requestId}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_owner_resolution_csrf=${csrf}`,
+      },
+      body: `csrf=${encodeURIComponent(csrf)}`,
+    },
+  ), env);
+  const githubState = new URL(start.headers.get("location"))
+    .searchParams.get("state");
+  const result = await handler.fetch(new Request(
+    `https://memory.example/callback?state=${githubState}&code=github-code`,
+  ), env);
+  const body = await result.json();
+
+  assert.equal(consent.status, 200);
+  assert.match(consentHtml, /Resolve candidate entities/);
+  assert.equal(start.status, 302);
+  assert.equal(result.status, 200, JSON.stringify(body));
+  assert.equal(body.candidate_id, candidate.candidate_id);
+  assert.equal(body.state, "pending_review");
+  assert.equal(body.resolutions[0].outcome, "new_entity");
+  assert.equal(await env.DB.count("memory_resolution_receipts"), 1);
+  assert.equal(await env.DB.count("memory_assertions"), 0);
+  assert.equal(await env.DB.count("memory_snapshots"), 0);
+});
+
+test("owner candidate resolution stays unavailable when its rollout flag is off", async () => {
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const response = await handler.fetch(new Request(
+    "https://memory.example/owner/memory/candidates/candidate_example-12345678/resolve" +
       "?tenant_id=personal&project_id=global-canon",
   ), {
     ...oauthEnvironment(memoryKv()),

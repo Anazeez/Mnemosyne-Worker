@@ -55,6 +55,7 @@ test("deployment config preserves every supported non-secret live binding", () =
       GRAPH_MEMORY_READ_ENABLED: "1",
       GRAPH_MEMORY_PROPOSE_ENABLED: "0",
       GRAPH_MEMORY_VALIDATION_ENABLED: "0",
+      GRAPH_MEMORY_RESOLUTION_ENABLED: "0",
       GRAPH_MEMORY_REVIEW_ENABLED: "0",
       GRAPH_MEMORY_PUBLICATION_ENABLED: "0",
       GRAPH_MEMORY_MCP_ENABLED: "1",
@@ -142,9 +143,19 @@ test("production workflow requires private OAuth inputs before activation", asyn
     workflow,
     /GRAPH_MEMORY_VALIDATION_ENABLED: \$\{\{ inputs\.enable_validation && '1' \|\| '0' \}\}/,
   );
+  assert.match(
+    workflow,
+    /GRAPH_MEMORY_RESOLUTION_ENABLED: \$\{\{ inputs\.enable_resolution && '1' \|\| '0' \}\}/,
+  );
   assert.equal(
     workflow.match(
       /GRAPH_MEMORY_VALIDATION_ENABLED" == "1"/g,
+    )?.length,
+    2,
+  );
+  assert.equal(
+    workflow.match(
+      /GRAPH_MEMORY_RESOLUTION_ENABLED" == "1"/g,
     )?.length,
     2,
   );

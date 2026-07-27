@@ -7,15 +7,16 @@ projection. Public OAuth clients can only rehydrate, search, traverse, propose,
 and read their own candidate status.
 
 All rollout flags default off. Production deployment accepts explicit inputs
-for read, MCP, Actions, proposal, and owner-authenticated validation. Review
-and publication are fixed to off in deployment automation and remain manual
-internal operations.
+for read, MCP, Actions, proposal, owner-authenticated validation, and
+owner-authenticated entity resolution. Review and publication are fixed to
+off in deployment automation and remain manual internal operations.
 
 | Flag | Effect |
 |---|---|
 | `GRAPH_MEMORY_READ_ENABLED` | Permit accepted retrieval and own status |
 | `GRAPH_MEMORY_PROPOSE_ENABLED` | Permit immutable candidate intake |
 | `GRAPH_MEMORY_VALIDATION_ENABLED` | Permit one-candidate validation after allowlisted GitHub owner authentication |
+| `GRAPH_MEMORY_RESOLUTION_ENABLED` | Permit one-candidate exact entity resolution after allowlisted GitHub owner authentication |
 | `GRAPH_MEMORY_REVIEW_ENABLED` | Internal review gate; deployment keeps off |
 | `GRAPH_MEMORY_PUBLICATION_ENABLED` | Internal publication gate; deployment keeps off |
 | `GRAPH_MEMORY_MCP_ENABLED` | Serve OAuth-protected Streamable HTTP MCP |
@@ -40,6 +41,8 @@ internal operations.
 9. Enable proposal and prove it creates only `pending_validation`.
 10. Enable owner validation and prove it advances a valid candidate only to
     `pending_review`, with no accepted assertion or snapshot.
+11. Enable owner resolution and prove it records an append-only receipt while
+    leaving the candidate outside accepted memory.
 
 Do not enable review or publication through public rollout automation.
 MCP and Actions deployment fails closed when `OAUTH_KV` cannot be resolved.
@@ -58,6 +61,21 @@ Successful deterministic validation advances the candidate only from
 `pending_validation` to `pending_review`. Invalid candidates are quarantined
 with a stable reason code. This flow issues no reusable review credential and
 cannot accept or publish memory.
+
+## Owner entity resolution
+
+With resolution enabled, open the validated candidate's specific URL:
+
+```text
+https://memory.azzayezz.com/owner/memory/candidates/CANDIDATE_ID/resolve?tenant_id=personal&project_id=PROJECT_ID
+```
+
+The gate compares normalized exact labels only with accepted entities in the
+authorized tenant and project. One exact match is recorded, no match is
+recorded as a proposed new entity, and multiple exact matches quarantine the
+candidate with `AMBIGUOUS_ENTITY_MATCH`. It creates only an immutable
+resolution receipt and decision; it does not create entities, assertions,
+snapshots, accepted memory, or reusable review credentials.
 
 ## Owner identity and project grants
 

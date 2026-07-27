@@ -32,6 +32,23 @@ const SQL = Object.freeze({
   GET_ENTITY: `
     SELECT * FROM memory_entities
      WHERE tenant_id = ? AND project_id = ? AND entity_id = ?`,
+  LIST_ACCEPTED_ENTITY_LABEL_MATCHES: `
+    SELECT entity_id, canonical_label
+      FROM memory_entities
+     WHERE tenant_id = ? AND project_id = ?
+       AND lifecycle_state = 'accepted'
+       AND lower(trim(canonical_label)) = ?
+     ORDER BY entity_id
+     LIMIT 3`,
+  GET_RESOLUTION_RECEIPT: `
+    SELECT * FROM memory_resolution_receipts
+     WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?`,
+  INSERT_RESOLUTION_RECEIPT: `
+    INSERT INTO memory_resolution_receipts (
+      resolution_receipt_id, decision_id, candidate_id, tenant_id, project_id,
+      resolutions_json, outcome, reason_code, receipt_hash,
+      resolved_by_credential_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   INSERT_ENTITY: `
     INSERT INTO memory_entities (
       entity_id, tenant_id, project_id, ontology_type, lifecycle_state,
@@ -188,7 +205,6 @@ export async function resolveMemoryCandidate({
   env,
   principal,
   candidateId,
-  entityMatches = [],
   now = () => new Date(),
   randomUUID = () => crypto.randomUUID()
 }) {
@@ -198,36 +214,86 @@ export async function resolveMemoryCandidate({
     candidateId,
     "memory.resolve"
   );
+  const existingReceipt = await env.DB.prepare(SQL.GET_RESOLUTION_RECEIPT).bind(
+    candidate.tenant_id,
+    candidate.project_id,
+    candidate.candidate_id
+  ).first();
+  if (existingReceipt) {
+    return resolutionState(existingReceipt);
+  }
   if (candidate.state !== "pending_review") {
     return candidateState(candidate);
   }
 
-  const ordered = [...entityMatches].sort(
-    (left, right) => Number(right.confidence) - Number(left.confidence)
-  );
-  const ambiguous = ordered.length > 1 && (
-    Number(ordered[0].confidence) < 0.9 ||
-    Number(ordered[0].confidence) - Number(ordered[1].confidence) < 0.05
-  );
-  if (!ambiguous) {
-    return {
-      candidate_id: candidate.candidate_id,
-      state: "pending_review",
-      resolved_entity_id: ordered[0]?.entity_id || null
-    };
+  const payload = normalizeCandidatePayload(JSON.parse(candidate.payload_json));
+  const subjects = new Map();
+  for (const assertion of payload.assertions) {
+    const normalizedLabel = normalizeEntityLabel(assertion.subject);
+    if (!subjects.has(normalizedLabel)) {
+      subjects.set(normalizedLabel, assertion.subject);
+    }
+  }
+  const resolutions = [];
+  let ambiguous = false;
+  for (const [normalizedLabel, subject] of subjects) {
+    const rows = (await env.DB.prepare(
+      SQL.LIST_ACCEPTED_ENTITY_LABEL_MATCHES
+    ).bind(
+      candidate.tenant_id,
+      candidate.project_id,
+      normalizedLabel
+    ).all()).results || [];
+    const matches = rows
+      .filter(row => normalizeEntityLabel(row.canonical_label) === normalizedLabel)
+      .map(row => row.entity_id)
+      .sort();
+    if (matches.length > 1) {
+      ambiguous = true;
+      resolutions.push({
+        subject,
+        normalized_label: normalizedLabel,
+        outcome: "ambiguous",
+        resolved_entity_id: null,
+        match_entity_ids: matches
+      });
+    } else if (matches.length === 1) {
+      resolutions.push({
+        subject,
+        normalized_label: normalizedLabel,
+        outcome: "exact_match",
+        resolved_entity_id: matches[0]
+      });
+    } else {
+      resolutions.push({
+        subject,
+        normalized_label: normalizedLabel,
+        outcome: "new_entity",
+        resolved_entity_id: null
+      });
+    }
   }
 
-  const reasonCode = "AMBIGUOUS_ENTITY_MATCH";
+  const reasonCode = ambiguous ? "AMBIGUOUS_ENTITY_MATCH" : null;
+  const state = ambiguous ? "quarantined" : "pending_review";
+  const outcome = ambiguous ? "quarantined" : "resolved";
   const createdAt = now().toISOString();
-  const decisionId = `decision_${randomUUID()}`;
-  const receiptHash = await canonicalHash({
+  const identifier = randomUUID();
+  const decisionId = `decision_${identifier}`;
+  const resolutionReceiptId = `resolution_${identifier}`;
+  const receipt = {
+    resolution_receipt_id: resolutionReceiptId,
     decision_id: decisionId,
     candidate_id: candidate.candidate_id,
-    matches: ordered,
+    tenant_id: candidate.tenant_id,
+    project_id: candidate.project_id,
+    resolutions,
+    outcome,
     reason_code: reasonCode,
     created_at: createdAt
-  });
-  await env.DB.batch([
+  };
+  const receiptHash = await canonicalHash(receipt);
+  const statements = [
     env.DB.prepare(SQL.INSERT_DECISION).bind(
       decisionId,
       candidate.tenant_id,
@@ -236,25 +302,64 @@ export async function resolveMemoryCandidate({
       null,
       null,
       "resolution",
-      "quarantined",
+      outcome,
       reasonCode,
       receiptHash,
       principal.credential_id,
       createdAt
     ),
-    env.DB.prepare(SQL.UPDATE_CANDIDATE).bind(
-      "quarantined",
+    env.DB.prepare(SQL.INSERT_RESOLUTION_RECEIPT).bind(
+      resolutionReceiptId,
+      decisionId,
+      candidate.candidate_id,
+      candidate.tenant_id,
+      candidate.project_id,
+      JSON.stringify(resolutions),
+      outcome,
+      reasonCode,
+      receiptHash,
+      principal.credential_id,
+      createdAt
+    )
+  ];
+  if (ambiguous) {
+    statements.push(env.DB.prepare(SQL.UPDATE_CANDIDATE).bind(
+      state,
       reasonCode,
       createdAt,
       candidate.candidate_id,
       candidate.tenant_id
-    )
-  ]);
+    ));
+  }
+  await env.DB.batch(statements);
+
   return {
     candidate_id: candidate.candidate_id,
-    state: "quarantined",
-    reason_code: reasonCode
+    state,
+    resolution_receipt_id: resolutionReceiptId,
+    resolutions,
+    ...(reasonCode ? { reason_code: reasonCode } : {})
   };
+}
+
+function resolutionState(receipt) {
+  return {
+    candidate_id: receipt.candidate_id,
+    state: receipt.outcome === "quarantined"
+      ? "quarantined"
+      : "pending_review",
+    resolution_receipt_id: receipt.resolution_receipt_id,
+    resolutions: JSON.parse(receipt.resolutions_json),
+    ...(receipt.reason_code ? { reason_code: receipt.reason_code } : {})
+  };
+}
+
+function normalizeEntityLabel(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
 export async function publishMemoryCandidate({

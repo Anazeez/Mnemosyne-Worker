@@ -136,7 +136,7 @@ test("ambiguous entity resolution quarantines instead of merging", async () => {
   }
   const candidate = await createCandidate(env, proposal({
     assertions: [{
-      subject: "memory-service-new",
+      subject: "Memory Service",
       predicate: "status",
       object: "active",
       confidence: 0.7
@@ -152,15 +152,106 @@ test("ambiguous entity resolution quarantines instead of merging", async () => {
     env,
     principal: reviewer(),
     candidateId: candidate.candidate_id,
-    entityMatches: [
-      { entity_id: "service-memory", confidence: 0.82 },
-      { entity_id: "memory-service", confidence: 0.81 }
-    ],
     randomUUID: () => "resolution-ambiguous"
   });
 
   assert.equal(result.state, "quarantined");
   assert.equal(result.reason_code, "AMBIGUOUS_ENTITY_MATCH");
+});
+
+test("resolution records a durable new-entity receipt without accepted writes", async () => {
+  const env = await migratedGraphMemoryEnvironment();
+  const candidate = await createCandidate(env, proposal({
+    assertions: [{
+      subject: "Athar",
+      predicate: "is_a",
+      object: "lineage framework persona",
+      confidence: 1
+    }]
+  }));
+  await validateMemoryCandidate({
+    env,
+    principal: reviewer(),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "validation-new-entity"
+  });
+
+  const result = await resolveMemoryCandidate({
+    env,
+    principal: reviewer(),
+    candidateId: candidate.candidate_id,
+    now: () => new Date("2026-07-27T12:15:00.000Z"),
+    randomUUID: () => "resolution-new-entity"
+  });
+
+  assert.equal(result.state, "pending_review");
+  assert.equal(result.resolution_receipt_id, "resolution_resolution-new-entity");
+  assert.deepEqual(result.resolutions, [{
+    subject: "Athar",
+    normalized_label: "athar",
+    outcome: "new_entity",
+    resolved_entity_id: null
+  }]);
+  assert.equal(await env.DB.count("memory_resolution_receipts"), 1);
+  assert.equal(await env.DB.count("memory_decisions", "decision_type = 'resolution'"), 1);
+  assert.equal(await env.DB.count("memory_entities"), 0);
+  assert.equal(await env.DB.count("memory_assertions"), 0);
+  assert.equal(await env.DB.count("memory_snapshots"), 0);
+});
+
+test("resolution matches one accepted entity by normalized exact label and replays", async () => {
+  const env = await migratedGraphMemoryEnvironment();
+  env.DB.database.prepare(`
+    INSERT INTO memory_entities (
+      entity_id, tenant_id, project_id, ontology_type, lifecycle_state,
+      canonical_label, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "entity-athar", "tenant-a", "project.one", "persona", "accepted",
+    "ATHAR", "2026-07-27T00:00:00.000Z", "2026-07-27T00:00:00.000Z"
+  );
+  env.DB.database.prepare(`
+    INSERT INTO memory_entities (
+      entity_id, tenant_id, project_id, ontology_type, lifecycle_state,
+      canonical_label, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "entity-athar-other-tenant", "tenant-b", "project.one", "persona", "accepted",
+    "Athar", "2026-07-27T00:00:00.000Z", "2026-07-27T00:00:00.000Z"
+  );
+  const candidate = await createCandidate(env, proposal({
+    assertions: [{
+      subject: "  Athar  ",
+      predicate: "is_a",
+      object: "lineage framework persona",
+      confidence: 1
+    }]
+  }));
+  await validateMemoryCandidate({
+    env,
+    principal: reviewer(),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "validation-exact"
+  });
+
+  const first = await resolveMemoryCandidate({
+    env,
+    principal: reviewer(),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "resolution-exact"
+  });
+  const replay = await resolveMemoryCandidate({
+    env,
+    principal: reviewer(),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "must-not-be-used"
+  });
+
+  assert.equal(first.resolutions[0].outcome, "exact_match");
+  assert.equal(first.resolutions[0].resolved_entity_id, "entity-athar");
+  assert.deepEqual(replay, first);
+  assert.equal(await env.DB.count("memory_resolution_receipts"), 1);
+  assert.equal(await env.DB.count("memory_decisions", "decision_type = 'resolution'"), 1);
 });
 
 test("reviewed publication creates accepted assertions with evidence and snapshot", async () => {

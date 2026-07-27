@@ -13,12 +13,13 @@ test("all graph memory rollout flags default off", () => {
     read: false,
     propose: false,
     validation: false,
+    resolution: false,
     review: false,
     publication: false,
     mcp: false,
     actions: false,
   });
-  assert.equal(Object.keys(GRAPH_MEMORY_FLAGS).length, 7);
+  assert.equal(Object.keys(GRAPH_MEMORY_FLAGS).length, 8);
 });
 
 test("feature-gated services deny before calling implementations", async () => {
@@ -83,6 +84,7 @@ test("public health reports the exact rollout state", async () => {
     read: true,
     propose: false,
     validation: false,
+    resolution: false,
     review: false,
     publication: false,
     mcp: true,
