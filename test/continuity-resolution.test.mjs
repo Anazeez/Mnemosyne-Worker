@@ -135,7 +135,11 @@ function latestRequest(scopeKey = "architecture") {
   });
 }
 
-test("exact current head is verified without AI or Vectorize", async () => {
+test("exact current head is verified without AI or Vectorize", async t => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-07-16T10:00:00.000Z")
+  });
   const worker = await loadWorker();
   const row = await publishedRunway();
   const db = new ContinuityMemoryD1().seedRunway(row).seedHead(headFrom(row));

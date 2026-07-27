@@ -139,7 +139,11 @@ function rehydrateRequest(body = {}, key = "specialist-key") {
   });
 }
 
-test("rehydration returns exact runway and authorized references without probabilistic calls", async () => {
+test("rehydration returns exact runway and authorized references without probabilistic calls", async t => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-07-16T10:00:00.000Z")
+  });
   const worker = await loadWorker();
   const db = await seededDatabase();
   let aiCalls = 0;
