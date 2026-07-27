@@ -96,6 +96,50 @@ test("Streamable HTTP advertises the same five tools", async () => {
   );
 });
 
+test("MCP proposal schema exposes required assertion and evidence fields", async () => {
+  const response = await handleMcpRequest(
+    new Request("https://memory.example/mcp", {
+      method: "POST",
+      headers: {
+        Accept: "application/json, text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      }),
+    }),
+    { env: {}, principal, services: {} },
+  );
+  const body = await response.json();
+  const proposal = body.result.tools.find(tool => tool.name === "memory_propose");
+  const assertion = proposal.inputSchema.properties.assertions.items;
+  const evidence = proposal.inputSchema.properties.evidence.items;
+
+  assert.deepEqual(
+    assertion.required,
+    ["subject", "predicate", "object", "confidence"],
+  );
+  assert.deepEqual(Object.keys(assertion.properties), [
+    "subject",
+    "predicate",
+    "object",
+    "confidence",
+  ]);
+  assert.deepEqual(
+    evidence.required,
+    ["source_ref", "content_hash", "observed_at"],
+  );
+  assert.deepEqual(Object.keys(evidence.properties), [
+    "source_ref",
+    "content_hash",
+    "source_excerpt",
+    "observed_at",
+  ]);
+});
+
 test("MCP errors are stable and do not reflect service secrets", async () => {
   const result = await invokeMemoryTool("memory_search", {
     env: {},

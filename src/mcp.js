@@ -19,6 +19,20 @@ const targetShape = {
   project_id: z.string().min(2).max(64),
 };
 
+const assertionSchema = z.object({
+  subject: z.string().min(1).max(4_000),
+  predicate: z.string().min(1).max(4_000),
+  object: z.string().min(1).max(4_000),
+  confidence: z.number().min(0).max(1),
+}).strict();
+
+const evidenceSchema = z.object({
+  source_ref: z.string().min(1).max(2_048),
+  content_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  source_excerpt: z.string().min(1).max(4_000).optional(),
+  observed_at: z.string().datetime({ offset: true }),
+}).strict();
+
 const retrievalAnnotations = Object.freeze({
   readOnlyHint: true,
   destructiveHint: false,
@@ -67,8 +81,8 @@ export const MCP_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: z.object({
       ...targetShape,
       idempotency_key: z.string().min(8).max(128),
-      assertions: z.array(z.record(z.string(), z.unknown())).min(1).max(100),
-      evidence: z.array(z.record(z.string(), z.unknown())).min(1).max(100),
+      assertions: z.array(assertionSchema).min(1).max(100),
+      evidence: z.array(evidenceSchema).min(1).max(100),
     }).strict(),
     annotations: Object.freeze({
       readOnlyHint: false,
