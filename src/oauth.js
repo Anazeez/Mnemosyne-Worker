@@ -33,9 +33,47 @@ export function narrowRequestedScopes(requested) {
   return narrowed;
 }
 
+export function parseAllowedGithubUserIds(value) {
+  const ids = String(value || "")
+    .split(",")
+    .map(item => Number(item.trim()))
+    .filter(Number.isSafeInteger)
+    .filter(id => id > 0);
+  if (ids.length === 0) {
+    throw statusError("github_allowlist_missing", 503);
+  }
+  return new Set(ids);
+}
+
+export function assertAllowedGithubUser(githubUser, allowedIds) {
+  const id = Number(githubUser?.id);
+  if (
+    !Number.isSafeInteger(id) ||
+    id <= 0 ||
+    !(allowedIds instanceof Set) ||
+    !allowedIds.has(id)
+  ) {
+    throw statusError("github_identity_not_authorized", 403);
+  }
+  return id;
+}
+
+export async function assistantIdForOAuthClient(clientId) {
+  const normalized = String(clientId || "").trim();
+  if (!normalized) throw statusError("oauth_client_identity_missing", 400);
+  const bytes = new TextEncoder().encode(normalized);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const suffix = [...new Uint8Array(digest)]
+    .slice(0, 16)
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `oauth-${suffix}`;
+}
+
 export function buildGrantClaims({
   githubUser,
   tenantId,
+  assistantId,
   projectIds = [],
   requestedScopes,
 }) {
@@ -45,6 +83,9 @@ export function buildGrantClaims({
     throw new Error("invalid_github_identity");
   }
   if (!tenantId || typeof tenantId !== "string") throw new Error("invalid_tenant");
+  if (!/^oauth-[a-f0-9]{32}$/.test(String(assistantId || ""))) {
+    throw new Error("invalid_assistant_identity");
+  }
   const login = String(githubUser.login ?? "");
   return {
     userId: `github-${numericId}`,
@@ -57,7 +98,7 @@ export function buildGrantClaims({
       props: {
         auth_source: "oauth",
         credential_id: `github-${numericId}`,
-        assistant_id: "oauth-client",
+        assistant_id: assistantId,
         principal_id: `github:${numericId}`,
         role: "portal",
         tenant_id: tenantId,
@@ -194,9 +235,17 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
   if (!userResponse.ok) {
     throw statusError(`github_identity_failed status=${userResponse.status}`, 502);
   }
+  assertAllowedGithubUser(
+    githubUser,
+    parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
+  );
+  const assistantId = await assistantIdForOAuthClient(
+    stored.authRequest.clientId,
+  );
   const claims = buildGrantClaims({
     githubUser,
     tenantId: env.MEMORY_TENANT_ID || "personal",
+    assistantId,
     projectIds: parseProjectIds(env.MEMORY_PROJECT_IDS),
     requestedScopes: stored.scopes,
   });

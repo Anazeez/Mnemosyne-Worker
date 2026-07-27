@@ -4,9 +4,12 @@ import test from "node:test";
 import worker from "../src/index.js";
 import {
   OAUTH_PROVIDER_OPTIONS,
+  assertAllowedGithubUser,
+  assistantIdForOAuthClient,
   buildGrantClaims,
   createOAuthDefaultHandler,
   narrowRequestedScopes,
+  parseAllowedGithubUserIds,
   redactOAuthError,
 } from "../src/oauth.js";
 import { buildDeploymentConfig } from "../scripts/cloudflare-binding-preflight.mjs";
@@ -34,11 +37,41 @@ test("OAuth provider requires S256 PKCE and disables implicit and token exchange
   assert.deepEqual(OAUTH_PROVIDER_OPTIONS.apiRoute, ["/mcp", "/v1/memory/"]);
 });
 
+test("only the immutable authorized GitHub owner ID is accepted", () => {
+  const allowed = parseAllowedGithubUserIds("277895262");
+  assert.equal(
+    assertAllowedGithubUser(
+      { id: 277895262, login: "Anazeez" },
+      allowed,
+    ),
+    277895262,
+  );
+  assert.throws(
+    () => assertAllowedGithubUser(
+      { id: 7, login: "Anazeez" },
+      allowed,
+    ),
+    /github_identity_not_authorized/,
+  );
+  assert.throws(
+    () => parseAllowedGithubUserIds("not-an-id"),
+    /github_allowlist_missing/,
+  );
+});
+
+test("assistant attribution is stable and bound to the OAuth client", async () => {
+  const first = await assistantIdForOAuthClient("client-a");
+  assert.equal(first, await assistantIdForOAuthClient("client-a"));
+  assert.notEqual(first, await assistantIdForOAuthClient("client-b"));
+  assert.match(first, /^oauth-[a-f0-9]{32}$/);
+});
+
 test("grant claims bind tenant, subject, and narrowed scopes", () => {
   assert.deepEqual(
     buildGrantClaims({
       githubUser: { id: 42, login: "octocat" },
       tenantId: "personal",
+      assistantId: "oauth-0123456789abcdef0123456789abcdef",
       projectIds: ["mnemosyne"],
       requestedScopes: ["memory:search", "unknown"],
     }),
@@ -53,7 +86,7 @@ test("grant claims bind tenant, subject, and narrowed scopes", () => {
       props: {
         auth_source: "oauth",
         credential_id: "github-42",
-        assistant_id: "oauth-client",
+        assistant_id: "oauth-0123456789abcdef0123456789abcdef",
         principal_id: "github:42",
         role: "portal",
         tenant_id: "personal",
