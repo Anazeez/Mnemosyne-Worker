@@ -41,9 +41,17 @@ export async function verifyLiveGraphMemory({
     assert(new URL(value).origin === expected.origin, "oauth_origin_invalid");
   }
   assert(new URL(resource.resource).origin === expected.origin, "resource_origin_invalid");
+  const expectedScopes = [
+    "memory:candidate:read",
+    "memory:propose",
+    "memory:read",
+    "memory:review",
+    "memory:search",
+  ];
   assert(
     Array.isArray(resource.scopes_supported) &&
-      resource.scopes_supported.length === 4,
+      JSON.stringify([...resource.scopes_supported].sort()) ===
+        JSON.stringify(expectedScopes),
     "protected_resource_scopes_invalid",
   );
   assert(Object.keys(openapi.paths).length === 5, "openapi_path_count_invalid");

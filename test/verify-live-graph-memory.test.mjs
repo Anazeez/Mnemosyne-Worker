@@ -22,8 +22,9 @@ test("live verification binds metadata to the expected HTTPS origin", async () =
         scopes_supported: [
           "memory:read",
           "memory:search",
-          "memory:traverse",
           "memory:propose",
+          "memory:candidate:read",
+          "memory:review",
         ],
       }),
     ],
