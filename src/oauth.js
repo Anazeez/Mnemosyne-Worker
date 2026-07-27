@@ -10,6 +10,7 @@ import {
   validateMemoryCandidate,
 } from "./graph-memory/review.js";
 import {
+  commitOwnerReviewedCandidate,
   getOwnerReviewCandidate,
   reviewMemoryCandidate,
 } from "./graph-memory/human-review.js";
@@ -18,6 +19,7 @@ const OAUTH_STATE_TTL_SECONDS = 600;
 const OWNER_VALIDATION_STATE_PREFIX = "owner-validation.";
 const OWNER_RESOLUTION_STATE_PREFIX = "owner-resolution.";
 const OWNER_REVIEW_STATE_PREFIX = "owner-review.";
+const OWNER_COMMIT_STATE_PREFIX = "owner-commit.";
 const CANDIDATE_ID_PATTERN = /^candidate_[a-zA-Z0-9._:-]{8,128}$/;
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -239,7 +241,8 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
           if (
             ownerState.startsWith(OWNER_VALIDATION_STATE_PREFIX) ||
             ownerState.startsWith(OWNER_RESOLUTION_STATE_PREFIX) ||
-            ownerState.startsWith(OWNER_REVIEW_STATE_PREFIX)
+            ownerState.startsWith(OWNER_REVIEW_STATE_PREFIX) ||
+            ownerState.startsWith(OWNER_COMMIT_STATE_PREFIX)
           ) {
             return await finishOwnerCandidateAction(
               request,
@@ -264,7 +267,7 @@ async function beginOwnerCandidateAction(request, env) {
   requireOAuthBindings(env);
   const url = new URL(request.url);
   const match = url.pathname.match(
-    /^\/owner\/memory\/candidates\/([^/]+)\/(validate|resolve|review)$/,
+    /^\/owner\/memory\/candidates\/([^/]+)\/(validate|resolve|review|commit)$/,
   );
   const candidateId = match ? decodeURIComponent(match[1]) : "";
   const operation = match?.[2] || "";
@@ -285,6 +288,19 @@ async function beginOwnerCandidateAction(request, env) {
     url.searchParams.has("decision_request")
   ) {
     return finishOwnerReviewDecision(
+      request,
+      env,
+      config,
+      candidateId,
+      target
+    );
+  }
+  if (
+    operation === "commit" &&
+    request.method === "POST" &&
+    url.searchParams.has("commit_request")
+  ) {
+    return finishOwnerCommitDecision(
       request,
       env,
       config,
@@ -381,6 +397,8 @@ async function finishOwnerCandidateAction(request, env, fetchImpl) {
       ? "resolve"
       : state?.startsWith(OWNER_REVIEW_STATE_PREFIX)
         ? "review"
+        : state?.startsWith(OWNER_COMMIT_STATE_PREFIX)
+          ? "commit"
       : "";
   const config = ownerCandidateActionConfig(action, env);
   if (!state || !code) {
@@ -409,6 +427,15 @@ async function finishOwnerCandidateAction(request, env, fetchImpl) {
   };
   if (action === "review") {
     return renderOwnerReviewDecision({
+      request,
+      env,
+      principal,
+      candidateId: stored.candidate_id,
+      target: stored.target,
+    });
+  }
+  if (action === "commit") {
+    return renderOwnerCommitDecision({
       request,
       env,
       principal,
@@ -552,6 +579,142 @@ async function finishOwnerReviewDecision(
     target,
     candidateId,
     decision: String(form.get("decision") || ""),
+  });
+  return Response.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
+async function renderOwnerCommitDecision({
+  request,
+  env,
+  principal,
+  candidateId,
+  target,
+}) {
+  const detail = await getOwnerReviewCandidate({
+    env,
+    principal: {
+      ...principal,
+      capabilities: ["memory.review"],
+    },
+    target,
+    candidateId,
+  });
+  if (detail.owner_review?.decision !== "approve_for_commit") {
+    throw statusError("owner_commit_review_required", 409);
+  }
+  const commitRequest = randomToken();
+  const csrf = randomToken();
+  await env.OAUTH_KV.put(
+    stateKey(commitRequest),
+    JSON.stringify({
+      stage: "owner_commit_decision",
+      candidate_id: candidateId,
+      target,
+      credential_id: principal.credential_id,
+      csrf,
+    }),
+    { expirationTtl: OAUTH_STATE_TTL_SECONDS },
+  );
+  const actionUrl = new URL(
+    `/owner/memory/candidates/${encodeURIComponent(candidateId)}/commit`,
+    new URL(request.url).origin,
+  );
+  actionUrl.searchParams.set("tenant_id", target.tenant_id);
+  actionUrl.searchParams.set("project_id", target.project_id);
+  actionUrl.searchParams.set("commit_request", commitRequest);
+  return new Response(
+    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<title>Controlled memory commit</title></head><body><main>` +
+    `<h1>Controlled memory commit</h1>` +
+    `<h2>Assertions</h2><pre>${escapeHtml(JSON.stringify(
+      detail.candidate.payload.assertions,
+      null,
+      2,
+    ))}</pre>` +
+    `<h2>Evidence</h2><pre>${escapeHtml(JSON.stringify(
+      detail.evidence,
+      null,
+      2,
+    ))}</pre>` +
+    `<h2>Resolution receipt</h2><pre>${escapeHtml(JSON.stringify(
+      {
+        resolution_receipt_id: detail.resolution.resolution_receipt_id,
+        resolutions: detail.resolution.resolutions,
+      },
+      null,
+      2,
+    ))}</pre>` +
+    `<h2>Owner review receipt</h2><pre>${escapeHtml(JSON.stringify(
+      detail.owner_review,
+      null,
+      2,
+    ))}</pre>` +
+    `<p>This creates the next accepted-memory generation, plus a rollback ` +
+    `snapshot and immutable commit receipt.</p>` +
+    `<form method="post" action="${escapeHtml(actionUrl)}">` +
+    `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+    `<button type="submit">Commit accepted memory</button>` +
+    `</form></main></body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Set-Cookie":
+          `mnemosyne_owner_commit_decision_csrf=${csrf}; ` +
+          `Path=/owner/memory/candidates/; HttpOnly; Secure; SameSite=Lax; ` +
+          `Max-Age=${OAUTH_STATE_TTL_SECONDS}`,
+      },
+    },
+  );
+}
+
+async function finishOwnerCommitDecision(
+  request,
+  env,
+  config,
+  candidateId,
+  target,
+) {
+  const url = new URL(request.url);
+  const commitRequest = url.searchParams.get("commit_request");
+  const stored = await readState(
+    env,
+    commitRequest,
+    "owner_commit_decision",
+  );
+  const form = await request.formData();
+  const csrf = String(form.get("csrf") || "");
+  if (
+    !csrf ||
+    csrf !== stored.csrf ||
+    csrf !== readCookie(request, "mnemosyne_owner_commit_decision_csrf")
+  ) {
+    throw statusError("csrf_validation_failed", 403);
+  }
+  if (
+    stored.candidate_id !== candidateId ||
+    stored.target.tenant_id !== target.tenant_id ||
+    stored.target.project_id !== target.project_id
+  ) {
+    throw statusError(config.targetDeniedCode, 403);
+  }
+  await env.OAUTH_KV.delete(stateKey(commitRequest));
+  const result = await commitOwnerReviewedCandidate({
+    env,
+    principal: {
+      tenant_id: target.tenant_id,
+      credential_id: stored.credential_id,
+      assistant_id: "human-owner-commit-console",
+      principal_id: "owner",
+      role: "owner",
+      project_ids: [target.project_id],
+      identity_ids: [],
+      capabilities: ["memory.commit"],
+    },
+    target,
+    candidateId,
   });
   return Response.json(result, {
     headers: { "Cache-Control": "no-store" },
@@ -835,6 +998,14 @@ function requireOwnerReviewEnabled(env) {
   }
 }
 
+function requireOwnerCommitEnabled(env) {
+  if (!["1", "true", "yes", "on"].includes(
+    String(env.GRAPH_MEMORY_OWNER_COMMIT_ENABLED || "").trim().toLowerCase(),
+  )) {
+    throw statusError("owner_commit_disabled", 404);
+  }
+}
+
 function ownerCandidateActionConfig(action, env) {
   if (action === "validate") {
     requireOwnerValidationEnabled(env);
@@ -882,6 +1053,22 @@ function ownerCandidateActionConfig(action, env) {
       databaseMissingCode: "owner_review_database_missing",
       assistantId: "human-owner-review-console",
       capability: "memory.review",
+    };
+  }
+  if (action === "commit") {
+    requireOwnerCommitEnabled(env);
+    return {
+      statePrefix: OWNER_COMMIT_STATE_PREFIX,
+      consentStage: "owner_commit_consent",
+      stateStage: "owner_commit",
+      csrfCookieName: "mnemosyne_owner_commit_csrf",
+      heading: "Controlled memory commit",
+      explanation:
+        "Authenticate to verify the approved receipts before creating accepted memory.",
+      targetDeniedCode: "owner_commit_target_denied",
+      databaseMissingCode: "owner_commit_database_missing",
+      assistantId: "human-owner-commit-console",
+      capability: "memory.commit",
     };
   }
   throw statusError("candidate_unavailable", 404);

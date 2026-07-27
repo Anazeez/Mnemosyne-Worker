@@ -23,6 +23,7 @@ import {
   resolveMemoryCandidate,
   validateMemoryCandidate,
 } from "../src/graph-memory/review.js";
+import { reviewMemoryCandidate } from "../src/graph-memory/human-review.js";
 
 test("OAuth requests are narrowed to supported public scopes", () => {
   assert.deepEqual(
@@ -416,6 +417,144 @@ test("owner review stays unavailable when its rollout flag is off", async () => 
   });
   const response = await handler.fetch(new Request(
     "https://memory.example/owner/memory/candidates/candidate_example-12345678/review" +
+      "?tenant_id=personal&project_id=global-canon",
+  ), {
+    ...oauthEnvironment(memoryKv()),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+  });
+
+  assert.equal(response.status, 404);
+});
+
+test("allowlisted owner explicitly controlled-commits one approved candidate", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment({
+    ...oauthEnvironment(kv),
+    AUTHORIZED_GITHUB_USER_IDS: "277895262",
+    MEMORY_TENANT_ID: "personal",
+    GRAPH_MEMORY_OWNER_COMMIT_ENABLED: "1",
+  });
+  const candidate = await createMemoryCandidate({
+    env,
+    principal: {
+      tenant_id: "personal",
+      credential_id: "assistant-one",
+      assistant_id: "assistant-one",
+      project_ids: ["global-canon"],
+      capabilities: ["memory.propose"],
+    },
+    body: {
+      tenant_id: "personal",
+      project_id: "global-canon",
+      idempotency_key: "owner-commit-browser-test",
+      assertions: [{
+        subject: "Athar",
+        predicate: "is_a",
+        object: "lineage framework persona",
+        confidence: 1,
+      }],
+      evidence: [{
+        source_ref: "conversation:owner-commit-browser-test",
+        content_hash: "f".repeat(64),
+        source_excerpt: "Athar is a lineage framework persona.",
+        observed_at: "2026-07-27T00:00:00.000Z",
+      }],
+    },
+    randomUUID: () => "owner-commit-browser-candidate",
+  });
+  await validateMemoryCandidate({
+    env,
+    principal: ownerStagePrincipal("memory.validate"),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "owner-commit-browser-validation",
+  });
+  await resolveMemoryCandidate({
+    env,
+    principal: ownerStagePrincipal("memory.resolve"),
+    candidateId: candidate.candidate_id,
+    randomUUID: () => "owner-commit-browser-resolution",
+  });
+  await reviewMemoryCandidate({
+    env,
+    principal: ownerStagePrincipal("memory.review"),
+    target: {
+      tenant_id: "personal",
+      project_id: "global-canon",
+    },
+    candidateId: candidate.candidate_id,
+    decision: "approve_for_commit",
+    randomUUID: () => "owner-commit-browser-review",
+  });
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+    fetchImpl: async url => String(url).includes("access_token")
+      ? Response.json({ access_token: "github-access" })
+      : Response.json({ id: 277895262, login: "Anazeez" }),
+  });
+  const commitUrl =
+    `https://memory.example/owner/memory/candidates/${candidate.candidate_id}/commit` +
+      "?tenant_id=personal&project_id=global-canon";
+  const consent = await handler.fetch(new Request(commitUrl), env);
+  const consentHtml = await consent.text();
+  const consentRequest = consentHtml.match(/request=([^"]+)/)[1];
+  const consentCsrf = consentHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const start = await handler.fetch(new Request(
+    `${commitUrl}&request=${consentRequest}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_owner_commit_csrf=${consentCsrf}`,
+      },
+      body: `csrf=${encodeURIComponent(consentCsrf)}`,
+    },
+  ), env);
+  const githubState = new URL(start.headers.get("location"))
+    .searchParams.get("state");
+  const confirmation = await handler.fetch(new Request(
+    `https://memory.example/callback?state=${githubState}&code=github-code`,
+  ), env);
+  const confirmationHtml = await confirmation.text();
+  const commitRequest = confirmationHtml.match(/commit_request=([^"]+)/)[1];
+  const commitCsrf = confirmationHtml.match(/name="csrf" value="([^"]+)/)[1];
+  const committed = await handler.fetch(new Request(
+    `${commitUrl}&commit_request=${commitRequest}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: `mnemosyne_owner_commit_decision_csrf=${commitCsrf}`,
+      },
+      body: `csrf=${encodeURIComponent(commitCsrf)}`,
+    },
+  ), env);
+  const body = await committed.json();
+
+  assert.equal(consent.status, 200);
+  assert.match(consentHtml, /Controlled memory commit/);
+  assert.equal(start.status, 302);
+  assert.equal(confirmation.status, 200);
+  assert.match(confirmationHtml, /Athar/);
+  assert.match(confirmationHtml, /owner_review_owner-commit-browser-review/);
+  assert.match(confirmationHtml, /Commit accepted memory/);
+  assert.equal(committed.status, 200, JSON.stringify(body));
+  assert.equal(body.state, "accepted");
+  assert.equal(body.generation, 1);
+  assert.match(body.commit_receipt_id, /^owner_commit_/);
+  assert.equal(await env.DB.count("memory_owner_commit_receipts"), 1);
+  assert.equal(
+    await env.DB.count("memory_assertions", "lifecycle_state = 'accepted'"),
+    1,
+  );
+});
+
+test("owner controlled commit stays unavailable when its rollout flag is off", async () => {
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const response = await handler.fetch(new Request(
+    "https://memory.example/owner/memory/candidates/candidate_example-12345678/commit" +
       "?tenant_id=personal&project_id=global-canon",
   ), {
     ...oauthEnvironment(memoryKv()),

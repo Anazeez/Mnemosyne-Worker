@@ -31,6 +31,7 @@ const portal = () => principal("portal", ["memory.propose"]);
 const validator = () => principal("owner", ["memory.validate"]);
 const resolver = () => principal("owner", ["memory.resolve"]);
 const reviewer = () => principal("owner", ["memory.review"]);
+const committer = () => principal("owner", ["memory.commit"]);
 
 async function candidateAt(env, stage, suffix = "owner-review") {
   const candidate = await createMemoryCandidate({
@@ -67,6 +68,20 @@ async function candidateAt(env, stage, suffix = "owner-review") {
     principal: resolver(),
     candidateId: candidate.candidate_id,
     randomUUID: () => `resolution-${suffix}`
+  });
+  return candidate;
+}
+
+async function approvedCandidateAt(env, suffix = "owner-commit") {
+  const candidate = await candidateAt(env, "resolved", suffix);
+  await ownerReview.reviewMemoryCandidate({
+    env,
+    principal: reviewer(),
+    target,
+    candidateId: candidate.candidate_id,
+    decision: "approve_for_commit",
+    now: () => new Date("2026-07-27T17:00:00.000Z"),
+    randomUUID: () => `review-${suffix}`
   });
   return candidate;
 }
@@ -189,4 +204,110 @@ test("assistant cannot review even when claiming the review capability", async (
     }),
     error => error.code === "HUMAN_REVIEW_REQUIRED"
   );
+});
+
+test("controlled commit atomically accepts the exact owner-approved candidate", async () => {
+  assert.equal(typeof ownerReview.commitOwnerReviewedCandidate, "function");
+  const env = await migratedGraphMemoryEnvironment();
+  const candidate = await approvedCandidateAt(env, "commit");
+  const input = {
+    env,
+    principal: committer(),
+    target,
+    candidateId: candidate.candidate_id,
+    now: () => new Date("2026-07-27T18:00:00.000Z"),
+    randomUUID: (() => {
+      const values = [
+        "commit-receipt",
+        "snapshot",
+        "publication",
+        "assertion",
+        "review-decision"
+      ];
+      return () => values.shift();
+    })()
+  };
+
+  const result = await ownerReview.commitOwnerReviewedCandidate(input);
+
+  assert.equal(result.state, "accepted");
+  assert.equal(result.generation, 1);
+  assert.equal(result.commit_receipt_id, "owner_commit_commit-receipt");
+  assert.equal(
+    result.review_receipt_id,
+    "owner_review_review-commit"
+  );
+  assert.equal(await env.DB.count("memory_owner_commit_receipts"), 1);
+  assert.equal(
+    await env.DB.count(
+      "memory_assertions",
+      "lifecycle_state = 'accepted' AND accepted_generation = 1"
+    ),
+    1
+  );
+  assert.equal(
+    await env.DB.count("memory_entities", "lifecycle_state = 'accepted'"),
+    1
+  );
+  assert.equal(await env.DB.count("memory_snapshots", "generation = 1"), 1);
+});
+
+test("controlled commit replay returns one receipt and one accepted generation", async () => {
+  assert.equal(typeof ownerReview.commitOwnerReviewedCandidate, "function");
+  const env = await migratedGraphMemoryEnvironment();
+  const candidate = await approvedCandidateAt(env, "commit-replay");
+  let sequence = 0;
+  const input = {
+    env,
+    principal: committer(),
+    target,
+    candidateId: candidate.candidate_id,
+    randomUUID: () => `replay-${sequence++}`
+  };
+
+  const first = await ownerReview.commitOwnerReviewedCandidate(input);
+  const replay = await ownerReview.commitOwnerReviewedCandidate(input);
+
+  assert.deepEqual(replay, first);
+  assert.equal(await env.DB.count("memory_owner_commit_receipts"), 1);
+  assert.equal(await env.DB.count("memory_snapshots"), 1);
+  assert.equal(
+    await env.DB.count("memory_assertions", "lifecycle_state = 'accepted'"),
+    1
+  );
+});
+
+test("controlled commit fails closed before owner approval", async () => {
+  assert.equal(typeof ownerReview.commitOwnerReviewedCandidate, "function");
+  const env = await migratedGraphMemoryEnvironment();
+  const candidate = await candidateAt(env, "resolved", "commit-unapproved");
+
+  await assert.rejects(
+    ownerReview.commitOwnerReviewedCandidate({
+      env,
+      principal: committer(),
+      target,
+      candidateId: candidate.candidate_id
+    }),
+    error => error.code === "OWNER_COMMIT_REVIEW_REQUIRED"
+  );
+  assert.equal(await env.DB.count("memory_assertions"), 0);
+  assert.equal(await env.DB.count("memory_snapshots"), 0);
+});
+
+test("assistant cannot controlled-commit even when claiming the capability", async () => {
+  assert.equal(typeof ownerReview.commitOwnerReviewedCandidate, "function");
+  const env = await migratedGraphMemoryEnvironment();
+  const candidate = await approvedCandidateAt(env, "commit-assistant");
+
+  await assert.rejects(
+    ownerReview.commitOwnerReviewedCandidate({
+      env,
+      principal: principal("portal", ["memory.commit"]),
+      target,
+      candidateId: candidate.candidate_id
+    }),
+    error => error.code === "OWNER_COMMIT_REQUIRED"
+  );
+  assert.equal(await env.DB.count("memory_assertions"), 0);
 });

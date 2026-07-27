@@ -51,6 +51,9 @@ const SQL = Object.freeze({
   OWNER_REVIEW: `
     SELECT * FROM memory_owner_review_receipts
      WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?`,
+  OWNER_COMMIT: `
+    SELECT * FROM memory_owner_commit_receipts
+     WHERE tenant_id = ? AND project_id = ? AND candidate_id = ?`,
   INSERT_OWNER_REVIEW: `
     INSERT INTO memory_owner_review_receipts (
       review_receipt_id, decision_id, candidate_id, resolution_receipt_id,
@@ -307,6 +310,114 @@ export async function reviewMemoryCandidate({
   };
 }
 
+export async function commitOwnerReviewedCandidate({
+  env,
+  principal,
+  target,
+  candidateId,
+  now = () => new Date(),
+  randomUUID = () => crypto.randomUUID()
+}) {
+  const normalized = requireOwnerCommit(principal, target);
+  const existing = await env.DB.prepare(SQL.OWNER_COMMIT).bind(
+    normalized.tenant_id,
+    normalized.project_id,
+    String(candidateId)
+  ).first();
+  if (existing) return ownerCommitState(existing);
+
+  const reviewPrincipal = {
+    ...principal,
+    capabilities: [...new Set([
+      ...(principal.capabilities || []),
+      "memory.review"
+    ])]
+  };
+  const detail = await getOwnerReviewCandidate({
+    env,
+    principal: reviewPrincipal,
+    target: normalized,
+    candidateId
+  });
+  const reviewReceipt = await env.DB.prepare(SQL.OWNER_REVIEW).bind(
+    normalized.tenant_id,
+    normalized.project_id,
+    detail.candidate.candidate_id
+  ).first();
+  if (!reviewReceipt || reviewReceipt.decision !== "approve_for_commit") {
+    throw new GraphMemoryError(
+      "OWNER_COMMIT_REVIEW_REQUIRED",
+      "Controlled commit requires an owner approval receipt",
+      409
+    );
+  }
+  const evidenceHashes = detail.evidence
+    .map(item => item.content_hash)
+    .sort();
+  if (
+    reviewReceipt.candidate_payload_hash !== detail.candidate.payload_hash ||
+    reviewReceipt.resolution_receipt_id !==
+      detail.resolution.resolution_receipt_id ||
+    reviewReceipt.resolution_receipt_hash !== detail.resolution.receipt_hash ||
+    JSON.stringify(parseJson(reviewReceipt.evidence_hashes_json)) !==
+      JSON.stringify(evidenceHashes)
+  ) {
+    throw new GraphMemoryError(
+      "OWNER_COMMIT_RECEIPT_MISMATCH",
+      "Owner approval no longer matches the immutable candidate inputs",
+      409
+    );
+  }
+  const resolvedEntityIds = new Map();
+  for (const resolution of detail.resolution.resolutions) {
+    if (
+      resolution.outcome !== "new_entity" &&
+      resolution.outcome !== "exact_match"
+    ) {
+      throw new GraphMemoryError(
+        "OWNER_COMMIT_RESOLUTION_INVALID",
+        "Controlled commit requires unambiguous entity resolution",
+        409
+      );
+    }
+    if (resolution.outcome === "exact_match") {
+      if (!resolution.resolved_entity_id) {
+        throw new GraphMemoryError(
+          "OWNER_COMMIT_RESOLUTION_INVALID",
+          "Exact entity resolution is missing its canonical entity",
+          409
+        );
+      }
+      resolvedEntityIds.set(
+        resolution.normalized_label,
+        resolution.resolved_entity_id
+      );
+    }
+  }
+
+  return publishMemoryCandidate({
+    env,
+    principal: {
+      ...principal,
+      capabilities: [...new Set([
+        ...(principal.capabilities || []),
+        "memory.publish"
+      ])]
+    },
+    candidateId: detail.candidate.candidate_id,
+    resolvedEntityIds,
+    ownerCommit: {
+      commit_receipt_id: `owner_commit_${randomUUID()}`,
+      review_receipt_id: reviewReceipt.review_receipt_id,
+      resolution_receipt_id: detail.resolution.resolution_receipt_id,
+      review_receipt_hash: reviewReceipt.receipt_hash,
+      resolution_receipt_hash: detail.resolution.receipt_hash
+    },
+    now,
+    randomUUID
+  });
+}
+
 export async function decideReviewCandidate({
   env,
   principal,
@@ -529,6 +640,19 @@ function requireHumanReview(principal, target) {
   return normalized;
 }
 
+function requireOwnerCommit(principal, target) {
+  if (principal?.role !== "owner") {
+    throw new GraphMemoryError(
+      "OWNER_COMMIT_REQUIRED",
+      "Controlled commit requires the authenticated human owner",
+      403
+    );
+  }
+  const normalized = normalizeGraphTarget(target);
+  assertGraphAccess(principal, normalized, "memory.commit");
+  return normalized;
+}
+
 function normalizeReasonCode(value, required) {
   const normalized = String(value || "").trim().toUpperCase();
   if (!normalized && !required) return null;
@@ -565,6 +689,19 @@ function ownerReviewState(receipt) {
     review_receipt_id: receipt.review_receipt_id,
     decision: receipt.decision,
     ...(receipt.reason_code ? { reason_code: receipt.reason_code } : {})
+  };
+}
+
+function ownerCommitState(receipt) {
+  return {
+    candidate_id: receipt.candidate_id,
+    decision_id: receipt.publication_decision_id,
+    state: "accepted",
+    generation: Number(receipt.generation),
+    commit_receipt_id: receipt.commit_receipt_id,
+    review_receipt_id: receipt.review_receipt_id,
+    resolution_receipt_id: receipt.resolution_receipt_id,
+    pre_snapshot_hash: receipt.pre_snapshot_hash
   };
 }
 

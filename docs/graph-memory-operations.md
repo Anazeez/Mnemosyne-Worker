@@ -18,6 +18,7 @@ review and publication are fixed to off in deployment automation.
 | `GRAPH_MEMORY_VALIDATION_ENABLED` | Permit one-candidate validation after allowlisted GitHub owner authentication |
 | `GRAPH_MEMORY_RESOLUTION_ENABLED` | Permit one-candidate exact entity resolution after allowlisted GitHub owner authentication |
 | `GRAPH_MEMORY_OWNER_REVIEW_ENABLED` | Permit one resolved-candidate owner review receipt without publication |
+| `GRAPH_MEMORY_OWNER_COMMIT_ENABLED` | Permit owner-only canonical commit of an approved candidate |
 | `GRAPH_MEMORY_REVIEW_ENABLED` | Internal review gate; deployment keeps off |
 | `GRAPH_MEMORY_PUBLICATION_ENABLED` | Internal publication gate; deployment keeps off |
 | `GRAPH_MEMORY_MCP_ENABLED` | Serve OAuth-protected Streamable HTTP MCP |
@@ -94,6 +95,22 @@ an append-only review receipt and leaves the candidate `pending_review`.
 Rejection and quarantine use stable reason codes and move the candidate out of
 the review queue. This gate cannot publish; controlled commit remains a
 separate, disabled privilege.
+
+## Owner controlled commit
+
+With the separately approved owner commit gate enabled, open:
+
+```text
+https://memory.azzayezz.com/owner/memory/candidates/CANDIDATE_ID/commit?tenant_id=personal&project_id=PROJECT_ID
+```
+
+After a fresh GitHub owner authentication, the Worker displays the exact
+candidate, evidence, resolution receipt, and `approve_for_commit` review
+receipt. A second one-time CSRF-bound confirmation atomically writes the
+accepted entity and assertions, pre-commit rollback snapshot, projection
+outbox, publication decision, and append-only owner commit receipt. Replays
+return the original receipt. General review and publication rollout flags
+remain disabled.
 
 ## Owner identity and project grants
 

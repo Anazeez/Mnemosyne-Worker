@@ -78,6 +78,15 @@ const SQL = Object.freeze({
       covered_entity_ids_json, snapshot_json, snapshot_hash,
       created_by_credential_id, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  INSERT_OWNER_COMMIT: `
+    INSERT INTO memory_owner_commit_receipts (
+      commit_receipt_id, candidate_id, review_receipt_id,
+      resolution_receipt_id, snapshot_id, publication_decision_id,
+      tenant_id, project_id, generation, candidate_payload_hash,
+      review_receipt_hash, resolution_receipt_hash,
+      accepted_assertion_ids_json, pre_snapshot_hash, receipt_hash,
+      committed_by_credential_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   GET_DECISION: `
     SELECT * FROM memory_decisions
      WHERE decision_id = ? AND tenant_id = ?`,
@@ -368,6 +377,8 @@ export async function publishMemoryCandidate({
   candidateId,
   payloadOverride = null,
   editRecord = null,
+  resolvedEntityIds = null,
+  ownerCommit = null,
   now = () => new Date(),
   randomUUID = () => crypto.randomUUID()
 }) {
@@ -428,6 +439,7 @@ export async function publishMemoryCandidate({
       createdAt
     )
   ];
+  const acceptedAssertionIds = [];
   if (editRecord) {
     const editedPayloadJson = JSON.stringify(payload);
     statements.push(env.DB.prepare(SQL.INSERT_CANDIDATE_EDIT).bind(
@@ -444,12 +456,21 @@ export async function publishMemoryCandidate({
   }
 
   for (const [index, assertion] of payload.assertions.entries()) {
-    const entityId = normalizeEntityId(assertion.subject);
+    const entityId = resolvedEntityIds?.get(
+      normalizeEntityLabel(assertion.subject)
+    ) || normalizeEntityId(assertion.subject);
     const existingEntity = await env.DB.prepare(SQL.GET_ENTITY).bind(
       candidate.tenant_id,
       candidate.project_id,
       entityId
     ).first();
+    if (existingEntity && existingEntity.lifecycle_state !== "accepted") {
+      throw new GraphMemoryError(
+        "RESOLVED_ENTITY_NOT_ACCEPTED",
+        "Resolved entity is not an accepted canonical entity",
+        409
+      );
+    }
     if (!existingEntity) {
       statements.push(env.DB.prepare(SQL.INSERT_ENTITY).bind(
         entityId,
@@ -464,6 +485,7 @@ export async function publishMemoryCandidate({
     }
 
     const assertionId = `assertion_${randomUUID()}_${index}`;
+    acceptedAssertionIds.push(assertionId);
     statements.push(env.DB.prepare(SQL.INSERT_ASSERTION).bind(
       assertionId,
       candidate.tenant_id,
@@ -564,6 +586,51 @@ export async function publishMemoryCandidate({
     candidate.candidate_id,
     candidate.tenant_id
   ));
+  let ownerCommitResult = null;
+  if (ownerCommit) {
+    const commitReceipt = {
+      commit_receipt_id: ownerCommit.commit_receipt_id,
+      candidate_id: candidate.candidate_id,
+      review_receipt_id: ownerCommit.review_receipt_id,
+      resolution_receipt_id: ownerCommit.resolution_receipt_id,
+      snapshot_id: snapshotId,
+      publication_decision_id: publicationDecisionId,
+      tenant_id: candidate.tenant_id,
+      project_id: candidate.project_id,
+      generation,
+      candidate_payload_hash: candidate.payload_hash,
+      review_receipt_hash: ownerCommit.review_receipt_hash,
+      resolution_receipt_hash: ownerCommit.resolution_receipt_hash,
+      accepted_assertion_ids: acceptedAssertionIds,
+      pre_snapshot_hash: preSnapshotHash,
+      created_at: createdAt
+    };
+    const commitReceiptHash = await canonicalHash(commitReceipt);
+    statements.push(env.DB.prepare(SQL.INSERT_OWNER_COMMIT).bind(
+      commitReceipt.commit_receipt_id,
+      commitReceipt.candidate_id,
+      commitReceipt.review_receipt_id,
+      commitReceipt.resolution_receipt_id,
+      commitReceipt.snapshot_id,
+      commitReceipt.publication_decision_id,
+      commitReceipt.tenant_id,
+      commitReceipt.project_id,
+      commitReceipt.generation,
+      commitReceipt.candidate_payload_hash,
+      commitReceipt.review_receipt_hash,
+      commitReceipt.resolution_receipt_hash,
+      JSON.stringify(commitReceipt.accepted_assertion_ids),
+      commitReceipt.pre_snapshot_hash,
+      commitReceiptHash,
+      principal.credential_id,
+      createdAt
+    ));
+    ownerCommitResult = {
+      commit_receipt_id: commitReceipt.commit_receipt_id,
+      review_receipt_id: commitReceipt.review_receipt_id,
+      resolution_receipt_id: commitReceipt.resolution_receipt_id
+    };
+  }
   await env.DB.batch(statements);
 
   return {
@@ -571,7 +638,8 @@ export async function publishMemoryCandidate({
     decision_id: publicationDecisionId,
     state: "accepted",
     generation,
-    pre_snapshot_hash: preSnapshotHash
+    pre_snapshot_hash: preSnapshotHash,
+    ...(ownerCommitResult || {})
   };
 }
 

@@ -29,6 +29,10 @@ const ownerMemoryReviewMigration = new URL(
   "../../migrations/008_owner_memory_review_receipts.sql",
   import.meta.url
 );
+const ownerMemoryCommitMigration = new URL(
+  "../../migrations/009_owner_memory_commit_receipts.sql",
+  import.meta.url
+);
 
 export async function migratedGraphMemoryEnvironment(overrides = {}) {
   const database = new DatabaseSync(":memory:");
@@ -39,6 +43,7 @@ export async function migratedGraphMemoryEnvironment(overrides = {}) {
   database.exec(await readFile(humanReviewMigration, "utf8"));
   database.exec(await readFile(memoryResolutionMigration, "utf8"));
   database.exec(await readFile(ownerMemoryReviewMigration, "utf8"));
+  database.exec(await readFile(ownerMemoryCommitMigration, "utf8"));
   return {
     DB: new GraphMemoryD1(database),
     ...overrides

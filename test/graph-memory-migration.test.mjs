@@ -31,6 +31,10 @@ const ownerMemoryReviewMigration = new URL(
   "../migrations/008_owner_memory_review_receipts.sql",
   import.meta.url
 );
+const ownerMemoryCommitMigration = new URL(
+  "../migrations/009_owner_memory_commit_receipts.sql",
+  import.meta.url
+);
 const goldenFixture = new URL(
   "../migrations/fixtures/graph-memory-golden.jsonl",
   import.meta.url
@@ -46,6 +50,7 @@ async function migratedDatabase() {
   db.exec(await readFile(humanReviewMigration, "utf8"));
   db.exec(await readFile(memoryResolutionMigration, "utf8"));
   db.exec(await readFile(ownerMemoryReviewMigration, "utf8"));
+  db.exec(await readFile(ownerMemoryCommitMigration, "utf8"));
   return db;
 }
 
@@ -290,6 +295,16 @@ test("owner review migration creates append-only non-publication receipts", asyn
   assert.match(sql, /owner review receipts are immutable/);
   assert.match(sql, /owner review receipts are append-only/);
   assert.doesNotMatch(sql, /memory_assertions|memory_snapshots/);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+});
+
+test("owner commit migration creates append-only canonical commit receipts", async () => {
+  const sql = await readFile(ownerMemoryCommitMigration, "utf8").catch(() => "");
+
+  assert.match(sql, /CREATE TABLE memory_owner_commit_receipts/i);
+  assert.match(sql, /candidate_id TEXT NOT NULL UNIQUE/i);
+  assert.match(sql, /owner commit receipts are immutable/i);
+  assert.match(sql, /owner commit receipts are append-only/i);
   assert.doesNotMatch(sql, /DROP TABLE/);
 });
 
