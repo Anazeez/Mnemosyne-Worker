@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   bindingShapeSummary,
@@ -31,6 +32,9 @@ test("deployment config preserves every supported non-secret live binding", () =
     entrypoint: "/workspace/src/worker.js",
     continuityReadEnabled: true,
     oauthKvNamespaceId: "oauth-kv",
+    customDomain: "memory.azzayezz.com",
+    ownerGithubUserIds: "277895262",
+    memoryTenantId: "personal",
     graphMemoryFlags: {
       GRAPH_MEMORY_READ_ENABLED: true,
       GRAPH_MEMORY_MCP_ENABLED: true,
@@ -60,6 +64,12 @@ test("deployment config preserves every supported non-secret live binding", () =
     config.kv_namespaces.find(binding => binding.binding === "OAUTH_KV"),
     { binding: "OAUTH_KV", id: "oauth-kv" },
   );
+  assert.deepEqual(config.routes, [{
+    pattern: "memory.azzayezz.com",
+    custom_domain: true,
+  }]);
+  assert.equal(config.vars.AUTHORIZED_GITHUB_USER_IDS, "277895262");
+  assert.equal(config.vars.MEMORY_TENANT_ID, "personal");
   assert.deepEqual(
     Object.keys(config.vars).filter((name) =>
       name.startsWith("CONTINUITY_") && name !== "CONTINUITY_READ_ENABLED"
@@ -67,6 +77,15 @@ test("deployment config preserves every supported non-secret live binding", () =
     [],
   );
   assert.doesNotMatch(JSON.stringify(config), /TOKEN/);
+});
+
+test("custom domain is absent until explicitly supplied", () => {
+  const config = buildDeploymentConfig({ bindings: [] }, {
+    databaseId: "new-db",
+    migrationsDir: "/workspace/migrations",
+    entrypoint: "/workspace/src/worker.js",
+  });
+  assert.equal("routes" in config, false);
 });
 
 test("binding shape audit exposes keys but never values", () => {
@@ -87,4 +106,30 @@ test("binding audit emits aliases and types only", () => {
     { name: "KV_MATRIX", type: "kv_namespace" },
   ]);
   assert.doesNotMatch(JSON.stringify(summary), /private/);
+});
+
+test("production workflow requires private OAuth inputs before activation", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/production-deploy.yml", import.meta.url),
+    "utf8",
+  );
+  for (const name of [
+    "OAUTH_KV_NAMESPACE_ID",
+    "GITHUB_CLIENT_ID",
+    "GITHUB_CLIENT_SECRET",
+    "GRANT_RESOLVER_TOKEN",
+    "OPENAI_APPS_CHALLENGE",
+  ]) {
+    assert.match(workflow, new RegExp(`secrets\\.${name}`));
+  }
+  assert.match(workflow, /AUTHORIZED_GITHUB_USER_IDS: "277895262"/);
+  assert.match(workflow, /MEMORY_TENANT_ID: "personal"/);
+  assert.match(workflow, /memory\.azzayezz\.com/);
+  assert.match(workflow, /wrangler secret put "\$name"/);
+  assert.match(workflow, /put_secret GITHUB_CLIENT_ID/);
+  assert.match(workflow, /put_secret GITHUB_CLIENT_SECRET/);
+  assert.match(workflow, /put_secret GRANT_RESOLVER_TOKEN/);
+  assert.match(workflow, /put_secret OPENAI_APPS_CHALLENGE/);
+  assert.match(workflow, /GRAPH_MEMORY_REVIEW_ENABLED: "0"/);
+  assert.match(workflow, /GRAPH_MEMORY_PUBLICATION_ENABLED: "0"/);
 });

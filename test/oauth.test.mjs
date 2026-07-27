@@ -359,6 +359,48 @@ test("private grant administration requires the root key and writes receipts", a
   assert.equal(await env.DB.count("memory_authorization_receipts"), 1);
 });
 
+test("OpenAI Apps challenge returns only the configured token", async () => {
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const response = await handler.fetch(
+    new Request(
+      "https://memory.azzayezz.com/.well-known/openai-apps-challenge",
+    ),
+    {
+      OPENAI_APPS_CHALLENGE: "openai-domain-challenge-token",
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "openai-domain-challenge-token");
+  assert.match(
+    response.headers.get("content-type"),
+    /^text\/plain; charset=utf-8$/,
+  );
+  assert.equal(response.headers.get("cache-control"), "no-store");
+});
+
+test("OpenAI Apps challenge is absent when unconfigured and rejects writes", async () => {
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  const missing = await handler.fetch(
+    new Request(
+      "https://memory.azzayezz.com/.well-known/openai-apps-challenge",
+    ),
+    {},
+  );
+  assert.equal(missing.status, 404);
+  const write = await handler.fetch(
+    new Request(
+      "https://memory.azzayezz.com/.well-known/openai-apps-challenge",
+      { method: "POST" },
+    ),
+    { OPENAI_APPS_CHALLENGE: "openai-domain-challenge-token" },
+  );
+  assert.equal(write.status, 405);
+});
+
 test("an invalid Authorization header never falls back to X-Matrix-Key", async () => {
   const response = await worker.fetch(
     new Request("https://memory.example/api/ariadne/core/status", {

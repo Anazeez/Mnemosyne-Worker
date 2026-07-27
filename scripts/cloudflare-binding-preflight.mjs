@@ -81,6 +81,9 @@ export function buildDeploymentConfig(
     entrypoint,
     continuityReadEnabled = false,
     oauthKvNamespaceId,
+    customDomain,
+    ownerGithubUserIds,
+    memoryTenantId,
     graphMemoryFlags = {},
   },
 ) {
@@ -122,6 +125,26 @@ export function buildDeploymentConfig(
       id: oauthKvNamespaceId,
     });
   }
+  if (customDomain) {
+    const normalizedDomain = String(customDomain).trim().toLowerCase();
+    if (
+      !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
+        .test(normalizedDomain)
+    ) {
+      throw new Error("invalid_custom_domain");
+    }
+    config.routes = [{
+      pattern: normalizedDomain,
+      custom_domain: true,
+    }];
+  }
+  if (ownerGithubUserIds) {
+    config.vars.AUTHORIZED_GITHUB_USER_IDS =
+      String(ownerGithubUserIds).trim();
+  }
+  if (memoryTenantId) {
+    config.vars.MEMORY_TENANT_ID = String(memoryTenantId).trim();
+  }
   if (Object.keys(config.vars).length === 0) delete config.vars;
   return config;
 }
@@ -147,6 +170,9 @@ if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
       entrypoint: `${process.env.GITHUB_WORKSPACE}/src/worker.js`,
       continuityReadEnabled: true,
       oauthKvNamespaceId: process.env.OAUTH_KV_NAMESPACE_ID,
+      customDomain: process.env.MNEMOSYNE_CUSTOM_DOMAIN,
+      ownerGithubUserIds: process.env.AUTHORIZED_GITHUB_USER_IDS,
+      memoryTenantId: process.env.MEMORY_TENANT_ID,
       graphMemoryFlags: Object.fromEntries(
         GRAPH_MEMORY_DEPLOYMENT_FLAGS.map(flag => [flag, process.env[flag]]),
       ),

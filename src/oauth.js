@@ -170,6 +170,22 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
     async fetch(request, env, ctx) {
       const url = new URL(request.url);
       try {
+        if (url.pathname === "/.well-known/openai-apps-challenge") {
+          if (request.method !== "GET") {
+            return new Response("Method not allowed", {
+              status: 405,
+              headers: { Allow: "GET" },
+            });
+          }
+          const challenge = String(env.OPENAI_APPS_CHALLENGE || "");
+          if (!challenge) return new Response("Not found", { status: 404 });
+          return new Response(challenge, {
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store",
+            },
+          });
+        }
         if (
           url.pathname === "/internal/oauth/grants" &&
           request.method === "POST"
