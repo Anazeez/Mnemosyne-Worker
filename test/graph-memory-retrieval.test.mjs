@@ -262,6 +262,37 @@ test("rehydration rejects a context budget above the hard cap", async () => {
   );
 });
 
+test("rehydration reports a stable receipt-write failure without leaking D1 details", async () => {
+  const env = await migratedGraphMemoryEnvironment();
+  await seedAcceptedGraph(env);
+  const prepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = sql => {
+    const statement = prepare(sql);
+    if (!sql.includes("INSERT INTO memory_invocations")) return statement;
+    statement.run = async () => {
+      throw new Error("D1_ERROR: secret internal receipt failure");
+    };
+    return statement;
+  };
+
+  await assert.rejects(
+    rehydrateAcceptedMemory({
+      env,
+      principal: portal(),
+      body: {
+        tenant_id: "tenant-a",
+        project_id: "project.one",
+        query: "status",
+        invocation_id: "memory-invocation-write-failure"
+      }
+    }),
+    error => (
+      error.code === "REHYDRATE_RECEIPT_WRITE_FAILED" &&
+      !error.message.includes("secret internal receipt failure")
+    )
+  );
+});
+
 test("cross-tenant search fails before semantic retrieval", async () => {
   let embeddingCalls = 0;
   let vectorCalls = 0;

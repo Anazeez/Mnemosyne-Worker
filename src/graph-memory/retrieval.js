@@ -362,18 +362,34 @@ export async function rehydrateAcceptedMemory({
     assertion_ids: assertionIds,
     started_at: startedAt
   });
-  await env.DB.prepare(SQL.INSERT_INVOCATION).bind(
-    invocationId,
-    result.tenant_id,
-    result.project_id,
-    principal.assistant_id || principal.credential_id,
-    principal.credential_id,
-    result.accepted_generation,
-    JSON.stringify(assertionIds),
-    receiptHash,
-    startedAt,
-    startedAt
-  ).run();
+  try {
+    await env.DB.prepare(SQL.INSERT_INVOCATION).bind(
+      invocationId,
+      result.tenant_id,
+      result.project_id,
+      principal.assistant_id || principal.credential_id,
+      principal.credential_id,
+      result.accepted_generation,
+      JSON.stringify(assertionIds),
+      receiptHash,
+      startedAt,
+      startedAt
+    ).run();
+  } catch (error) {
+    const category = receiptWriteFailureCategory(error);
+    console.error(JSON.stringify({
+      event: "memory_rehydrate_receipt_write_failed",
+      category,
+      error_name: String(error?.name || "Error").slice(0, 80)
+    }));
+    throw new GraphMemoryError(
+      category === "other"
+        ? "REHYDRATE_RECEIPT_WRITE_FAILED"
+        : `REHYDRATE_RECEIPT_${category.toUpperCase()}`,
+      "The retrieval receipt could not be recorded",
+      503
+    );
+  }
 
   return {
     ...result,
@@ -381,6 +397,27 @@ export async function rehydrateAcceptedMemory({
     invocation_id: invocationId,
     retrieval_receipt_hash: receiptHash
   };
+}
+
+function receiptWriteFailureCategory(error) {
+  const message = String(error?.message || "").toLowerCase();
+  if (message.includes("unique") || message.includes("constraint")) {
+    return "conflict";
+  }
+  if (message.includes("no such table") || message.includes("no such column")) {
+    return "schema";
+  }
+  if (message.includes("readonly") || message.includes("not authorized")) {
+    return "access";
+  }
+  if (
+    message.includes("bind") ||
+    message.includes("parameter") ||
+    message.includes("argument")
+  ) {
+    return "binding";
+  }
+  return "other";
 }
 
 export function normalizeTraversalLimits(body = {}) {
