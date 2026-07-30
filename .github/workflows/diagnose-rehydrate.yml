@@ -1,0 +1,28 @@
+name: Diagnose rehydrate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      MNEMOSYNE_D1_DATABASE_ID: ${{ secrets.MNEMOSYNE_D1_DATABASE_ID }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Inspect invocation receipt schema
+        shell: bash
+        run: |
+          node --input-type=module -e 'import {writeFile} from "node:fs/promises"; const config={name:"mnemosyne-worker",compatibility_date:"2024-01-01",d1_databases:[{binding:"DB",database_name:"pulse-registry",database_id:process.env.MNEMOSYNE_D1_DATABASE_ID,migrations_dir:`${process.env.GITHUB_WORKSPACE}/migrations`}]}; await writeFile("/tmp/wrangler.d1.json",JSON.stringify(config));'
+          npx wrangler d1 execute DB --remote --config /tmp/wrangler.d1.json --command "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_invocations'; PRAGMA table_info(memory_invocations);"
