@@ -63,3 +63,13 @@ test("token estimation is deterministic compact-json byte accounting", () => {
     Buffer.byteLength(JSON.stringify(value), "utf8") / 4
   ));
 });
+
+test("token estimation works in a Worker runtime without Node Buffer", () => {
+  const nodeBuffer = globalThis.Buffer;
+  try {
+    globalThis.Buffer = undefined;
+    assert.equal(estimateTokens({ text: "Athar" }), 4);
+  } finally {
+    globalThis.Buffer = nodeBuffer;
+  }
+});

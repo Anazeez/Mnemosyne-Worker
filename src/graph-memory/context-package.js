@@ -3,7 +3,9 @@ export const MIN_CONTEXT_BUDGET_TOKENS = 256;
 export const MAX_CONTEXT_BUDGET_TOKENS = 2_000;
 
 export function estimateTokens(value) {
-  return Math.ceil(Buffer.byteLength(JSON.stringify(value), "utf8") / 4);
+  return Math.ceil(
+    new TextEncoder().encode(JSON.stringify(value)).byteLength / 4
+  );
 }
 
 export function buildContextPackage({
