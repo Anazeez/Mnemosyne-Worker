@@ -1,0 +1,21 @@
+{
+  "name": "mnemosyne-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:graph": "node --test test/graph-memory-*.test.mjs test/oauth.test.mjs test/mcp.test.mjs test/openapi-actions.test.mjs",
+    "evaluate:memory": "node scripts/evaluate-graph-memory-retrieval.mjs"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "0.8.2",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "wrangler": "4.114.0"
+  },
+  "overrides": {
+    "@hono/node-server": "2.0.12"
+  }
+}

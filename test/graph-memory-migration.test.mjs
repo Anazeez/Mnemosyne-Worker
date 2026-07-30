@@ -1,0 +1,334 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
+
+const continuityMigration = new URL(
+  "../migrations/002_contextual_continuity.sql",
+  import.meta.url
+);
+const graphMigration = new URL(
+  "../migrations/003_graph_memory.sql",
+  import.meta.url
+);
+const privateGrantMigration = new URL(
+  "../migrations/004_private_memory_grants.sql",
+  import.meta.url
+);
+const hybridRetrievalMigration = new URL(
+  "../migrations/005_hybrid_retrieval.sql",
+  import.meta.url
+);
+const humanReviewMigration = new URL(
+  "../migrations/006_human_review.sql",
+  import.meta.url
+);
+const memoryResolutionMigration = new URL(
+  "../migrations/007_memory_resolution_receipts.sql",
+  import.meta.url
+);
+const ownerMemoryReviewMigration = new URL(
+  "../migrations/008_owner_memory_review_receipts.sql",
+  import.meta.url
+);
+const ownerMemoryCommitMigration = new URL(
+  "../migrations/009_owner_memory_commit_receipts.sql",
+  import.meta.url
+);
+const goldenFixture = new URL(
+  "../migrations/fixtures/graph-memory-golden.jsonl",
+  import.meta.url
+);
+
+async function migratedDatabase() {
+  const db = new DatabaseSync(":memory:");
+  db.exec(await readFile(continuityMigration, "utf8"));
+  seedLegacyContinuity(db);
+  db.exec(await readFile(graphMigration, "utf8"));
+  db.exec(await readFile(privateGrantMigration, "utf8"));
+  db.exec(await readFile(hybridRetrievalMigration, "utf8"));
+  db.exec(await readFile(humanReviewMigration, "utf8"));
+  db.exec(await readFile(memoryResolutionMigration, "utf8"));
+  db.exec(await readFile(ownerMemoryReviewMigration, "utf8"));
+  db.exec(await readFile(ownerMemoryCommitMigration, "utf8"));
+  return db;
+}
+
+function seedLegacyContinuity(db) {
+  db.prepare(`
+    INSERT INTO context_runways (
+      runway_id, schema_version, identity_id, project_id, scope_key,
+      generation, state, context_status, summary, payload_json,
+      manifest_hash, source_hashes_json, integrity_state,
+      created_by_credential_id, idempotency_key, indexing_state,
+      created_at, published_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "legacy-runway", "mnemosyne.context-runway/1.0", "ariadne", "shared",
+    "project", 1, "published", "current", "legacy", "{}",
+    "a".repeat(64), "[]", "verified", "ariadne", "legacy-key",
+    "complete", "2026-07-15T00:00:00.000Z", "2026-07-15T00:00:00.000Z"
+  );
+  db.prepare(`
+    INSERT INTO context_runway_heads (
+      identity_id, project_id, scope_key, runway_id, generation,
+      manifest_hash, published_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "ariadne", "shared", "project", "legacy-runway", 1,
+    "a".repeat(64), "2026-07-15T00:00:00.000Z"
+  );
+}
+
+function insertRunway(db, tenantId, runwayId) {
+  db.prepare(`
+    INSERT INTO context_runways (
+      runway_id, tenant_id, schema_version, identity_id, project_id,
+      scope_key, generation, state, context_status, summary, payload_json,
+      manifest_hash, source_hashes_json, integrity_state,
+      created_by_credential_id, idempotency_key, indexing_state,
+      created_at, published_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    runwayId, tenantId, "mnemosyne.context-runway/1.0", "assistant", "shared",
+    "project", 1, "published", "current", tenantId, "{}",
+    tenantId.padEnd(64, "a").slice(0, 64), "[]", "verified",
+    `${tenantId}-credential`, `${tenantId}-key`, "complete",
+    "2026-07-27T00:00:00.000Z", "2026-07-27T00:00:00.000Z"
+  );
+  db.prepare(`
+    INSERT INTO context_runway_heads (
+      tenant_id, identity_id, project_id, scope_key, runway_id, generation,
+      manifest_hash, published_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    tenantId, "assistant", "shared", "project", runwayId, 1,
+    tenantId.padEnd(64, "a").slice(0, 64), "2026-07-27T00:00:00.000Z"
+  );
+}
+
+test("migration backfills every legacy continuity scope to personal", async () => {
+  const db = await migratedDatabase();
+  const runway = db.prepare(
+    "SELECT tenant_id FROM context_runways WHERE runway_id = ?"
+  ).get("legacy-runway");
+  const head = db.prepare(
+    "SELECT tenant_id FROM context_runway_heads WHERE runway_id = ?"
+  ).get("legacy-runway");
+
+  assert.equal(runway.tenant_id, "personal");
+  assert.equal(head.tenant_id, "personal");
+
+  for (const table of [
+    "context_runways",
+    "context_runway_heads",
+    "context_runway_records",
+    "context_runway_validations",
+    "context_retrieval_receipts",
+    "context_publication_attempts",
+    "context_runway_invalidations",
+    "context_invocations"
+  ]) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    assert.equal(
+      columns.some(column => column.name === "tenant_id"),
+      true,
+      `${table} must include tenant_id`
+    );
+  }
+});
+
+test("continuity heads with identical project scopes remain tenant isolated", async () => {
+  const db = await migratedDatabase();
+  insertRunway(db, "tenant-a", "tenant-a-runway");
+  insertRunway(db, "tenant-b", "tenant-b-runway");
+
+  const rows = db.prepare(`
+    SELECT tenant_id, runway_id
+      FROM context_runway_heads
+     WHERE identity_id = 'assistant'
+       AND project_id = 'shared'
+       AND scope_key = 'project'
+     ORDER BY tenant_id
+  `).all().map(row => ({ ...row }));
+
+  assert.deepEqual(rows, [
+    { tenant_id: "tenant-a", runway_id: "tenant-a-runway" },
+    { tenant_id: "tenant-b", runway_id: "tenant-b-runway" }
+  ]);
+});
+
+test("candidate idempotency is tenant credential key and payload bound", async () => {
+  const db = await migratedDatabase();
+  const insert = db.prepare(`
+    INSERT INTO memory_candidates (
+      candidate_id, tenant_id, project_id, submitted_by_credential_id,
+      idempotency_key, payload_json, payload_hash, confidence, state,
+      submitted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insert.run(
+    "candidate-a", "tenant-a", "shared", "portal-a", "proposal-001",
+    "{}", "a".repeat(64), 0.9, "pending_validation",
+    "2026-07-27T00:00:00.000Z"
+  );
+
+  assert.throws(
+    () => insert.run(
+      "candidate-b", "tenant-a", "shared", "portal-a", "proposal-001",
+      "{}", "b".repeat(64), 0.9, "pending_validation",
+      "2026-07-27T00:00:01.000Z"
+    ),
+    /UNIQUE constraint failed/
+  );
+});
+
+test("accepted assertions require linked evidence and decision", async () => {
+  const db = await migratedDatabase();
+  db.prepare(`
+    INSERT INTO memory_entities (
+      entity_id, tenant_id, project_id, ontology_type, lifecycle_state,
+      canonical_label, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "entity-a", "tenant-a", "shared", "project", "candidate", "Entity A",
+    "2026-07-27T00:00:00.000Z", "2026-07-27T00:00:00.000Z"
+  );
+  db.prepare(`
+    INSERT INTO memory_assertions (
+      assertion_id, tenant_id, project_id, subject_entity_id, predicate,
+      object_json, confidence, lifecycle_state, valid_from, observed_at,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "assertion-a", "tenant-a", "shared", "entity-a", "status", "\"active\"",
+    0.95, "candidate", "2026-07-27T00:00:00.000Z",
+    "2026-07-27T00:00:00.000Z", "2026-07-27T00:00:00.000Z"
+  );
+
+  assert.throws(
+    () => db.prepare(`
+      UPDATE memory_assertions
+         SET lifecycle_state = 'accepted'
+       WHERE assertion_id = 'assertion-a'
+    `).run(),
+    /accepted assertion requires evidence and decision/
+  );
+});
+
+test("private grant migration is forward-only and receipt-backed", async () => {
+  const sql = await readFile(privateGrantMigration, "utf8");
+  assert.match(sql, /CREATE TABLE memory_access_grants/);
+  assert.match(sql, /owner_github_id INTEGER NOT NULL/);
+  assert.match(sql, /assistant_id TEXT NOT NULL/);
+  assert.match(sql, /project_id TEXT NOT NULL/);
+  assert.match(sql, /capabilities_json TEXT NOT NULL/);
+  assert.match(sql, /expires_at TEXT/);
+  assert.match(sql, /CHECK \(status IN \('active', 'revoked'\)\)/);
+  assert.match(sql, /CREATE TABLE memory_authorization_receipts/);
+  assert.match(sql, /authorization receipt is immutable/);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+
+  const db = await migratedDatabase();
+  for (const table of [
+    "memory_access_grants",
+    "memory_authorization_receipts"
+  ]) {
+    assert.equal(
+      db.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+      ).get(table)?.["1"],
+      1
+    );
+  }
+});
+
+test("hybrid retrieval migration creates rebuildable search projections", async () => {
+  const db = await migratedDatabase();
+  const searchTable = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_assertion_search'
+  `).get();
+  const outboxTable = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_projection_outbox'
+  `).get();
+
+  assert.match(searchTable.sql, /VIRTUAL TABLE memory_assertion_search USING fts5/i);
+  assert.match(outboxTable.sql, /CREATE TABLE memory_projection_outbox/i);
+});
+
+test("human review migration records immutable edits and idempotent actions", async () => {
+  const db = await migratedDatabase();
+  for (const table of ["memory_candidate_edits", "memory_review_actions"]) {
+    const row = db.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?
+    `).get(table);
+    assert.match(row.sql, new RegExp(`CREATE TABLE ${table}`, "i"));
+  }
+});
+
+test("resolution migration creates append-only candidate receipts", async () => {
+  const sql = await readFile(memoryResolutionMigration, "utf8");
+  const db = await migratedDatabase();
+  const table = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_resolution_receipts'
+  `).get();
+
+  assert.match(table.sql, /candidate_id TEXT NOT NULL UNIQUE/i);
+  assert.match(sql, /memory resolution receipts are immutable/);
+  assert.match(sql, /memory resolution receipts are append-only/);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+});
+
+test("owner review migration creates append-only non-publication receipts", async () => {
+  const sql = await readFile(ownerMemoryReviewMigration, "utf8");
+  const db = await migratedDatabase();
+  const table = db.prepare(`
+    SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'memory_owner_review_receipts'
+  `).get();
+
+  assert.match(table.sql, /approve_for_commit/);
+  assert.match(table.sql, /candidate_id TEXT NOT NULL UNIQUE/i);
+  assert.match(sql, /owner review receipts are immutable/);
+  assert.match(sql, /owner review receipts are append-only/);
+  assert.doesNotMatch(sql, /memory_assertions|memory_snapshots/);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+});
+
+test("owner commit migration creates append-only canonical commit receipts", async () => {
+  const sql = await readFile(ownerMemoryCommitMigration, "utf8").catch(() => "");
+
+  assert.match(sql, /CREATE TABLE memory_owner_commit_receipts/i);
+  assert.match(sql, /candidate_id TEXT NOT NULL UNIQUE/i);
+  assert.match(sql, /owner commit receipts are immutable/i);
+  assert.match(sql, /owner commit receipts are append-only/i);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+});
+
+test("golden pilot fixture is representative and bounded", async () => {
+  const rows = (await readFile(goldenFixture, "utf8"))
+    .trim()
+    .split("\n")
+    .map(line => JSON.parse(line));
+  const kinds = new Set(rows.map(row => row.kind));
+
+  assert.equal(rows.length >= 10 && rows.length <= 50, true);
+  for (const kind of [
+    "entity",
+    "relation",
+    "assertion",
+    "candidate",
+    "quarantine"
+  ]) {
+    assert.equal(kinds.has(kind), true, `missing fixture kind: ${kind}`);
+  }
+  assert.equal(new Set(rows.map(row => row.tenant_id)).size >= 2, true);
+  assert.equal(rows.some(row => row.temporal_conflict === true), true);
+  assert.equal(
+    rows.some(row => row.reason_code === "UNTRUSTED_INSTRUCTION_CONTENT"),
+    true
+  );
+});

@@ -1,5 +1,18 @@
 import { readFile, writeFile } from "node:fs/promises";
 
+export const GRAPH_MEMORY_DEPLOYMENT_FLAGS = Object.freeze([
+  "GRAPH_MEMORY_READ_ENABLED",
+  "GRAPH_MEMORY_PROPOSE_ENABLED",
+  "GRAPH_MEMORY_VALIDATION_ENABLED",
+  "GRAPH_MEMORY_RESOLUTION_ENABLED",
+  "GRAPH_MEMORY_OWNER_REVIEW_ENABLED",
+  "GRAPH_MEMORY_OWNER_COMMIT_ENABLED",
+  "GRAPH_MEMORY_REVIEW_ENABLED",
+  "GRAPH_MEMORY_PUBLICATION_ENABLED",
+  "GRAPH_MEMORY_MCP_ENABLED",
+  "GRAPH_MEMORY_ACTIONS_ENABLED",
+]);
+
 export function findVersionId(value) {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -66,7 +79,17 @@ export function collectBindings(value) {
 
 export function buildDeploymentConfig(
   value,
-  { databaseId, migrationsDir, entrypoint, continuityReadEnabled = false },
+  {
+    databaseId,
+    migrationsDir,
+    entrypoint,
+    continuityReadEnabled = false,
+    oauthKvNamespaceId,
+    customDomain,
+    ownerGithubUserIds,
+    memoryTenantId,
+    graphMemoryFlags = {},
+  },
 ) {
   const config = {
     name: "mnemosyne-worker",
@@ -94,8 +117,46 @@ export function buildDeploymentConfig(
   if (continuityReadEnabled) {
     config.vars.CONTINUITY_READ_ENABLED = "1";
   }
+  for (const flag of GRAPH_MEMORY_DEPLOYMENT_FLAGS) {
+    config.vars[flag] = enabled(graphMemoryFlags[flag]) ? "1" : "0";
+  }
+  const hasOAuthKv = config.kv_namespaces?.some(
+    binding => binding.binding === "OAUTH_KV",
+  );
+  if (!hasOAuthKv && oauthKvNamespaceId) {
+    (config.kv_namespaces ??= []).push({
+      binding: "OAUTH_KV",
+      id: oauthKvNamespaceId,
+    });
+  }
+  if (customDomain) {
+    const normalizedDomain = String(customDomain).trim().toLowerCase();
+    if (
+      !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
+        .test(normalizedDomain)
+    ) {
+      throw new Error("invalid_custom_domain");
+    }
+    config.routes = [{
+      pattern: normalizedDomain,
+      custom_domain: true,
+    }];
+  }
+  if (ownerGithubUserIds) {
+    config.vars.AUTHORIZED_GITHUB_USER_IDS =
+      String(ownerGithubUserIds).trim();
+  }
+  if (memoryTenantId) {
+    config.vars.MEMORY_TENANT_ID = String(memoryTenantId).trim();
+  }
   if (Object.keys(config.vars).length === 0) delete config.vars;
   return config;
+}
+
+function enabled(value) {
+  return ["1", "true", "yes", "on"].includes(
+    String(value ?? "").trim().toLowerCase(),
+  );
 }
 
 if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
@@ -110,8 +171,15 @@ if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
     const config = buildDeploymentConfig(version, {
       databaseId: process.env.MNEMOSYNE_D1_DATABASE_ID,
       migrationsDir: `${process.env.GITHUB_WORKSPACE}/migrations`,
-      entrypoint: `${process.env.GITHUB_WORKSPACE}/src/index.js`,
+      entrypoint: `${process.env.GITHUB_WORKSPACE}/src/worker.js`,
       continuityReadEnabled: true,
+      oauthKvNamespaceId: process.env.OAUTH_KV_NAMESPACE_ID,
+      customDomain: process.env.MNEMOSYNE_CUSTOM_DOMAIN,
+      ownerGithubUserIds: process.env.AUTHORIZED_GITHUB_USER_IDS,
+      memoryTenantId: process.env.MEMORY_TENANT_ID,
+      graphMemoryFlags: Object.fromEntries(
+        GRAPH_MEMORY_DEPLOYMENT_FLAGS.map(flag => [flag, process.env[flag]]),
+      ),
     });
     await writeFile(process.argv[4], JSON.stringify(config));
   } else {

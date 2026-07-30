@@ -637,7 +637,7 @@ export async function requireInvocationContinuity({
   }
 
   const receipt = await env.DB.prepare(SQL.GET_RETRIEVAL_RECEIPT)
-    .bind(receiptId)
+    .bind(principal.tenant_id, receiptId)
     .first();
   if (!receipt) {
     throw new ContinuityError(
@@ -758,7 +758,7 @@ export async function createCandidateCheckpoint({
   const idempotencyKey = normalizeIdempotencyKey(body.idempotency_key);
   const existing = await env.DB
     .prepare(SQL.GET_IDEMPOTENT)
-    .bind(principal.credential_id, idempotencyKey)
+    .bind(principal.tenant_id, principal.credential_id, idempotencyKey)
     .first();
 
   if (existing) {
@@ -788,7 +788,7 @@ export async function createCandidateCheckpoint({
 
   const currentHead = await env.DB
     .prepare(SQL.GET_HEAD)
-    .bind(identityId, projectId, scopeKey)
+    .bind(principal.tenant_id, identityId, projectId, scopeKey)
     .first();
   const expectedPredecessor = currentHead?.runway_id || null;
   const requestedPredecessor = normalizeNullableId(
@@ -859,6 +859,7 @@ export async function createCandidateCheckpoint({
 
   await env.DB.prepare(SQL.INSERT_RUNWAY).bind(
     runwayId,
+    principal.tenant_id,
     RUNWAY_SCHEMA,
     identityId,
     projectId,
@@ -924,8 +925,8 @@ export async function validateCandidateCheckpoint({
   const normalizedRunwayId = normalizeNullableId(runwayId, "runway_id", {
     required: true
   });
-  const row = await env.DB.prepare(SQL.GET_RUNWAY)
-    .bind(normalizedRunwayId)
+  const row = await env.DB.prepare(SQL.GET_RUNWAY_FOR_TENANT)
+    .bind(principal.tenant_id, normalizedRunwayId)
     .first();
 
   if (!row) {
@@ -959,8 +960,8 @@ export async function validateCandidateCheckpoint({
   }
 
   if (row.predecessor_runway_id) {
-    const predecessor = await env.DB.prepare(SQL.GET_RUNWAY)
-      .bind(row.predecessor_runway_id)
+    const predecessor = await env.DB.prepare(SQL.GET_RUNWAY_FOR_TENANT)
+      .bind(principal.tenant_id, row.predecessor_runway_id)
       .first();
 
     if (!predecessor) {
@@ -1013,6 +1014,7 @@ export async function validateCandidateCheckpoint({
   await env.DB.batch([
     env.DB.prepare(SQL.INSERT_VALIDATION).bind(
       validationId,
+      principal.tenant_id,
       row.runway_id,
       principal.credential_id,
       status,
@@ -1027,6 +1029,7 @@ export async function validateCandidateCheckpoint({
       status === "passed" ? "verified" : status,
       validation.completeness_score,
       createdAt,
+      principal.tenant_id,
       row.runway_id
     )
   ]);
@@ -1047,6 +1050,7 @@ export async function validateCandidateCheckpoint({
 export async function resolveLatestRunway({
   env,
   principal,
+  tenantId = principal?.tenant_id,
   identityId,
   projectId,
   scopeKey,
@@ -1066,6 +1070,7 @@ export async function resolveLatestRunway({
   }
 
   const identity = normalizeIdentityId(identityId);
+  const tenant = normalizeIdentityId(tenantId);
   const project = normalizeProjectId(projectId);
   const scope = normalizeScopeKey(scopeKey);
   assertContinuityTarget(principal, {
@@ -1078,6 +1083,7 @@ export async function resolveLatestRunway({
   let selected = null;
   let resolution = "exact";
   let expectedTuple = {
+    tenant_id: tenant,
     identity_id: identity,
     project_id: project,
     scope_key: scope
@@ -1116,6 +1122,7 @@ export async function resolveLatestRunway({
 
     if (scope !== "default") {
       expectedTuple = {
+        tenant_id: tenant,
         identity_id: identity,
         project_id: project,
         scope_key: "default"
@@ -1160,7 +1167,7 @@ export async function resolveLatestRunway({
 
     if (!selected) {
       const genesis = await env.DB.prepare(SQL.GET_GENESIS)
-        .bind(identity, project)
+        .bind(tenant, identity, project)
         .first();
 
       if (genesis) {
@@ -1168,6 +1175,7 @@ export async function resolveLatestRunway({
         const genesisResult = await verifyStoredRunway({
           row: genesis,
           expectedTuple: {
+            tenant_id: tenant,
             identity_id: identity,
             project_id: project,
             scope_key: genesis.scope_key
@@ -1203,6 +1211,7 @@ export async function resolveLatestRunway({
     if (!selected) {
       if (continuityFlagEnabled(env, "CONTINUITY_GLOBAL_FALLBACK_ENABLED")) {
         const globalTuple = {
+          tenant_id: tenant,
           identity_id: identity,
           project_id: "global",
           scope_key: "default"
@@ -1248,7 +1257,7 @@ export async function resolveLatestRunway({
 
     if (!selected) {
       const backfilled = await env.DB.prepare(SQL.GET_BACKFILLED)
-        .bind(identity, project, scope)
+        .bind(tenant, identity, project, scope)
         .first();
 
       if (backfilled) {
@@ -1256,6 +1265,7 @@ export async function resolveLatestRunway({
         const backfillResult = await verifyStoredRunway({
           row: backfilled,
           expectedTuple: {
+            tenant_id: tenant,
             identity_id: identity,
             project_id: project,
             scope_key: scope
@@ -1294,6 +1304,7 @@ export async function resolveLatestRunway({
     return persistResolution({
       env,
       principal,
+      tenant,
       identity,
       project,
       scope,
@@ -1324,6 +1335,7 @@ export async function resolveLatestRunway({
   return persistResolution({
     env,
     principal,
+    tenant,
     identity,
     project,
     scope,
@@ -1357,8 +1369,8 @@ export async function publishCheckpoint({
   const normalizedRunwayId = normalizeNullableId(runwayId, "runway_id", {
     required: true
   });
-  const row = await env.DB.prepare(SQL.GET_RUNWAY)
-    .bind(normalizedRunwayId)
+  const row = await env.DB.prepare(SQL.GET_RUNWAY_FOR_TENANT)
+    .bind(principal.tenant_id, normalizedRunwayId)
     .first();
 
   if (!row) {
@@ -1384,7 +1396,7 @@ export async function publishCheckpoint({
   }
 
   const validation = await env.DB.prepare(SQL.GET_LATEST_VALIDATION)
-    .bind(row.runway_id)
+    .bind(principal.tenant_id, row.runway_id)
     .first();
 
   if (!validation || validation.status !== "passed" || row.state !== "validated") {
@@ -1420,6 +1432,7 @@ export async function publishCheckpoint({
 
   await env.DB.prepare(SQL.INSERT_PUBLICATION_ATTEMPT).bind(
     attemptId,
+    principal.tenant_id,
     row.runway_id,
     expectedGeneration,
     observedGeneration,
@@ -1436,6 +1449,7 @@ export async function publishCheckpoint({
     const sealed = await env.DB.prepare(SQL.SEAL_RUNWAY).bind(
       startedAt,
       indexingRequired ? "pending" : "not_required",
+      principal.tenant_id,
       row.runway_id
     ).run();
 
@@ -1452,19 +1466,20 @@ export async function publishCheckpoint({
     if (artifactRequired) {
       const artifactRef = await persistPortableArtifact({ env, row, payload });
       await env.DB.prepare(SQL.SET_ARTIFACT_REF)
-        .bind(artifactRef, row.runway_id)
+        .bind(artifactRef, principal.tenant_id, row.runway_id)
         .run();
     }
 
     if (indexingRequired) {
       await indexRunwaySummary({ env, row, payload });
       await env.DB.prepare(SQL.SET_INDEXING_STATE)
-        .bind("complete", "sealed", row.runway_id)
+        .bind("complete", "sealed", principal.tenant_id, row.runway_id)
         .run();
     }
 
     const publishedAt = now().toISOString();
     const published = await env.DB.prepare(SQL.PUBLISH_HEAD_CAS).bind(
+      principal.tenant_id,
       row.identity_id,
       row.project_id,
       row.scope_key,
@@ -1486,6 +1501,7 @@ export async function publishCheckpoint({
 
     await updatePublicationAttempt(env.DB, {
       attemptId,
+      tenantId: principal.tenant_id,
       status: "succeeded",
       errorCode: null,
       errorMessage: null,
@@ -1512,10 +1528,11 @@ export async function publishCheckpoint({
 
     try {
       await env.DB.prepare(SQL.SET_PUBLICATION_FAILED)
-        .bind(indexingState, row.runway_id)
+        .bind(indexingState, principal.tenant_id, row.runway_id)
         .run();
       await updatePublicationAttempt(env.DB, {
         attemptId,
+        tenantId: principal.tenant_id,
         status: attemptStatus,
         errorCode: continuityError.code,
         errorMessage: "Publication stage failed",
@@ -1559,8 +1576,8 @@ export async function invalidateCheckpoint({
     );
   }
 
-  const row = await env.DB.prepare(SQL.GET_RUNWAY)
-    .bind(normalizedRunwayId)
+  const row = await env.DB.prepare(SQL.GET_RUNWAY_FOR_TENANT)
+    .bind(principal.tenant_id, normalizedRunwayId)
     .first();
   if (!row) {
     throw new ContinuityError("runway_not_found", "Checkpoint does not exist", 404);
@@ -1608,9 +1625,15 @@ export async function invalidateCheckpoint({
   const receiptHash = await sha256Hex(canonicalJson(receiptBody));
 
   await env.DB.batch([
-    env.DB.prepare(SQL.INVALIDATE_RUNWAY).bind(createdAt, reason, row.runway_id),
+    env.DB.prepare(SQL.INVALIDATE_RUNWAY).bind(
+      createdAt,
+      reason,
+      principal.tenant_id,
+      row.runway_id
+    ),
     env.DB.prepare(SQL.INSERT_INVALIDATION).bind(
       invalidationId,
+      principal.tenant_id,
       row.runway_id,
       principal.credential_id,
       reason,
@@ -1782,6 +1805,7 @@ function changedRows(result) {
 
 async function updatePublicationAttempt(db, {
   attemptId,
+  tenantId,
   status,
   errorCode,
   errorMessage,
@@ -1792,18 +1816,26 @@ async function updatePublicationAttempt(db, {
     errorCode,
     errorMessage,
     completedAt,
+    tenantId,
     attemptId
   ).run();
 }
 
 async function getHead(db, tuple) {
   return db.prepare(SQL.GET_HEAD)
-    .bind(tuple.identity_id, tuple.project_id, tuple.scope_key)
+    .bind(
+      tuple.tenant_id,
+      tuple.identity_id,
+      tuple.project_id,
+      tuple.scope_key
+    )
     .first();
 }
 
 async function verifyHeadTarget({ db, head, expectedTuple, ...options }) {
-  const row = await db.prepare(SQL.GET_RUNWAY).bind(head.runway_id).first();
+  const row = await db.prepare(SQL.GET_RUNWAY_FOR_TENANT)
+    .bind(expectedTuple.tenant_id, head.runway_id)
+    .first();
 
   if (!row) {
     return { ok: false, reason: "Runway head references a missing checkpoint" };
@@ -1835,6 +1867,7 @@ async function verifyStoredRunway({
   }
 
   if (
+    row.tenant_id !== expectedTuple.tenant_id ||
     row.identity_id !== expectedTuple.identity_id ||
     row.project_id !== expectedTuple.project_id ||
     row.scope_key !== expectedTuple.scope_key
@@ -1882,6 +1915,7 @@ async function verifyStoredRunway({
       runway_id: row.runway_id,
       generation: Number(row.generation),
       manifest_hash: row.manifest_hash,
+      tenant_id: row.tenant_id,
       identity_id: row.identity_id,
       project_id: row.project_id,
       scope_key: row.scope_key,
@@ -1906,6 +1940,7 @@ function quarantinedContext(row, reason) {
 async function persistResolution({
   env,
   principal,
+  tenant = principal?.tenant_id,
   identity,
   project,
   scope,
@@ -1920,6 +1955,7 @@ async function persistResolution({
   const receiptId = `receipt_${randomUUID()}`;
   const receiptBody = {
     receipt_id: receiptId,
+    tenant_id: tenant,
     requesting_credential_id: principal.credential_id,
     identity_id: identity,
     project_id: project,
@@ -1939,6 +1975,7 @@ async function persistResolution({
 
   await env.DB.prepare(SQL.INSERT_RETRIEVAL_RECEIPT).bind(
     receiptId,
+    tenant,
     principal.credential_id,
     identity,
     project,
@@ -2011,6 +2048,7 @@ export async function rehydrateContext({
 
   await env.DB.prepare(SQL.INSERT_INVOCATION).bind(
     invocationId,
+    principal.tenant_id,
     identityId,
     projectId,
     scopeKey,
@@ -2042,7 +2080,7 @@ export async function rehydrateContext({
 
   if (resolution.context.runway_id && resolution.context.payload) {
     const records = await env.DB.prepare(SQL.LIST_RUNWAY_RECORDS)
-      .bind(resolution.context.runway_id)
+      .bind(principal.tenant_id, resolution.context.runway_id)
       .all();
 
     for (const record of records.results || []) {
@@ -2125,12 +2163,14 @@ export async function rehydrateContext({
     canonicalJson(requestedDomains),
     canonicalJson(permitted),
     receiptHash,
+    principal.tenant_id,
     resolution.retrieval_receipt_id
   ).run();
 
   await env.DB.prepare(SQL.SET_INVOCATION_REHYDRATED).bind(
     resolution.context.runway_id,
     resolution.retrieval_receipt_id,
+    principal.tenant_id,
     invocationId
   ).run();
 
@@ -2234,7 +2274,7 @@ export async function completeContinuityInvocation({
     { required: true }
   );
   const invocation = await env.DB.prepare(SQL.GET_INVOCATION)
-    .bind(normalizedInvocationId)
+    .bind(principal.tenant_id, normalizedInvocationId)
     .first();
   if (!invocation) {
     throw new ContinuityError("invocation_not_found", "Invocation does not exist", 404);
@@ -2294,6 +2334,7 @@ export async function completeContinuityInvocation({
     state,
     outcome,
     completedAt,
+    principal.tenant_id,
     normalizedInvocationId,
     invocation.credential_id
   ).run();
@@ -2351,8 +2392,12 @@ export async function processContinuityQueueMessage({
 
 export async function runScheduledContinuityVerification({ env, principal }) {
   requireContinuityDatabase(env);
-  const heads = await env.DB.prepare(SQL.LIST_HEADS).all();
-  const health = await env.DB.prepare(SQL.LIST_CONTINUITY_HEALTH).all();
+  const heads = await env.DB.prepare(SQL.LIST_HEADS)
+    .bind(principal.tenant_id)
+    .all();
+  const health = await env.DB.prepare(SQL.LIST_CONTINUITY_HEALTH)
+    .bind(principal.tenant_id)
+    .all();
   let verified = 0;
   let failed = 0;
 
@@ -2399,7 +2444,7 @@ export async function getContinuityHistory({
     operation: "audit"
   });
   const rows = await env.DB.prepare(SQL.LIST_HISTORY)
-    .bind(identity, project, scope)
+    .bind(principal.tenant_id, identity, project, scope)
     .all();
 
   return {
@@ -2413,10 +2458,14 @@ export async function getContinuityHistory({
 export async function getCheckpointAudit({ env, principal, runwayId }) {
   const row = await requireAuditableRunway(env, principal, runwayId);
   const [records, validations, attempts, invalidations] = await Promise.all([
-    env.DB.prepare(SQL.LIST_RUNWAY_RECORDS).bind(row.runway_id).all(),
-    env.DB.prepare(SQL.LIST_VALIDATIONS).bind(row.runway_id).all(),
-    env.DB.prepare(SQL.LIST_PUBLICATION_ATTEMPTS).bind(row.runway_id).all(),
-    env.DB.prepare(SQL.LIST_INVALIDATIONS).bind(row.runway_id).all()
+    env.DB.prepare(SQL.LIST_RUNWAY_RECORDS)
+      .bind(principal.tenant_id, row.runway_id).all(),
+    env.DB.prepare(SQL.LIST_VALIDATIONS)
+      .bind(principal.tenant_id, row.runway_id).all(),
+    env.DB.prepare(SQL.LIST_PUBLICATION_ATTEMPTS)
+      .bind(principal.tenant_id, row.runway_id).all(),
+    env.DB.prepare(SQL.LIST_INVALIDATIONS)
+      .bind(principal.tenant_id, row.runway_id).all()
   ]);
 
   return {
@@ -2432,7 +2481,7 @@ export async function getCheckpointAudit({ env, principal, runwayId }) {
 export async function getValidationAudit({ env, principal, runwayId }) {
   const row = await requireAuditableRunway(env, principal, runwayId);
   const validations = await env.DB.prepare(SQL.LIST_VALIDATIONS)
-    .bind(row.runway_id)
+    .bind(principal.tenant_id, row.runway_id)
     .all();
 
   return {
@@ -2451,7 +2500,7 @@ export async function getRetrievalReceiptAudit({
     required: true
   });
   const row = await env.DB.prepare(SQL.GET_RETRIEVAL_RECEIPT)
-    .bind(normalizedReceiptId)
+    .bind(principal.tenant_id, normalizedReceiptId)
     .first();
 
   if (!row) {
@@ -2492,7 +2541,9 @@ async function requireAuditableRunway(env, principal, runwayId) {
   const normalizedRunwayId = normalizeNullableId(runwayId, "runway_id", {
     required: true
   });
-  const row = await env.DB.prepare(SQL.GET_RUNWAY).bind(normalizedRunwayId).first();
+  const row = await env.DB.prepare(SQL.GET_RUNWAY_FOR_TENANT)
+    .bind(principal.tenant_id, normalizedRunwayId)
+    .first();
   if (!row) {
     throw new ContinuityError("runway_not_found", "Checkpoint does not exist", 404);
   }
@@ -2629,139 +2680,146 @@ function parseStoredJson(value, field) {
 const SQL = Object.freeze({
   GET_HEAD: `/* continuity:get-head */
     SELECT * FROM context_runway_heads
-     WHERE identity_id = ? AND project_id = ? AND scope_key = ?`,
-  GET_RUNWAY: `/* continuity:get-runway */
-    SELECT * FROM context_runways WHERE runway_id = ?`,
+     WHERE tenant_id = ? AND identity_id = ? AND project_id = ? AND scope_key = ?`,
+  GET_RUNWAY_FOR_TENANT: `/* continuity:get-runway-for-tenant */
+    SELECT * FROM context_runways WHERE tenant_id = ? AND runway_id = ?`,
   GET_IDEMPOTENT: `/* continuity:get-idempotent */
     SELECT * FROM context_runways
-     WHERE created_by_credential_id = ? AND idempotency_key = ?`,
+     WHERE tenant_id = ? AND created_by_credential_id = ? AND idempotency_key = ?`,
   INSERT_RUNWAY: `/* continuity:insert-runway */
     INSERT INTO context_runways (
-      runway_id, schema_version, identity_id, project_id, scope_key,
+      runway_id, tenant_id, schema_version, identity_id, project_id, scope_key,
       predecessor_runway_id, source_invocation_id, generation, state,
       context_status, objective, summary, payload_json, manifest_hash,
       source_hashes_json, integrity_state, completeness_score,
       created_by_credential_id, idempotency_key, portable_artifact_ref,
       indexing_state, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   INSERT_VALIDATION: `/* continuity:insert-validation */
     INSERT INTO context_runway_validations (
-      validation_id, runway_id, validator_credential_id, status,
+      validation_id, tenant_id, runway_id, validator_credential_id, status,
       errors_json, warnings_json, completeness_score, receipt_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   SET_RUNWAY_VALIDATION_STATE: `/* continuity:set-runway-validation-state */
     UPDATE context_runways
        SET state = ?, integrity_state = ?, completeness_score = ?, validated_at = ?
-     WHERE runway_id = ?`,
+     WHERE tenant_id = ? AND runway_id = ?`,
   GET_GENESIS: `/* continuity:get-genesis */
     SELECT * FROM context_runways
-     WHERE identity_id = ? AND project_id = ? AND generation = 1
+     WHERE tenant_id = ? AND identity_id = ? AND project_id = ? AND generation = 1
        AND state IN ('published', 'superseded')
      ORDER BY created_at DESC LIMIT 1`,
   GET_BACKFILLED: `/* continuity:get-backfilled */
     SELECT * FROM context_runways
-     WHERE identity_id = ? AND project_id = ? AND scope_key = ?
+     WHERE tenant_id = ? AND identity_id = ? AND project_id = ? AND scope_key = ?
        AND context_status = 'backfilled'
        AND state IN ('published', 'superseded')
      ORDER BY generation DESC LIMIT 1`,
   INSERT_RETRIEVAL_RECEIPT: `/* continuity:insert-retrieval-receipt */
     INSERT INTO context_retrieval_receipts (
-      receipt_id, requesting_credential_id, identity_id, project_id, scope_key,
+      receipt_id, tenant_id, requesting_credential_id, identity_id, project_id, scope_key,
       selected_runway_id, selected_generation, context_status,
       fallback_path_json, requested_domains_json, permitted_domains_json,
       supplemental_search_used, supplemental_result_count, omissions_json,
       receipt_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   GET_LATEST_VALIDATION: `/* continuity:get-latest-validation */
     SELECT * FROM context_runway_validations
-     WHERE runway_id = ? ORDER BY created_at DESC LIMIT 1`,
+     WHERE tenant_id = ? AND runway_id = ? ORDER BY created_at DESC LIMIT 1`,
   INSERT_PUBLICATION_ATTEMPT: `/* continuity:insert-publication-attempt */
     INSERT INTO context_publication_attempts (
-      attempt_id, runway_id, expected_generation, observed_generation,
+      attempt_id, tenant_id, runway_id, expected_generation, observed_generation,
       status, error_code, error_message, created_at, completed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   UPDATE_PUBLICATION_ATTEMPT: `/* continuity:update-publication-attempt */
     UPDATE context_publication_attempts
        SET status = ?, error_code = ?, error_message = ?, completed_at = ?
-     WHERE attempt_id = ?`,
+     WHERE tenant_id = ? AND attempt_id = ?`,
   SEAL_RUNWAY: `/* continuity:seal-runway */
     UPDATE context_runways
        SET state = 'sealed', sealed_at = ?, indexing_state = ?
-     WHERE runway_id = ? AND state = 'validated'`,
+     WHERE tenant_id = ? AND runway_id = ? AND state = 'validated'`,
   SET_ARTIFACT_REF: `/* continuity:set-artifact-ref */
-    UPDATE context_runways SET portable_artifact_ref = ? WHERE runway_id = ?`,
+    UPDATE context_runways SET portable_artifact_ref = ?
+     WHERE tenant_id = ? AND runway_id = ?`,
   SET_INDEXING_STATE: `/* continuity:set-indexing-state */
-    UPDATE context_runways SET indexing_state = ?, state = ? WHERE runway_id = ?`,
+    UPDATE context_runways SET indexing_state = ?, state = ?
+     WHERE tenant_id = ? AND runway_id = ?`,
   SET_PUBLICATION_FAILED: `/* continuity:set-publication-failed */
     UPDATE context_runways
        SET state = 'publication_failed', indexing_state = ?
-     WHERE runway_id = ? AND state <> 'published'`,
+     WHERE tenant_id = ? AND runway_id = ? AND state <> 'published'`,
   PUBLISH_HEAD_CAS: `/* continuity:publish-head-cas */
     INSERT INTO context_runway_heads (
-      identity_id, project_id, scope_key, runway_id, generation,
+      tenant_id, identity_id, project_id, scope_key, runway_id, generation,
       manifest_hash, published_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (identity_id, project_id, scope_key) DO UPDATE SET
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (tenant_id, identity_id, project_id, scope_key) DO UPDATE SET
       runway_id = excluded.runway_id,
       generation = excluded.generation,
       manifest_hash = excluded.manifest_hash,
       published_at = excluded.published_at
     WHERE context_runway_heads.generation = ?
-      AND context_runway_heads.runway_id = ?`,
+      AND context_runway_heads.runway_id = ?
+      AND context_runway_heads.tenant_id = excluded.tenant_id`,
   INVALIDATE_RUNWAY: `/* continuity:invalidate-runway */
     UPDATE context_runways
        SET state = 'invalidated', invalidated_at = ?, invalidation_reason = ?
-     WHERE runway_id = ?`,
+     WHERE tenant_id = ? AND runway_id = ?`,
   INSERT_INVALIDATION: `/* continuity:insert-invalidation */
     INSERT INTO context_runway_invalidations (
-      invalidation_id, runway_id, invalidated_by_credential_id, reason,
+      invalidation_id, tenant_id, runway_id, invalidated_by_credential_id, reason,
       previous_head_runway_id, restored_head_runway_id, created_at, receipt_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   LIST_RUNWAY_RECORDS: `/* continuity:list-runway-records */
     SELECT * FROM context_runway_records
-     WHERE runway_id = ? ORDER BY ordinal ASC, record_id ASC`,
+     WHERE tenant_id = ? AND runway_id = ? ORDER BY ordinal ASC, record_id ASC`,
   UPDATE_RETRIEVAL_RECEIPT: `/* continuity:update-retrieval-receipt */
     UPDATE context_retrieval_receipts
        SET supplemental_search_used = ?, supplemental_result_count = ?,
            omissions_json = ?, requested_domains_json = ?,
            permitted_domains_json = ?, receipt_hash = ?
-     WHERE receipt_id = ?`,
+     WHERE tenant_id = ? AND receipt_id = ?`,
   LIST_HISTORY: `/* continuity:list-history */
     SELECT * FROM context_runways
-     WHERE identity_id = ? AND project_id = ? AND scope_key = ?
+     WHERE tenant_id = ? AND identity_id = ? AND project_id = ? AND scope_key = ?
      ORDER BY generation DESC, created_at DESC`,
   LIST_VALIDATIONS: `/* continuity:list-validations */
     SELECT * FROM context_runway_validations
-     WHERE runway_id = ? ORDER BY created_at DESC`,
+     WHERE tenant_id = ? AND runway_id = ? ORDER BY created_at DESC`,
   LIST_PUBLICATION_ATTEMPTS: `/* continuity:list-publication-attempts */
     SELECT * FROM context_publication_attempts
-     WHERE runway_id = ? ORDER BY created_at DESC`,
+     WHERE tenant_id = ? AND runway_id = ? ORDER BY created_at DESC`,
   LIST_INVALIDATIONS: `/* continuity:list-invalidations */
     SELECT * FROM context_runway_invalidations
-     WHERE runway_id = ? ORDER BY created_at DESC`,
+     WHERE tenant_id = ? AND runway_id = ? ORDER BY created_at DESC`,
   GET_RETRIEVAL_RECEIPT: `/* continuity:get-retrieval-receipt */
-    SELECT * FROM context_retrieval_receipts WHERE receipt_id = ?`,
+    SELECT * FROM context_retrieval_receipts
+     WHERE tenant_id = ? AND receipt_id = ?`,
   INSERT_INVOCATION: `/* continuity:insert-invocation */
     INSERT OR IGNORE INTO context_invocations (
-      invocation_id, identity_id, project_id, scope_key, credential_id,
+      invocation_id, tenant_id, identity_id, project_id, scope_key, credential_id,
       resolved_runway_id, retrieval_receipt_id, state, continuity_outcome,
       started_at, completed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   SET_INVOCATION_REHYDRATED: `/* continuity:set-invocation-rehydrated */
     UPDATE context_invocations
        SET resolved_runway_id = ?, retrieval_receipt_id = ?, state = 'rehydrated'
-     WHERE invocation_id = ?`,
+     WHERE tenant_id = ? AND invocation_id = ?`,
   GET_INVOCATION: `/* continuity:get-invocation */
-    SELECT * FROM context_invocations WHERE invocation_id = ?`,
+    SELECT * FROM context_invocations
+     WHERE tenant_id = ? AND invocation_id = ?`,
   COMPLETE_INVOCATION: `/* continuity:complete-invocation */
     UPDATE context_invocations
        SET state = ?, continuity_outcome = ?, completed_at = ?
-     WHERE invocation_id = ? AND credential_id = ?`,
+     WHERE tenant_id = ? AND invocation_id = ? AND credential_id = ?`,
   LIST_HEADS: `/* continuity:list-heads */
-    SELECT * FROM context_runway_heads ORDER BY identity_id, project_id, scope_key`,
+    SELECT * FROM context_runway_heads
+     WHERE tenant_id = ? ORDER BY identity_id, project_id, scope_key`,
   LIST_CONTINUITY_HEALTH: `/* continuity:list-continuity-health */
     SELECT runway_id, identity_id, project_id, scope_key, generation, state,
            integrity_state, indexing_state, created_at, published_at
       FROM context_runways
-     WHERE state IN ('candidate', 'publication_failed', 'published')`
+     WHERE tenant_id = ?
+       AND state IN ('candidate', 'publication_failed', 'published')`
 });

@@ -106,7 +106,11 @@ function post(path, body) {
   });
 }
 
-test("rehydration records invocation acknowledgment and unchanged completion", async () => {
+test("rehydration records invocation acknowledgment and unchanged completion", async t => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-07-16T10:00:00.000Z")
+  });
   const worker = await loadWorker();
   const db = await databaseWithHead();
   const env = environment(db);
@@ -253,7 +257,11 @@ test("continuity queue validation and scheduled verification are flag-gated and 
   assert.equal(disabledWaits.length, 0);
 });
 
-test("telemetry is bounded and never includes checkpoint bodies", async () => {
+test("telemetry is bounded and never includes checkpoint bodies", async t => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-07-16T10:00:00.000Z")
+  });
   const worker = await loadWorker();
   const db = await databaseWithHead();
   const points = [];
