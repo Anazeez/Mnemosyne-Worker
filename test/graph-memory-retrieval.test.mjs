@@ -125,6 +125,7 @@ test("search returns accepted evidence and material temporal conflicts", async (
       tenant_id: "tenant-a",
       project_id: "project.one",
       query: "status",
+      as_of: "2026-07-27T12:00:00.000Z",
       top_k: 10
     }
   });
@@ -228,6 +229,7 @@ test("rehydration records the accepted generation and selected assertions", asyn
       tenant_id: "tenant-a",
       project_id: "project.one",
       query: "status",
+      as_of: "2026-07-27T12:00:00.000Z",
       invocation_id: "memory-invocation-one"
     },
     now: () => new Date("2026-07-27T12:00:00.000Z")
@@ -355,6 +357,7 @@ test("embedding failure degrades explicitly to authorized D1 results", async () 
       tenant_id: "tenant-a",
       project_id: "project.one",
       query: "status",
+      as_of: "2026-07-27T12:00:00.000Z",
       top_k: 10
     }
   });
