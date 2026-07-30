@@ -55,4 +55,4 @@ jobs:
       - name: Inspect invocation receipt schema
         shell: bash
         run: |
-          npx wrangler d1 execute DB --remote --config /tmp/wrangler.d1.json --command "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_invocations'; PRAGMA table_info(memory_invocations);"
+          npx wrangler d1 execute DB --remote --config /tmp/wrangler.d1.json --command "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_invocations'; PRAGMA table_info(memory_invocations); SELECT COUNT(*) AS invocation_count FROM memory_invocations;"
