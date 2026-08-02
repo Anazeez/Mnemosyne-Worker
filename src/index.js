@@ -22,7 +22,6 @@ import {
   exportMemoryScope,
   rebuildMemoryProjection
 } from "./graph-memory/privacy.js";
-import { graphMemoryFeatureState } from "./graph-memory/flags.js";
 import {
   authenticateLegacyRequest,
   constantTimeSecretEqual,
@@ -32,6 +31,7 @@ import {
   assertSpecialistAccess,
 } from "./specialists/policy.js";
 import { optionalAuthorizedVectorFilter } from "./specialists/retrieval.js";
+import { buildHealthPayload } from "./health.js";
 
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
@@ -314,26 +314,8 @@ export default {
     const method = request.method;
 
     if (url.pathname === "/ping" && method === "GET") {
-      return Response.json({
-        status: "alive",
-        project: "Project Mnemosyne",
-        worker: "mnemosyne-worker",
-        api: "v1-governed-memory",
-        matrix: Object.keys(INDEX_BINDING),
-        model: EMBEDDING_MODEL,
-        threshold: RETRIEVAL_THRESHOLD,
-        identity: "credential-identity-role-policy",
-        mandates: Boolean(env.DB) ? "d1-enabled" : "d1-not-bound",
-        email_route: Boolean(env.MATRIX_MAIL)
-          ? "active-event-driven"
-          : "missing-binding",
-        queue_state: Boolean(env.MATRIX_EMAIL_QUEUE)
-          ? "buffered-pipeline-active"
-          : "no-queue-binding",
-        artifacts: Boolean(env.MATRIX_ARTIFACTS)
-          ? "r2-enabled"
-          : "inline-only",
-        graph_memory: graphMemoryFeatureState(env)
+      return Response.json(buildHealthPayload(env), {
+        headers: { "Cache-Control": "no-store" }
       });
     }
 

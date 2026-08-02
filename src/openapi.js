@@ -1,4 +1,5 @@
 import { executeMemoryOperation } from "./mcp.js";
+import { buildHealthPayload } from "./health.js";
 
 const scopeDescriptions = Object.freeze({
   "memory:read": "Read accepted project memory and continuity",
@@ -21,6 +22,16 @@ export const OPENAPI_DOCUMENT = Object.freeze({
   },
   security: [{ oauth: [] }],
   paths: {
+    "/ping": {
+      get: {
+        operationId: "checkHealth",
+        summary: "Check Mnemosyne availability",
+        security: [],
+        responses: {
+          200: { description: "Bounded Mnemosyne health status" },
+        },
+      },
+    },
     "/v1/memory/rehydrate": postOperation(
       "rehydrateMemory",
       "Rehydrate accepted project memory",
@@ -129,6 +140,11 @@ export async function handleOpenApiRequest(request, {
   if (url.pathname === "/openapi.json" && request.method === "GET") {
     return Response.json(OPENAPI_DOCUMENT, {
       headers: { "Cache-Control": "public, max-age=300" },
+    });
+  }
+  if (url.pathname === "/ping" && request.method === "GET") {
+    return Response.json(buildHealthPayload(env), {
+      headers: { "Cache-Control": "no-store" },
     });
   }
   const candidateMatch = url.pathname.match(

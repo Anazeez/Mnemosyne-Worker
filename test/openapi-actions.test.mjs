@@ -50,6 +50,7 @@ test("MCP and Actions normalize search identically", async () => {
 test("public OpenAPI schema exposes only retrieval, proposal, and own status", () => {
   assert.equal(OPENAPI_DOCUMENT.openapi, "3.1.0");
   assert.deepEqual(Object.keys(OPENAPI_DOCUMENT.paths).sort(), [
+    "/ping",
     "/v1/memory/candidates",
     "/v1/memory/candidates/{candidate_id}",
     "/v1/memory/rehydrate",
@@ -70,6 +71,47 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
       "memory:candidate:read": "Read status of candidates submitted by this credential",
     },
   );
+});
+
+test("public OpenAPI exposes truthful checkHealth without OAuth", async () => {
+  const operation = OPENAPI_DOCUMENT.paths["/ping"].get;
+  assert.equal(operation.operationId, "checkHealth");
+  assert.deepEqual(operation.security, []);
+
+  const response = await handleOpenApiRequest(
+    new Request("https://memory.example/ping"),
+    {
+      env: {
+        DB: {},
+        OAUTH_KV: {},
+        MESH_GATEWAY_SECRET: "s".repeat(32),
+        GRAPH_MEMORY_READ_ENABLED: "true",
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.deepEqual(payload, {
+    status: "ok",
+    worker: "ready",
+    d1: "available",
+    oauth: "available",
+    graph_memory: {
+      actions: false,
+      mcp: false,
+      owner_commit: false,
+      owner_review: false,
+      propose: false,
+      publication: false,
+      read: true,
+      resolution: false,
+      review: false,
+      validation: false,
+    },
+    specialist_policy_version: "2026-08-02.1",
+    mesh_ingress: "ready",
+  });
+  assert.doesNotMatch(JSON.stringify(payload), /secret|principal|credential|binding/i);
 });
 
 test("Actions normalize errors without reflecting secrets", async () => {
