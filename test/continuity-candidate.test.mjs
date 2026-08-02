@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   authenticatedRequest,
-  loadWorker
+  loadWorker,
+  migrateTestPrincipalEnvironment
 } from "./helpers/worker-harness.mjs";
 import { ContinuityMemoryD1 } from "./helpers/d1-continuity-memory.mjs";
 
@@ -41,7 +42,7 @@ function candidateBody(overrides = {}) {
   };
 }
 
-function request(path, body, key = "specialist-key") {
+function request(path, body, key = "specialist-key-with-entropy") {
   return new Request(`https://worker.invalid${path}`, {
     method: "POST",
     headers: {
@@ -53,28 +54,28 @@ function request(path, body, key = "specialist-key") {
 }
 
 function environment(db = new ContinuityMemoryD1(), overrides = {}) {
-  return {
+  return migrateTestPrincipalEnvironment({
     DB: db,
     CONTINUITY_WRITE_ENABLED: "true",
     MATRIX_PRINCIPAL_KEYS: {
-      "specialist-key": {
+      "specialist-key-with-entropy": {
         credential_id: "ariadne",
         principal_id: "specialist",
         project_ids: ["project-infinitum"]
       },
-      "other-specialist-key": {
+      "other-specialist-key-with-entropy": {
         credential_id: "hearken",
         principal_id: "specialist",
         project_ids: ["project-infinitum"]
       },
-      "publisher-key": {
+      "publisher-key-with-entropy": {
         credential_id: "mnemosyne-orchestrator",
         principal_id: "orchestrator",
         project_ids: ["project-infinitum"]
       }
     },
     ...overrides
-  };
+  });
 }
 
 test("candidate route requires authentication, feature enablement, and continuity.write", async () => {
@@ -93,10 +94,10 @@ test("candidate route requires authentication, feature enablement, and continuit
     environment(new ContinuityMemoryD1(), { CONTINUITY_WRITE_ENABLED: "false" })
   );
   const readOnly = await worker.fetch(
-    request("/v1/continuity/checkpoints", body, "portal-key"),
+    request("/v1/continuity/checkpoints", body, "portal-key-with-entropy"),
     environment(new ContinuityMemoryD1(), {
       MATRIX_PRINCIPAL_KEYS: {
-        "portal-key": {
+        "portal-key-with-entropy": {
           credential_id: "portal-reader",
           principal_id: "portal",
           project_ids: ["project-infinitum"]
@@ -113,7 +114,7 @@ test("candidate route requires authentication, feature enablement, and continuit
 test("specialist writes are limited to their exact identity and explicit project", async () => {
   const worker = await loadWorker();
   const identityMismatch = await worker.fetch(
-    request("/v1/continuity/checkpoints", candidateBody(), "other-specialist-key"),
+    request("/v1/continuity/checkpoints", candidateBody(), "other-specialist-key-with-entropy"),
     environment()
   );
   const projectMismatch = await worker.fetch(
@@ -212,7 +213,7 @@ test("validation writes a separate receipt and never mutates candidate content",
   const runwayId = (await created.json()).runway_id;
   const before = db.runways.get(runwayId).payload_json;
   const validation = await worker.fetch(
-    request(`/v1/continuity/checkpoints/${runwayId}/validate`, {}, "publisher-key"),
+    request(`/v1/continuity/checkpoints/${runwayId}/validate`, {}, "publisher-key-with-entropy"),
     env
   );
   const validationPayload = await validation.json();
@@ -226,7 +227,7 @@ test("validation writes a separate receipt and never mutates candidate content",
   assert.equal(db.runways.get(runwayId).payload_json, before);
 
   const denied = await worker.fetch(
-    request(`/v1/continuity/checkpoints/${runwayId}/validate`, {}, "specialist-key"),
+    request(`/v1/continuity/checkpoints/${runwayId}/validate`, {}, "specialist-key-with-entropy"),
     env
   );
   assert.equal(denied.status, 403);

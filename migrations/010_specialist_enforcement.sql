@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS specialist_principals (
   tenant_id TEXT NOT NULL,
   project_ids_json TEXT NOT NULL,
   domain_ids_json TEXT NOT NULL,
+  memory_domains_json TEXT NOT NULL,
   capabilities_json TEXT NOT NULL,
   lane_permissions_json TEXT NOT NULL,
   grant_version TEXT NOT NULL CHECK (length(grant_version) = 64),

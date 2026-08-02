@@ -6,7 +6,7 @@ import {
   buildRunwayManifest,
   canonicalJson
 } from "../src/continuity.js";
-import { loadWorker } from "./helpers/worker-harness.mjs";
+import { loadWorker, migrateTestPrincipalEnvironment } from "./helpers/worker-harness.mjs";
 import { ContinuityMemoryD1 } from "./helpers/d1-continuity-memory.mjs";
 
 function payload(overrides = {}) {
@@ -97,7 +97,7 @@ function environment(db, overrides = {}) {
     CONTINUITY_READ_ENABLED: "true",
     CONTINUITY_FRESHNESS_SECONDS: "604800",
     MATRIX_PRINCIPAL_KEYS: {
-      "specialist-key": {
+      "specialist-key-with-entropy": {
         credential_id: "ariadne",
         principal_id: "specialist",
         project_ids: ["project-infinitum"]
@@ -119,7 +119,7 @@ function environment(db, overrides = {}) {
   };
 
   return {
-    env,
+    env: migrateTestPrincipalEnvironment(env),
     calls: () => ({ ai: aiCalls, vector: vectorCalls })
   };
 }
@@ -131,7 +131,7 @@ function latestRequest(scopeKey = "architecture") {
   url.searchParams.set("scope_key", scopeKey);
 
   return new Request(url, {
-    headers: { "X-Matrix-Key": "specialist-key" }
+    headers: { "X-Matrix-Key": "specialist-key-with-entropy" }
   });
 }
 

@@ -6,7 +6,7 @@ import {
   buildRunwayManifest,
   canonicalJson
 } from "../src/continuity.js";
-import { loadWorker } from "./helpers/worker-harness.mjs";
+import { loadWorker, migrateTestPrincipalEnvironment } from "./helpers/worker-harness.mjs";
 import { ContinuityMemoryD1 } from "./helpers/d1-continuity-memory.mjs";
 
 function proposal(overrides = {}) {
@@ -30,18 +30,18 @@ function proposal(overrides = {}) {
 }
 
 function env(db, overrides = {}) {
-  return {
+  return migrateTestPrincipalEnvironment({
     DB: db,
     CONTINUITY_READ_ENABLED: "true",
     CONTINUITY_WRITE_ENABLED: "true",
     CONTINUITY_PUBLICATION_ENABLED: "true",
     MATRIX_PRINCIPAL_KEYS: {
-      "specialist-key": {
+      "specialist-key-with-entropy": {
         credential_id: "ariadne",
         principal_id: "specialist",
         project_ids: ["project-infinitum"]
       },
-      "publisher-key": {
+      "publisher-key-with-entropy": {
         credential_id: "mnemosyne-orchestrator",
         principal_id: "orchestrator",
         project_ids: ["project-infinitum"]
@@ -53,10 +53,10 @@ function env(db, overrides = {}) {
       }
     },
     ...overrides
-  };
+  });
 }
 
-function post(path, body, key = "publisher-key") {
+function post(path, body, key = "publisher-key-with-entropy") {
   return new Request(`https://worker.invalid${path}`, {
     method: "POST",
     headers: {
@@ -141,7 +141,7 @@ async function createAndValidate(worker, environment, idempotencyKey = "candidat
     payload: proposal(),
     source_hashes: [],
     idempotency_key: idempotencyKey
-  }, "specialist-key"), environment);
+  }, "specialist-key-with-entropy"), environment);
   assert.equal(created.status, 201);
   const runwayId = (await created.json()).runway_id;
   const validated = await worker.fetch(post(
@@ -197,7 +197,7 @@ test("publication requires a passed validation and an explicit publication flag"
     payload: proposal(),
     source_hashes: [],
     idempotency_key: "candidate-unvalidated"
-  }, "specialist-key"), environment);
+  }, "specialist-key-with-entropy"), environment);
   const runwayId = (await created.json()).runway_id;
   const unvalidated = await worker.fetch(post(
     `/v1/continuity/checkpoints/${runwayId}/publish`,
@@ -308,7 +308,7 @@ test("invalidation preserves history and atomically restores the predecessor", a
   const invalidated = await worker.fetch(post(
     `/v1/continuity/checkpoints/${runwayId}/invalidate`,
     { reason: "Verified source integrity failure" },
-    "root-key"
+    "publisher-key-with-entropy"
   ), environment);
   const result = await invalidated.json();
 

@@ -34,6 +34,7 @@ export function principalFromOAuthClaims(claims) {
   const identityIds = normalizeIdList(claims.identity_ids);
   const specialistId = normalizePrincipalId(claims.specialist_id);
   const domainIds = normalizeIdList(claims.domain_ids);
+  const memoryDomains = normalizeIdList(claims.memory_domains);
   const lanePermissions = normalizeIdList(claims.lane_permissions);
   const scopes = Array.isArray(claims.scopes)
     ? [...new Set(claims.scopes.map(value => String(value).trim()))]
@@ -57,6 +58,8 @@ export function principalFromOAuthClaims(claims) {
     claims.project_ids?.includes("*") ||
     claims.domain_ids?.includes("*") ||
     domainIds.length === 0 ||
+    memoryDomains.length === 0 ||
+    memoryDomains.includes("*") ||
     !domainIds.every(domain => specialistContract.domain_ids.includes(domain)) ||
     !identityIds.includes(specialistId) ||
     lanePermissions.length === 0 ||
@@ -95,6 +98,7 @@ export function principalFromOAuthClaims(claims) {
     ...(role === "specialist" ? {
       specialist_id: specialistId,
       domain_ids: domainIds,
+      memory_domains: memoryDomains,
       lane_permissions: lanePermissions,
       grant_version: claims.grant_version,
       package_version: String(claims.package_version ?? ""),

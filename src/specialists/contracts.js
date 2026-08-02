@@ -4,6 +4,8 @@ const commonCapabilities = Object.freeze([
   "memory.read",
   "memory.search",
   "memory.propose",
+  "continuity.read",
+  "continuity.write",
   "exchanges.inbox",
   "exchanges.reply",
 ]);

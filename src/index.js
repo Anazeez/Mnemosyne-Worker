@@ -23,6 +23,10 @@ import {
   rebuildMemoryProjection
 } from "./graph-memory/privacy.js";
 import { graphMemoryFeatureState } from "./graph-memory/flags.js";
+import {
+  authenticateLegacyRequest,
+  constantTimeSecretEqual,
+} from "./auth/legacy-credentials.js";
 
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
@@ -330,7 +334,7 @@ export default {
       });
     }
 
-    const auth = authenticateRequest(request, env);
+    const auth = await authenticateRequest(request, env);
 
     if (!auth.ok) {
       return jsonError(auth.error, auth.status);
@@ -866,7 +870,7 @@ class AuthzError extends Error {
   }
 }
 
-function authenticateRequest(request, env) {
+async function authenticateRequest(request, env) {
   const authorization = request.headers.get("Authorization");
   if (authorization) {
     return {
@@ -885,14 +889,20 @@ function authenticateRequest(request, env) {
     };
   }
 
-  if (env.MATRIX_AUTH_KEY && authKey === env.MATRIX_AUTH_KEY) {
+  if (
+    env.MATRIX_AUTH_KEY
+    && await constantTimeSecretEqual(authKey, env.MATRIX_AUTH_KEY)
+  ) {
     return {
       ok: true,
       principal: ARCHITECTUS_PRINCIPAL
     };
   }
 
-  if (env.MATRIX_DASHBOARD_KEY && authKey === env.MATRIX_DASHBOARD_KEY) {
+  if (
+    env.MATRIX_DASHBOARD_KEY
+    && await constantTimeSecretEqual(authKey, env.MATRIX_DASHBOARD_KEY)
+  ) {
     return {
       ok: true,
       principal: {
@@ -909,7 +919,7 @@ function authenticateRequest(request, env) {
     };
   }
 
-  const principal = principalFromScopedKey(authKey, env);
+  const principal = await authenticateLegacyRequest(request, env);
 
   if (!principal) {
     return {
@@ -938,49 +948,6 @@ function privacyScopeFromUrl(url) {
       ? { candidate_id: url.searchParams.get("candidate_id") }
       : {})
   };
-}
-
-function principalFromScopedKey(authKey, env) {
-  let records =
-    env.MATRIX_PRINCIPAL_KEYS ||
-    env.MNEMOSYNE_PRINCIPAL_KEYS;
-
-  if (!records) {
-    return null;
-  }
-
-  if (typeof records === "string") {
-    try {
-      records = JSON.parse(records);
-    } catch (error) {
-      console.error(
-        "Failed to parse MATRIX_PRINCIPAL_KEYS:",
-        error.message
-      );
-
-      return null;
-    }
-  }
-
-  let record = null;
-
-  if (Array.isArray(records)) {
-    record = records.find(
-      item =>
-        item?.key === authKey ||
-        item?.action_key === authKey
-    );
-  } else if (typeof records === "object") {
-    record = records[authKey] || null;
-  }
-
-  if (!record) {
-    return null;
-  }
-
-  return resolveCredentialPrincipal(
-    unwrapCredentialRecord(record)
-  );
 }
 
 function unwrapCredentialRecord(record) {

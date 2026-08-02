@@ -6,14 +6,14 @@ import {
   buildRunwayManifest,
   canonicalJson
 } from "../src/continuity.js";
-import { loadWorker } from "./helpers/worker-harness.mjs";
+import { loadWorker, migrateTestPrincipalEnvironment } from "./helpers/worker-harness.mjs";
 import { ContinuityMemoryD1 } from "./helpers/d1-continuity-memory.mjs";
 
 async function runway(tenantId) {
   const payload = {
     schema: RUNWAY_SCHEMA,
     runway_id: `${tenantId}-runway`,
-    identity_id: "assistant",
+    identity_id: "ariadne",
     project_id: "shared",
     scope_key: "project",
     generation: 1,
@@ -79,7 +79,7 @@ function head(row) {
 
 function request(key) {
   const url = new URL("https://worker.invalid/v1/continuity/latest");
-  url.searchParams.set("identity_id", "assistant");
+  url.searchParams.set("identity_id", "ariadne");
   url.searchParams.set("project_id", "shared");
   url.searchParams.set("scope_key", "project");
   return new Request(url, { headers: { "X-Matrix-Key": key } });
@@ -98,29 +98,29 @@ test("continuity resolution is isolated by authenticated tenant", async t => {
     .seedHead(head(tenantA))
     .seedRunway(tenantB)
     .seedHead(head(tenantB));
-  const env = {
+  const env = migrateTestPrincipalEnvironment({
     DB: db,
     CONTINUITY_READ_ENABLED: "true",
     MATRIX_PRINCIPAL_KEYS: {
-      "tenant-a-key": {
+      "tenant-a-key-with-entropy": {
         tenant_id: "tenant-a",
-        credential_id: "tenant-a-portal",
-        principal_id: "portal",
+        credential_id: "ariadne",
+        principal_id: "specialist",
         project_ids: ["shared"],
-        identity_ids: ["assistant"]
+        identity_ids: ["ariadne"]
       },
-      "tenant-b-key": {
+      "tenant-b-key-with-entropy": {
         tenant_id: "tenant-b",
-        credential_id: "tenant-b-portal",
-        principal_id: "portal",
+        credential_id: "ariadne",
+        principal_id: "specialist",
         project_ids: ["shared"],
-        identity_ids: ["assistant"]
+        identity_ids: ["ariadne"]
       }
     }
-  };
+  });
 
-  const responseA = await worker.fetch(request("tenant-a-key"), env);
-  const responseB = await worker.fetch(request("tenant-b-key"), env);
+  const responseA = await worker.fetch(request("tenant-a-key-with-entropy"), env);
+  const responseB = await worker.fetch(request("tenant-b-key-with-entropy"), env);
   const resultA = await responseA.json();
   const resultB = await responseB.json();
 

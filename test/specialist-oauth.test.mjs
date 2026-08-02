@@ -21,6 +21,7 @@ test("OAuth principal receives only its bound specialist grants", () => {
     project_ids: ["project-infinitum"],
     identity_ids: ["haava"],
     domain_ids: ["visual-design-expression"],
+    memory_domains: ["knowledge"],
     lane_permissions: ["root-local", "savae-routed"],
     scopes: ["memory:read", "memory:search", "memory:propose"],
     grant_version: "a".repeat(64),
@@ -42,6 +43,7 @@ test("specialist OAuth claims reject wildcard projects and domains", () => {
       project_ids: ["*"],
       identity_ids: ["haava"],
       domain_ids: ["*"],
+      memory_domains: ["knowledge"],
       lane_permissions: ["root-local"],
       scopes: ["memory:read"],
       grant_version: "a".repeat(64),
@@ -56,12 +58,13 @@ test("assistant binding resolves one active package-bound specialist", async () 
   await env.DB.prepare(`
     INSERT INTO specialist_principals (
       principal_id, specialist_id, tenant_id, project_ids_json,
-      domain_ids_json, capabilities_json, lane_permissions_json,
-      grant_version, active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      domain_ids_json, memory_domains_json, capabilities_json,
+      lane_permissions_json, grant_version, active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
   `).bind(
     "principal-haava", "haava", "personal", '["project-infinitum"]',
-    '["visual-design-expression"]', '["memory.read","memory.search","memory.propose"]',
+    '["visual-design-expression"]', '["knowledge"]',
+    '["memory.read","memory.search","memory.propose"]',
     '["root-local","savae-routed"]', "b".repeat(64),
     "2026-08-02T00:00:00Z", "2026-08-02T00:00:00Z",
   ).run();
@@ -75,6 +78,7 @@ test("assistant binding resolves one active package-bound specialist", async () 
     packageVersion: "2026-08-02.1",
   });
   assert.deepEqual(binding.domain_ids, ["visual-design-expression"]);
+  assert.deepEqual(binding.memory_domains, ["knowledge"]);
   assert.equal(binding.specialist_id, "haava");
 
   const claims = buildGrantClaims({
@@ -88,4 +92,5 @@ test("assistant binding resolves one active package-bound specialist", async () 
   assert.equal(claims.props.role, "specialist");
   assert.equal(claims.props.specialist_id, "haava");
   assert.deepEqual(claims.props.domain_ids, ["visual-design-expression"]);
+  assert.deepEqual(claims.props.memory_domains, ["knowledge"]);
 });

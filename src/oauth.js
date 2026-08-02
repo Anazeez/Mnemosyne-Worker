@@ -144,6 +144,7 @@ export async function refreshGrantProps(props, { fetchImpl = fetch } = {}) {
       specialist_id: grant.specialist_id,
       identity_ids: [grant.specialist_id],
       domain_ids: grant.domain_ids,
+      memory_domains: grant.memory_domains,
       lane_permissions: grant.lane_permissions,
       capabilities: grant.capabilities,
       package_version: grant.package_version,
@@ -202,6 +203,7 @@ export function buildGrantClaims({
         ...(isSpecialist ? {
           specialist_id: specialistGrant.specialist_id,
           domain_ids: specialistGrant.domain_ids,
+          memory_domains: specialistGrant.memory_domains,
           lane_permissions: specialistGrant.lane_permissions,
           capabilities: specialistGrant.capabilities,
           grant_version: specialistGrant.grant_version,
@@ -228,6 +230,7 @@ export async function resolveSpecialistAssistantBinding(
         p.tenant_id,
         p.project_ids_json,
         p.domain_ids_json,
+        p.memory_domains_json,
         p.capabilities_json,
         p.lane_permissions_json,
         p.grant_version
@@ -246,6 +249,7 @@ export async function resolveSpecialistAssistantBinding(
   const contract = contractForSpecialist(row.specialist_id);
   const projectIds = parseGrantList(row.project_ids_json);
   const domainIds = parseGrantList(row.domain_ids_json);
+  const memoryDomains = parseGrantList(row.memory_domains_json);
   const capabilities = parseGrantList(row.capabilities_json);
   const lanePermissions = parseGrantList(row.lane_permissions_json);
   if (
@@ -254,6 +258,8 @@ export async function resolveSpecialistAssistantBinding(
     projectIds.includes("*") ||
     domainIds.length === 0 ||
     domainIds.includes("*") ||
+    memoryDomains.length === 0 ||
+    memoryDomains.includes("*") ||
     !domainIds.every(value => contract.domain_ids.includes(value)) ||
     !capabilities.every(value => contract.capabilities.includes(value)) ||
     !lanePermissions.every(value => contract.lane_permissions.includes(value)) ||
@@ -269,6 +275,7 @@ export async function resolveSpecialistAssistantBinding(
     tenant_id: row.tenant_id,
     project_ids: projectIds,
     domain_ids: domainIds,
+    memory_domains: memoryDomains,
     capabilities,
     lane_permissions: lanePermissions,
     grant_version: row.grant_version,
