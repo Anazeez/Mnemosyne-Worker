@@ -174,6 +174,7 @@ test("older higher-scoring semantic evidence remains supplemental and separate",
   let queryOptions;
   const response = await worker.fetch(rehydrateRequest({
     supplemental_query: "continuity architecture",
+    domain_id: "logic-trend-analysis",
     supplemental_domains: ["knowledge", "files"],
     top_k: 5
   }), environment(db, {
@@ -219,6 +220,7 @@ test("supplemental failure is bounded and cannot erase exact context", async () 
   const db = await seededDatabase();
   const response = await worker.fetch(rehydrateRequest({
     supplemental_query: "continuity",
+    domain_id: "logic-trend-analysis",
     supplemental_domains: ["knowledge"]
   }), environment(db, {
     AI: { async run() { throw new Error("private provider details"); } }

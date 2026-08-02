@@ -27,6 +27,11 @@ import {
   authenticateLegacyRequest,
   constantTimeSecretEqual,
 } from "./auth/legacy-credentials.js";
+import {
+  SpecialistPolicyError,
+  assertSpecialistAccess,
+} from "./specialists/policy.js";
+import { optionalAuthorizedVectorFilter } from "./specialists/retrieval.js";
 
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
@@ -49,7 +54,7 @@ import {
 const SECTION_ROUTING = {
   agents: [
     "names", "roles", "specialist", "destination",
-    "registry", "haava", "boundary"
+    "registry", "boundary"
   ],
 
   knowledge: [
@@ -200,7 +205,6 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_ACK,
   CAPABILITY.EXCHANGES_REPLY,
-  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
   CAPABILITY.CONTINUITY_READ,
   CAPABILITY.CONTINUITY_WRITE
@@ -229,7 +233,6 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY,
   CAPABILITY.CONTINUITY_READ,
   CAPABILITY.CONTINUITY_WRITE,
@@ -344,7 +347,7 @@ export default {
 
     try {
       if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         await requireInvocationContinuity({
           request,
           env,
@@ -355,7 +358,7 @@ export default {
       }
 
       if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         await requireInvocationContinuity({
           request,
           env,
@@ -366,7 +369,7 @@ export default {
       }
 
       if (url.pathname === "/api/ariadne/core/status" && method === "GET") {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         return handleAriadneCoreStatus();
       }
 
@@ -374,7 +377,7 @@ export default {
         url.pathname === "/api/ariadne/core/openai-test" &&
         method === "GET"
       ) {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         return handleAriadneCoreDiagnostic(env);
       }
 
@@ -391,7 +394,7 @@ export default {
       if (url.pathname === "/query" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_SEARCH);
 
-        return handleMemorySearch(request, env, principal, {
+        return await handleMemorySearch(request, env, principal, {
           legacy: true
         });
       }
@@ -404,7 +407,7 @@ export default {
       if (url.pathname === "/v1/memory/search" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_SEARCH);
 
-        return handleMemorySearch(request, env, principal, {
+        return await handleMemorySearch(request, env, principal, {
           legacy: false
         });
       }
@@ -412,7 +415,7 @@ export default {
       if (url.pathname === "/v1/skills/retrieval" && method === "POST") {
         requireCapability(principal, CAPABILITY.SKILLS_RETRIEVAL);
 
-        return handleMemorySearch(request, env, principal, {
+        return await handleMemorySearch(request, env, principal, {
           legacy: false,
           forcedIndex: "skills"
         });
@@ -727,6 +730,28 @@ export default {
       }
 
       if (error instanceof GraphMemoryError) {
+        return Response.json(
+          { ok: false, error: error.code },
+          { status: error.status }
+        );
+      }
+
+      if (error instanceof SpecialistPolicyError) {
+        if (url.pathname === "/api/ariadne/core/openai-test") {
+          return Response.json(
+            { ok: false, error: "forbidden" },
+            { status: error.status }
+          );
+        }
+        if (
+          url.pathname.startsWith("/api/ariadne/core/")
+          && error.code === "CAPABILITY_DENIED"
+        ) {
+          return jsonError(
+            `Role lacks capability: ${CAPABILITY.ARIADNE_CORE_OPENAI_TEST}`,
+            error.status
+          );
+        }
         return Response.json(
           { ok: false, error: error.code },
           { status: error.status }
@@ -1188,6 +1213,19 @@ function requireAnyCapability(principal, capabilities) {
   }
 }
 
+function assertAriadneRouteAccess(principal) {
+  if (principal?.role === "root") {
+    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+    return;
+  }
+  assertSpecialistAccess(principal, {
+    tenant_id: principal?.tenant_id,
+    project_id: principal?.project_ids?.[0],
+    domain_id: "logic-trend-analysis",
+    identity_id: "ariadne",
+  }, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+}
+
 function allowedDomains(principal) {
   const allDomains = Object.keys(INDEX_BINDING);
 
@@ -1283,7 +1321,10 @@ async function handleMemorySearch(
     body.top_k ?? body.topK ?? DEFAULT_TOP_K
   );
   const threshold = sanitizeRetrievalThreshold(body.threshold);
-  const metadataFilter = buildMemoryMetadataFilter(body);
+  const metadataFilter = optionalAuthorizedVectorFilter(principal, {
+    ...body,
+    tenant_id: body.tenant_id ?? principal.tenant_id,
+  });
 
   if (!query) {
     return jsonError("query is required", 400);
@@ -1388,8 +1429,10 @@ async function executeSupplementalMemorySearch(input, env, principal) {
   const domains = [...new Set(input.domains || [])]
     .flatMap(domain => resolveSearchDomains(domain, principal));
   const topK = sanitizeTopK(input.topK);
-  const metadataFilter = buildMemoryMetadataFilter({
+  const metadataFilter = optionalAuthorizedVectorFilter(principal, {
+    tenant_id: principal.tenant_id,
     project_id: input.projectId,
+    domain_id: input.domainId,
     scope_key: input.scopeKey,
     runway_id: input.runwayId,
     created_after: input.createdAfter,
@@ -1436,28 +1479,6 @@ async function executeSupplementalMemorySearch(input, env, principal) {
       .map(formatVectorMatch),
     errors
   };
-}
-
-function buildMemoryMetadataFilter(body) {
-  const filter = {};
-  const bounded = (value, maximum = 128) => {
-    const normalized = String(value || "").trim();
-    return normalized && normalized.length <= maximum ? normalized : null;
-  };
-  const projectId = bounded(body.project_id);
-  const scopeKey = bounded(body.scope_key);
-  const runwayId = bounded(body.runway_id);
-  const createdAfter = bounded(body.created_after);
-  const sourceRefs = Array.isArray(body.source_refs)
-    ? body.source_refs.map(item => bounded(item, 500)).filter(Boolean).slice(0, 100)
-    : [];
-
-  if (projectId) filter.project_id = projectId;
-  if (scopeKey) filter.scope_key = scopeKey;
-  if (runwayId) filter.runway_id = runwayId;
-  if (createdAfter) filter.created = { $gte: createdAfter };
-  if (sourceRefs.length > 0) filter.source_ref = { $in: sourceRefs };
-  return filter;
 }
 
 function formatVectorMatch(match) {

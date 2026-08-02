@@ -2126,6 +2126,7 @@ export async function rehydrateContext({
           domains: permitted,
           topK: sanitizeContinuityTopK(body.top_k),
           projectId: normalizeProjectId(body.project_id),
+          domainId: String(body.domain_id ?? "").trim().toLowerCase(),
           scopeKey: normalizeScopeKey(body.scope_key),
           runwayId: resolution.context.runway_id,
           createdAfter: body.created_after,

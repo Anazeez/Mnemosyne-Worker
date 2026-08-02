@@ -201,6 +201,7 @@ test("shadow mode compares exact continuity with supplemental evidence without r
     invocation_id: "inv_shadow",
     identity_id: "ariadne",
     project_id: "project-infinitum",
+    domain_id: "logic-trend-analysis",
     scope_key: "architecture",
     shadow_query: "older context",
     supplemental_domains: ["knowledge"]
