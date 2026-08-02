@@ -29,5 +29,7 @@ export async function migratedSpecialistEnvironment(overrides = {}) {
 }
 
 export async function applySpecialistMigration(db) {
-  await db.exec(await readFile(specialistMigration, "utf8"));
+  const sql = await readFile(specialistMigration, "utf8");
+  if (typeof db.exec === "function") await db.exec(sql);
+  else db.database.exec(sql);
 }

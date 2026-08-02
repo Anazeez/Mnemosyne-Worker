@@ -2,6 +2,7 @@ import {
   GraphMemoryError,
   normalizeGraphTarget
 } from "./contracts.js";
+import { contractForSpecialist } from "../specialists/policy.js";
 
 const PRINCIPAL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,63}$/;
 
@@ -31,6 +32,9 @@ export function principalFromOAuthClaims(claims) {
   const role = String(claims.role ?? "").trim().toLowerCase();
   const projectIds = normalizeIdList(claims.project_ids);
   const identityIds = normalizeIdList(claims.identity_ids);
+  const specialistId = normalizePrincipalId(claims.specialist_id);
+  const domainIds = normalizeIdList(claims.domain_ids);
+  const lanePermissions = normalizeIdList(claims.lane_permissions);
   const scopes = Array.isArray(claims.scopes)
     ? [...new Set(claims.scopes.map(value => String(value).trim()))]
     : [];
@@ -39,9 +43,26 @@ export function principalFromOAuthClaims(claims) {
     !tenantId ||
     !credentialId ||
     !assistantId ||
-    !["portal", "owner"].includes(role) ||
+    !["portal", "specialist", "owner"].includes(role) ||
     projectIds.length === 0
   ) {
+    throw invalidClaims();
+  }
+
+  const specialistContract = role === "specialist"
+    ? contractForSpecialist(specialistId)
+    : null;
+  if (role === "specialist" && (
+    !specialistContract ||
+    claims.project_ids?.includes("*") ||
+    claims.domain_ids?.includes("*") ||
+    domainIds.length === 0 ||
+    !domainIds.every(domain => specialistContract.domain_ids.includes(domain)) ||
+    !identityIds.includes(specialistId) ||
+    lanePermissions.length === 0 ||
+    !lanePermissions.every(lane => specialistContract.lane_permissions.includes(lane)) ||
+    !/^[a-f0-9]{64}$/.test(String(claims.grant_version ?? ""))
+  )) {
     throw invalidClaims();
   }
 
@@ -56,13 +77,28 @@ export function principalFromOAuthClaims(claims) {
       }
     }
   }
+  if (role === "specialist") {
+    for (const capability of claims.capabilities ?? []) {
+      if (
+        specialistContract.capabilities.includes(capability) &&
+        !capabilities.includes(capability)
+      ) capabilities.push(capability);
+    }
+  }
 
   return {
     tenant_id: tenantId,
     credential_id: credentialId,
     assistant_id: assistantId,
-    principal_id: role,
+    principal_id: role === "specialist" ? specialistId : role,
     role,
+    ...(role === "specialist" ? {
+      specialist_id: specialistId,
+      domain_ids: domainIds,
+      lane_permissions: lanePermissions,
+      grant_version: claims.grant_version,
+      package_version: String(claims.package_version ?? ""),
+    } : {}),
     project_ids: projectIds,
     identity_ids: identityIds,
     scopes: scopes.filter(scope => scope in scopeCapabilities),
