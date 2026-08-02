@@ -756,62 +756,13 @@ export default {
     }
   },
 
-  async email(message, env, ctx) {
-    const sender = String(message.from || "").trim().toLowerCase() || "unknown";
-    const recipient = String(message.to || "").trim().toLowerCase();
-    const recipientPersona = deriveRecipientPersona(recipient);
-    const subject = message.headers.get("subject") || "Automated Mesh Exchange";
-    const exchangeId = crypto.randomUUID();
-    const createdAt = new Date().toISOString();
-
-    try {
-      const ingress = await prepareEmailIngressPayload(message, env, {
-        exchange_id: exchangeId,
-        sender,
-        recipient,
-        recipient_persona: recipientPersona,
-        subject,
-        created_at: createdAt
-      });
-
-      if (env.MATRIX_EMAIL_QUEUE) {
-        await env.MATRIX_EMAIL_QUEUE.send(ingress);
-
-        console.log(
-          `[Queue Pipeline] Buffered exchange ${exchangeId} for ${recipientPersona}`
-        );
-      } else {
-        ensureD1(env);
-
-        await archiveExchangeRecord(
-          env,
-          buildExchangeRecordFromIngress(ingress, "direct")
-        );
-
-        console.log(
-          `[Direct Ingress] Stored exchange ${exchangeId} for ${recipientPersona}`
-        );
-      }
-    } catch (error) {
-      console.error(`[Email Intercept Exception]: ${error.message}`);
-      throw error;
-    }
-
-    const mirrorDestination =
-      env.MATRIX_MAIL_FORWARD_TO || "izeesub@gmail.com";
-
-    if (mirrorDestination && message.canBeForwarded) {
-      ctx.waitUntil(
-        message.forward(mirrorDestination).catch(error => {
-          console.error(`[Email Mirror Exception]: ${error.message}`);
-        })
-      );
-    }
+  async email(message) {
+    message.setReject(
+      "Direct email ingress disabled; route through mnemosyne-mail-gateway"
+    );
   },
 
   async queue(batch, env) {
-    ensureD1(env);
-
     for (const message of batch.messages) {
       try {
         if (String(message.body?.type || "").startsWith("continuity.")) {
@@ -824,19 +775,12 @@ export default {
           message.ack();
           continue;
         }
-
-        const ingress = normalizeQueuedIngress(message.body, message.id);
-
-        await archiveExchangeRecord(
-          env,
-          buildExchangeRecordFromIngress(ingress, "queue")
-        );
-
         message.ack();
-
-        console.log(
-          `[Queue Consumer] Stored exchange ${ingress.exchange_id} for ${ingress.recipient_persona}`
-        );
+        console.warn(JSON.stringify({
+          event: "mesh.queue.payload.rejected",
+          message_id: message.id,
+          reason_code: "DIRECT_EMAIL_INGRESS_RETIRED"
+        }));
       } catch (error) {
         if (String(message.body?.type || "").startsWith("continuity.")) {
           console.error(JSON.stringify({
@@ -2359,68 +2303,6 @@ async function handleExchangeArtifact(env, principal, exchangeId) {
   });
 }
 
-async function prepareEmailIngressPayload(message, env, envelope) {
-  const payloadSize = Number(message.rawSize || 0);
-
-  if (payloadSize <= MAX_INLINE_QUEUE_BYTES) {
-    const rawBody = await new Response(message.raw).text();
-
-    return {
-      ...envelope,
-      source: "email",
-      payload_mode: "inline",
-      payload_size: byteLength(rawBody),
-      raw_body: rawBody,
-      artifact_key: null,
-      artifact_content_type: null
-    };
-  }
-
-  if (!env.MATRIX_ARTIFACTS) {
-    message.setReject(
-      "Incoming artifact exceeds inline queue capacity. Configure MATRIX_ARTIFACTS or send an artifact reference."
-    );
-
-    throw new Error(
-      "Oversized email requires MATRIX_ARTIFACTS R2 binding"
-    );
-  }
-
-  const artifactKey = buildArtifactKey(
-    "email",
-    envelope.exchange_id,
-    "eml"
-  );
-
-  await env.MATRIX_ARTIFACTS.put(
-    artifactKey,
-    message.raw,
-    {
-      httpMetadata: {
-        contentType: "message/rfc822"
-      },
-
-      customMetadata: {
-        source: "email",
-        sender: envelope.sender,
-        recipient: envelope.recipient_persona,
-        exchange_id: envelope.exchange_id,
-        created_at: envelope.created_at
-      }
-    }
-  );
-
-  return {
-    ...envelope,
-    source: "email",
-    payload_mode: "artifact",
-    payload_size: payloadSize,
-    raw_body: "",
-    artifact_key: artifactKey,
-    artifact_content_type: "message/rfc822"
-  };
-}
-
 async function prepareTextExchangePayload(
   env,
   {
@@ -2478,128 +2360,6 @@ async function prepareTextExchangePayload(
     data: "",
     artifact_key: artifactKey,
     artifact_content_type: content_type
-  };
-}
-
-function normalizeQueuedIngress(payload, fallbackExchangeId) {
-  const source = String(payload?.source || "email");
-
-  if (source !== "email") {
-    throw new Error(
-      `Unsupported queue payload source: ${source}`
-    );
-  }
-
-  const recipient = String(payload?.recipient || "")
-    .trim()
-    .toLowerCase();
-
-  const recipientPersona = String(
-    payload?.recipient_persona ||
-    deriveRecipientPersona(recipient)
-  )
-    .trim()
-    .toLowerCase() || "unmapped";
-
-  const payloadMode =
-    payload?.payload_mode === "artifact"
-      ? "artifact"
-      : "inline";
-
-  return {
-    exchange_id: String(
-      payload?.exchange_id || fallbackExchangeId
-    ),
-
-    sender:
-      String(payload?.sender || "unknown")
-        .trim()
-        .toLowerCase() || "unknown",
-
-    recipient,
-    recipient_persona: recipientPersona,
-
-    subject: String(
-      payload?.subject || "Automated Mesh Exchange"
-    ),
-
-    created_at:
-      payload?.created_at ||
-      payload?.timestamp ||
-      new Date().toISOString(),
-
-    source,
-    payload_mode: payloadMode,
-
-    payload_size: Number(
-      payload?.payload_size ||
-      byteLength(String(payload?.raw_body || ""))
-    ),
-
-    raw_body:
-      payloadMode === "inline"
-        ? String(payload?.raw_body ?? payload?.rawBody ?? "")
-        : "",
-
-    artifact_key:
-      payloadMode === "artifact"
-        ? String(payload?.artifact_key || "")
-        : "",
-
-    artifact_content_type:
-      payloadMode === "artifact"
-        ? String(
-            payload?.artifact_content_type ||
-            "application/octet-stream"
-          )
-        : null
-  };
-}
-
-function buildExchangeRecordFromIngress(
-  ingress,
-  transport = "queue"
-) {
-  const prefix =
-    ingress.source === "email"
-      ? transport === "direct"
-        ? "Mail Exchange"
-        : "Queue Exchange"
-      : "Mesh Exchange";
-
-  const title =
-    ingress.source === "email"
-      ? `${prefix} [${ingress.recipient_persona}]: ${ingress.subject}`
-      : `${prefix} [${ingress.recipient_persona}]`;
-
-  return {
-    mandate_id: ingress.exchange_id,
-
-    title,
-
-    body: buildExchangeLedgerBody({
-      sender: ingress.sender,
-      recipient: ingress.recipient_persona,
-      recipient_address: ingress.recipient,
-      source: ingress.source,
-
-      payload: {
-        mode: ingress.payload_mode,
-        payload_size: ingress.payload_size,
-        data: ingress.raw_body,
-        artifact_key: ingress.artifact_key,
-        artifact_content_type: ingress.artifact_content_type
-      }
-    }),
-
-    created_by: ingress.sender,
-    created_at: ingress.created_at,
-
-    expires_at: new Date(
-      Date.now() + 24 * 60 * 60 * 1000
-    ).toISOString(),
-
-    state: "archived"
   };
 }
 
