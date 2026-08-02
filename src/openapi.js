@@ -1,11 +1,13 @@
 import { executeMemoryOperation } from "./mcp.js";
 import { buildHealthPayload } from "./health.js";
+import { handleMeshInboxRequest } from "./mesh/routes.js";
 
 const scopeDescriptions = Object.freeze({
   "memory:read": "Read accepted project memory and continuity",
   "memory:search": "Search accepted project memory",
   "memory:propose": "Submit an immutable memory candidate",
   "memory:candidate:read": "Read status of candidates submitted by this credential",
+  "mesh:inbox": "Read the authenticated specialist's private mesh inbox",
 });
 
 const targetProperties = {
@@ -30,6 +32,14 @@ export const OPENAPI_DOCUMENT = Object.freeze({
         responses: {
           200: { description: "Bounded Mnemosyne health status" },
         },
+      },
+    },
+    "/v1/mesh/inbox": {
+      get: {
+        operationId: "listMeshInbox",
+        summary: "Read the authenticated specialist's private mesh inbox",
+        security: [{ oauth: ["mesh:inbox"] }],
+        responses: standardResponses(),
       },
     },
     "/v1/memory/rehydrate": postOperation(
@@ -146,6 +156,9 @@ export async function handleOpenApiRequest(request, {
     return Response.json(buildHealthPayload(env), {
       headers: { "Cache-Control": "no-store" },
     });
+  }
+  if (url.pathname === "/v1/mesh/inbox" && request.method === "GET") {
+    return handleMeshInboxRequest(request, { env, principal });
   }
   const candidateMatch = url.pathname.match(
     /^\/v1\/memory\/candidates\/([^/]+)$/,

@@ -20,6 +20,10 @@ import {
   graphMemoryFeatureState,
 } from "./graph-memory/flags.js";
 import { handleHumanReviewRequest } from "./graph-memory/human-review.js";
+import {
+  handleMeshInboxRequest,
+  handleMeshIngressRequest,
+} from "./mesh/routes.js";
 
 const protectedApi = {
   async fetch(request, env, ctx) {
@@ -30,6 +34,9 @@ const protectedApi = {
     if (path === "/mcp") {
       if (!featureState.mcp) return new Response("Not found", { status: 404 });
       return handleMcpRequest(request, { env, principal, services });
+    }
+    if (path === "/v1/mesh/inbox") {
+      return handleMeshInboxRequest(request, { env, principal });
     }
     if (path.startsWith("/admin/memory/candidates")) {
       if (!featureState.review || !featureState.publication) {
@@ -46,6 +53,12 @@ const protectedApi = {
 
 const publicAndLegacyApi = {
   async fetch(request, env, ctx) {
+    if (
+      new URL(request.url).pathname === "/v1/mesh/messages"
+      && request.method === "POST"
+    ) {
+      return handleMeshIngressRequest(request, { env });
+    }
     if (
       ["/openapi.json", "/ping"].includes(new URL(request.url).pathname) &&
       request.method === "GET"

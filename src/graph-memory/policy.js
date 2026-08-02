@@ -10,7 +10,8 @@ export const PUBLIC_SCOPE_CAPABILITIES = Object.freeze({
   "memory:read": Object.freeze(["memory.read", "continuity.read"]),
   "memory:search": Object.freeze(["memory.search"]),
   "memory:propose": Object.freeze(["memory.propose"]),
-  "memory:candidate:read": Object.freeze(["memory.candidate.read.own"])
+  "memory:candidate:read": Object.freeze(["memory.candidate.read.own"]),
+  "mesh:inbox": Object.freeze(["exchanges.inbox"]),
 });
 export const OWNER_SCOPE_CAPABILITIES = Object.freeze({
   "memory:review": Object.freeze([

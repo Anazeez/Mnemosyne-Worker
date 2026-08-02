@@ -58,6 +58,7 @@ test("OAuth provider requires S256 PKCE and disables implicit and token exchange
     "memory:search",
     "memory:propose",
     "memory:candidate:read",
+    "mesh:inbox",
   ]);
   assert.deepEqual(
     OAUTH_PROVIDER_OPTIONS.resourceMetadata.scopes_supported,
@@ -70,6 +71,7 @@ test("OAuth provider requires S256 PKCE and disables implicit and token exchange
   assert.deepEqual(OAUTH_PROVIDER_OPTIONS.apiRoute, [
     "/mcp",
     "/v1/memory/",
+    "/v1/mesh/",
     "/admin/memory/",
   ]);
 });

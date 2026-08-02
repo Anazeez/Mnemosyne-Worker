@@ -30,7 +30,7 @@ export const PUBLIC_OAUTH_SCOPES = Object.freeze(Object.keys(PUBLIC_SCOPE_CAPABI
 export const HUMAN_REVIEW_SCOPE = "memory:review";
 
 export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
-  apiRoute: Object.freeze(["/mcp", "/v1/memory/", "/admin/memory/"]),
+  apiRoute: Object.freeze(["/mcp", "/v1/memory/", "/v1/mesh/", "/admin/memory/"]),
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",

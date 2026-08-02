@@ -56,6 +56,7 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
     "/v1/memory/rehydrate",
     "/v1/memory/search",
     "/v1/memory/traverse",
+    "/v1/mesh/inbox",
   ]);
   assert.equal(
     Object.keys(OPENAPI_DOCUMENT.paths).some(path =>
@@ -69,6 +70,7 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
       "memory:search": "Search accepted project memory",
       "memory:propose": "Submit an immutable memory candidate",
       "memory:candidate:read": "Read status of candidates submitted by this credential",
+      "mesh:inbox": "Read the authenticated specialist's private mesh inbox",
     },
   );
 });

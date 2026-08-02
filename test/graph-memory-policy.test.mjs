@@ -30,7 +30,8 @@ test("public scopes map only to the approved portal capabilities", () => {
     "memory:read": ["memory.read", "continuity.read"],
     "memory:search": ["memory.search"],
     "memory:propose": ["memory.propose"],
-    "memory:candidate:read": ["memory.candidate.read.own"]
+    "memory:candidate:read": ["memory.candidate.read.own"],
+    "mesh:inbox": ["exchanges.inbox"]
   });
 
   const principal = principalFromOAuthClaims(claims());
