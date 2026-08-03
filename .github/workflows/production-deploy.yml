@@ -71,6 +71,7 @@ jobs:
       OPENAI_APPS_CHALLENGE: ${{ secrets.OPENAI_APPS_CHALLENGE }}
       AUTHORIZED_GITHUB_USER_IDS: "277895262"
       MEMORY_TENANT_ID: "personal"
+      SPECIALIST_PACKAGE_VERSION: "2026-08-03.2"
       MNEMOSYNE_CUSTOM_DOMAIN: ${{ inputs.enable_custom_domain && 'memory.azzayezz.com' || '' }}
       GRAPH_MEMORY_READ_ENABLED: ${{ inputs.enable_read && '1' || '0' }}
       GRAPH_MEMORY_MCP_ENABLED: ${{ inputs.enable_mcp && '1' || '0' }}

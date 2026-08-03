@@ -3,6 +3,7 @@ import { buildHealthPayload } from "./health.js";
 import { handleMeshInboxRequest } from "./mesh/routes.js";
 
 const scopeDescriptions = Object.freeze({
+  "identity:read": "Verify the authenticated specialist identity and bounded grants",
   "memory:read": "Read accepted project memory and continuity",
   "memory:search": "Search accepted project memory",
   "memory:propose": "Submit an immutable memory candidate",
@@ -32,6 +33,14 @@ export const OPENAPI_DOCUMENT = Object.freeze({
         responses: {
           200: { description: "Bounded Mnemosyne health status" },
         },
+      },
+    },
+    "/v1/session": {
+      get: {
+        operationId: "verifyPrincipal",
+        summary: "Verify the authenticated specialist identity and bounded grants",
+        security: [{ oauth: ["identity:read"] }],
+        responses: standardResponses(),
       },
     },
     "/v1/mesh/inbox": {
@@ -157,6 +166,19 @@ export async function handleOpenApiRequest(request, {
       headers: { "Cache-Control": "no-store" },
     });
   }
+  if (url.pathname === "/v1/session" && request.method === "GET") {
+    try {
+      return Response.json(verifiedPrincipalView(principal), {
+        headers: { "Cache-Control": "no-store" },
+      });
+    } catch (error) {
+      return normalizedError(
+        error?.code || "IDENTITY_SCOPE_DENIED",
+        Number.isInteger(error?.status) ? error.status : 403,
+        requestId(),
+      );
+    }
+  }
   if (url.pathname === "/v1/mesh/inbox" && request.method === "GET") {
     return handleMeshInboxRequest(request, { env, principal });
   }
@@ -196,6 +218,35 @@ export async function handleOpenApiRequest(request, {
       requestId(),
     );
   }
+}
+
+export function verifiedPrincipalView(principal) {
+  if (
+    principal?.role !== "specialist"
+    || !principal?.specialist_id
+    || !principal?.capabilities?.includes("identity.read")
+  ) {
+    throw Object.assign(new Error("IDENTITY_SCOPE_DENIED"), {
+      code: "IDENTITY_SCOPE_DENIED",
+      status: 403,
+    });
+  }
+  const sorted = value => [...new Set(value ?? [])].map(String).sort();
+  return {
+    authenticated: true,
+    tenant_id: principal.tenant_id,
+    principal_id: principal.specialist_id,
+    role: "specialist",
+    specialist_id: principal.specialist_id,
+    project_ids: sorted(principal.project_ids),
+    domain_ids: sorted(principal.domain_ids),
+    memory_domains: sorted(principal.memory_domains),
+    lane_permissions: sorted(principal.lane_permissions),
+    oauth_scopes: sorted(principal.scopes),
+    capabilities: sorted(principal.capabilities),
+    package_version: String(principal.package_version ?? ""),
+    grant_version: String(principal.grant_version ?? ""),
+  };
 }
 
 function postOperation(operationId, summary, scope, properties, required) {

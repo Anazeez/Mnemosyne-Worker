@@ -7,6 +7,7 @@ import { contractForSpecialist } from "../specialists/policy.js";
 const PRINCIPAL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,63}$/;
 
 export const PUBLIC_SCOPE_CAPABILITIES = Object.freeze({
+  "identity:read": Object.freeze(["identity.read"]),
   "memory:read": Object.freeze(["memory.read", "continuity.read"]),
   "memory:search": Object.freeze(["memory.search"]),
   "memory:propose": Object.freeze(["memory.propose"]),

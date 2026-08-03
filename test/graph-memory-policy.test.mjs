@@ -27,6 +27,7 @@ function claims(overrides = {}) {
 
 test("public scopes map only to the approved portal capabilities", () => {
   assert.deepEqual(PUBLIC_SCOPE_CAPABILITIES, {
+    "identity:read": ["identity.read"],
     "memory:read": ["memory.read", "continuity.read"],
     "memory:search": ["memory.search"],
     "memory:propose": ["memory.propose"],

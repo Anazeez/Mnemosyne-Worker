@@ -88,6 +88,7 @@ export function buildDeploymentConfig(
     customDomain,
     ownerGithubUserIds,
     memoryTenantId,
+    specialistPackageVersion,
     graphMemoryFlags = {},
   },
 ) {
@@ -149,6 +150,10 @@ export function buildDeploymentConfig(
   if (memoryTenantId) {
     config.vars.MEMORY_TENANT_ID = String(memoryTenantId).trim();
   }
+  if (specialistPackageVersion) {
+    config.vars.SPECIALIST_PACKAGE_VERSION =
+      String(specialistPackageVersion).trim();
+  }
   if (Object.keys(config.vars).length === 0) delete config.vars;
   return config;
 }
@@ -177,6 +182,7 @@ if (process.argv[1]?.endsWith("cloudflare-binding-preflight.mjs")) {
       customDomain: process.env.MNEMOSYNE_CUSTOM_DOMAIN,
       ownerGithubUserIds: process.env.AUTHORIZED_GITHUB_USER_IDS,
       memoryTenantId: process.env.MEMORY_TENANT_ID,
+      specialistPackageVersion: process.env.SPECIALIST_PACKAGE_VERSION,
       graphMemoryFlags: Object.fromEntries(
         GRAPH_MEMORY_DEPLOYMENT_FLAGS.map(flag => [flag, process.env[flag]]),
       ),

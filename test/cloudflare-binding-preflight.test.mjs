@@ -35,6 +35,7 @@ test("deployment config preserves every supported non-secret live binding", () =
     customDomain: "memory.azzayezz.com",
     ownerGithubUserIds: "277895262",
     memoryTenantId: "personal",
+    specialistPackageVersion: "2026-08-03.2",
     graphMemoryFlags: {
       GRAPH_MEMORY_READ_ENABLED: true,
       GRAPH_MEMORY_MCP_ENABLED: true,
@@ -74,6 +75,7 @@ test("deployment config preserves every supported non-secret live binding", () =
   }]);
   assert.equal(config.vars.AUTHORIZED_GITHUB_USER_IDS, "277895262");
   assert.equal(config.vars.MEMORY_TENANT_ID, "personal");
+  assert.equal(config.vars.SPECIALIST_PACKAGE_VERSION, "2026-08-03.2");
   assert.deepEqual(
     Object.keys(config.vars).filter((name) =>
       name.startsWith("CONTINUITY_") && name !== "CONTINUITY_READ_ENABLED"
@@ -129,6 +131,7 @@ test("production workflow requires private OAuth inputs before activation", asyn
   assert.doesNotMatch(workflow, /secrets\.GITHUB_/);
   assert.match(workflow, /AUTHORIZED_GITHUB_USER_IDS: "277895262"/);
   assert.match(workflow, /MEMORY_TENANT_ID: "personal"/);
+  assert.match(workflow, /SPECIALIST_PACKAGE_VERSION: "2026-08-03.2"/);
   assert.match(workflow, /memory\.azzayezz\.com/);
   assert.match(workflow, /wrangler secret put "\$name"/);
   assert.match(workflow, /put_secret GITHUB_CLIENT_ID/);
