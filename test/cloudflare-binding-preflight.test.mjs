@@ -182,3 +182,31 @@ test("production workflow requires private OAuth inputs before activation", asyn
     2,
   );
 });
+
+test("code-only releases do not require direct D1 migration authority", async () => {
+  const deployWorkflow = await readFile(
+    new URL("../.github/workflows/production-deploy.yml", import.meta.url),
+    "utf8",
+  );
+  const preflightWorkflow = await readFile(
+    new URL("../.github/workflows/production-preflight.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(deployWorkflow, /apply_migrations:[\s\S]*default: false/);
+  assert.match(
+    deployWorkflow,
+    /name: Apply forward-only graph-memory migration[\s\S]*if: \$\{\{ inputs\.apply_migrations \}\}/,
+  );
+  assert.match(
+    preflightWorkflow,
+    /git diff --quiet origin\/main\.\.\.HEAD -- migrations\//,
+  );
+  assert.equal(
+    preflightWorkflow.match(
+      /if: steps\.d1_scope\.outputs\.required == 'true'/g,
+    )?.length,
+    2,
+  );
+  assert.match(preflightWorkflow, /D1 verification skipped: migrations unchanged/);
+});
