@@ -185,3 +185,17 @@ test("production workflow requires private OAuth inputs before activation", asyn
     2,
   );
 });
+
+test("production workflow installs the credential pepper and migrates only hashed specialist credentials", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/production-deploy.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /LEGACY_CREDENTIAL_PEPPER: \$\{\{ secrets\.LEGACY_CREDENTIAL_PEPPER \}\}/);
+  assert.match(workflow, /SPECIALIST_DEFAULT_PROJECT_IDS: "project-infinitum"/);
+  assert.match(workflow, /SPECIALIST_REQUIRED_IDS: "ariadne,haava,hearken,nadeem,savae,synn,vitruvius"/);
+  assert.match(workflow, /put_secret LEGACY_CREDENTIAL_PEPPER/);
+  assert.match(workflow, /migrate-live-specialist-credentials\.mjs/);
+  assert.match(workflow, /wrangler d1 execute DB --remote/);
+  assert.doesNotMatch(workflow, /echo.*LEGACY_CREDENTIAL_PEPPER/);
+});

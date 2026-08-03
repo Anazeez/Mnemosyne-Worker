@@ -91,3 +91,88 @@ test("local migration output contains hashes and never raw credentials", async (
   assert.match(sql, /[a-f0-9]{64}/);
   assert.match(sql, /INSERT INTO legacy_credentials/);
 });
+
+test("live registry migration emits only bounded specialist principals and HMAC hashes", async () => {
+  const module = await import("../scripts/migrate-live-specialist-credentials.mjs")
+    .catch(() => ({}));
+  assert.equal(typeof module.buildLiveSpecialistCredentialSql, "function");
+  const synnKey = "synn-live-key-that-must-never-appear";
+  const uixKey = "uix-live-key-that-must-never-appear";
+  const output = await module.buildLiveSpecialistCredentialSql([
+    {
+      credentialId: "synn-builder",
+      identity_aliases: ["synn"],
+      key: synnKey,
+      project_ids: ["project-infinitum"],
+      memory_domains: ["knowledge", "skills"],
+    },
+    {
+      credential_id: "uix-builder",
+      identity_aliases: ["uix"],
+      action_key: uixKey,
+      project_ids: ["project-infinitum"],
+      memory_domains: ["knowledge", "files"],
+    },
+    {
+      credential_id: "archivist",
+      identity_aliases: ["archivist"],
+      key: "non-specialist-key-that-is-ignored",
+      project_ids: ["project-infinitum"],
+    },
+  ], {
+    pepper: "p".repeat(32),
+    createdAt: "2026-08-03T00:00:00Z",
+    tenantId: "personal",
+  });
+
+  assert.equal(output.migrated_count, 2);
+  assert.deepEqual(output.specialist_ids, ["synn", "vitruvius"]);
+  assert.doesNotMatch(output.sql, new RegExp(synnKey));
+  assert.doesNotMatch(output.sql, new RegExp(uixKey));
+  assert.doesNotMatch(output.sql, /non-specialist-key-that-is-ignored/);
+  assert.match(output.sql, /principal-synn/);
+  assert.match(output.sql, /principal-vitruvius/);
+  assert.match(output.sql, /[a-f0-9]{64}/);
+  assert.match(output.sql, /UPDATE legacy_credentials[\s\S]+key_hash <>/);
+  assert.doesNotMatch(output.sql, /\*/);
+});
+
+test("live registry migration rejects a specialist without a bounded project", async () => {
+  const module = await import(
+    "../scripts/migrate-live-specialist-credentials.mjs"
+  ).catch(() => ({}));
+  assert.equal(typeof module.buildLiveSpecialistCredentialSql, "function");
+  await assert.rejects(
+    module.buildLiveSpecialistCredentialSql([{
+      credential_id: "synn-builder",
+      identity_aliases: ["synn"],
+      key: "synn-live-key-with-sufficient-entropy",
+      project_ids: ["*"],
+    }], {
+      pepper: "p".repeat(32),
+      createdAt: "2026-08-03T00:00:00Z",
+      tenantId: "personal",
+    }),
+    /LEGACY_SPECIALIST_PROJECTS_INVALID:synn/,
+  );
+});
+
+test("live registry migration fails closed when a required specialist is absent", async () => {
+  const { buildLiveSpecialistCredentialSql } = await import(
+    "../scripts/migrate-live-specialist-credentials.mjs"
+  );
+  await assert.rejects(
+    buildLiveSpecialistCredentialSql([{
+      credential_id: "synn-builder",
+      identity_aliases: ["synn"],
+      key: "synn-live-key-with-sufficient-entropy",
+      project_ids: ["project-infinitum"],
+    }], {
+      pepper: "p".repeat(32),
+      createdAt: "2026-08-03T00:00:00Z",
+      tenantId: "personal",
+      requiredSpecialistIds: ["synn", "haava"],
+    }),
+    /LEGACY_SPECIALIST_REQUIRED_MISSING:haava/,
+  );
+});

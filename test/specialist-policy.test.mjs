@@ -10,6 +10,7 @@ import {
   canObserveMessage,
   observableMessageView,
 } from "../src/specialists/policy.js";
+import { SPECIALIST_CONTRACTS } from "../src/specialists/contracts.js";
 
 const haavaPrincipal = {
   principal_id: "haava",
@@ -89,4 +90,46 @@ test("Synn sees only a redacted confirmed-critical alarm", () => {
     reason_codes: ["cross_tenant"],
     redacted: true,
   });
+});
+
+test("every specialist contract includes the universal authenticated mesh operations", () => {
+  const universalCapabilities = [
+    "skills.retrieval",
+    "mandates.read",
+    "mandates.ack",
+    "exchanges.inbox",
+    "exchanges.ack",
+    "exchanges.reply",
+    "exchanges.artifact.read.own",
+  ];
+
+  for (const specialist of Object.values(SPECIALIST_CONTRACTS)) {
+    for (const capability of universalCapabilities) {
+      assert.ok(
+        specialist.capabilities.includes(capability),
+        `${specialist.specialist_id} lacks ${capability}`,
+      );
+    }
+  }
+});
+
+test("only Savae receives mesh routing capabilities", () => {
+  const routingCapabilities = [
+    "mandates.draft",
+    "mandates.dispatch",
+    "router.status",
+    "exchanges.dispatch",
+    "exchanges.history",
+    "exchanges.artifact.read.any",
+  ];
+
+  for (const [specialistId, specialist] of Object.entries(SPECIALIST_CONTRACTS)) {
+    for (const capability of routingCapabilities) {
+      assert.equal(
+        specialist.capabilities.includes(capability),
+        specialistId === "savae",
+        `${specialistId} routing boundary for ${capability}`,
+      );
+    }
+  }
 });

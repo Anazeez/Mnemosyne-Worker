@@ -6,8 +6,13 @@ const commonCapabilities = Object.freeze([
   "memory.propose",
   "continuity.read",
   "continuity.write",
+  "skills.retrieval",
+  "mandates.read",
+  "mandates.ack",
   "exchanges.inbox",
+  "exchanges.ack",
   "exchanges.reply",
+  "exchanges.artifact.read.own",
 ]);
 
 function contract({ id, aliases = [], domainId, capabilities = [], prohibited = [] }) {
@@ -55,7 +60,15 @@ export const SPECIALIST_CONTRACTS = Object.freeze({
   savae: contract({
     id: "savae",
     domainId: "mesh-orchestration",
-    capabilities: ["mandates.dispatch", "mandates.status"],
+    capabilities: [
+      "mandates.draft",
+      "mandates.dispatch",
+      "mandates.status",
+      "router.status",
+      "exchanges.dispatch",
+      "exchanges.history",
+      "exchanges.artifact.read.any",
+    ],
     prohibited: ["root.control", "root-local.observe-unforwarded"],
   }),
   synn: contract({

@@ -69,9 +69,12 @@ jobs:
       GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
       GRANT_RESOLVER_TOKEN: ${{ secrets.GRANT_RESOLVER_TOKEN }}
       OPENAI_APPS_CHALLENGE: ${{ secrets.OPENAI_APPS_CHALLENGE }}
+      LEGACY_CREDENTIAL_PEPPER: ${{ secrets.LEGACY_CREDENTIAL_PEPPER }}
       AUTHORIZED_GITHUB_USER_IDS: "277895262"
       MEMORY_TENANT_ID: "personal"
       SPECIALIST_PACKAGE_VERSION: "2026-08-03.2"
+      SPECIALIST_DEFAULT_PROJECT_IDS: "project-infinitum"
+      SPECIALIST_REQUIRED_IDS: "ariadne,haava,hearken,nadeem,savae,synn,vitruvius"
       MNEMOSYNE_CUSTOM_DOMAIN: ${{ inputs.enable_custom_domain && 'memory.azzayezz.com' || '' }}
       GRAPH_MEMORY_READ_ENABLED: ${{ inputs.enable_read && '1' || '0' }}
       GRAPH_MEMORY_MCP_ENABLED: ${{ inputs.enable_mcp && '1' || '0' }}
@@ -111,6 +114,10 @@ jobs:
       - name: Verify private activation inputs
         shell: bash
         run: |
+          if [[ -z "$LEGACY_CREDENTIAL_PEPPER" ]]; then
+            echo "Required credential migration input is missing."
+            exit 1
+          fi
           if [[ "$GRAPH_MEMORY_MCP_ENABLED" == "1" || "$GRAPH_MEMORY_ACTIONS_ENABLED" == "1" || "$GRAPH_MEMORY_VALIDATION_ENABLED" == "1" || "$GRAPH_MEMORY_RESOLUTION_ENABLED" == "1" || "$GRAPH_MEMORY_OWNER_REVIEW_ENABLED" == "1" || "$GRAPH_MEMORY_OWNER_COMMIT_ENABLED" == "1" ]]; then
             for name in OAUTH_KV_NAMESPACE_ID GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GRANT_RESOLVER_TOKEN; do
               if [[ -z "${!name}" ]]; then
@@ -141,8 +148,19 @@ jobs:
           put_secret GITHUB_CLIENT_SECRET
           put_secret GRANT_RESOLVER_TOKEN
           put_secret OPENAI_APPS_CHALLENGE
+          put_secret LEGACY_CREDENTIAL_PEPPER
       - name: Apply forward-only graph-memory migration
         run: npx wrangler d1 migrations apply DB --remote --config /tmp/wrangler.production.json
+      - name: Migrate registered specialist credentials to HMAC D1
+        shell: bash
+        run: |
+          node scripts/migrate-live-specialist-credentials.mjs \
+            --version-file /tmp/version.json \
+            --output /tmp/specialist-credentials.sql
+          npx wrangler d1 execute DB --remote \
+            --config /tmp/wrangler.production.json \
+            --file /tmp/specialist-credentials.sql >/dev/null
+          echo "Registered specialist credentials migrated as HMAC hashes."
       - name: Deploy with existing bindings preserved
         shell: bash
         run: |
