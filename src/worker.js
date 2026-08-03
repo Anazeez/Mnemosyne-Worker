@@ -9,7 +9,10 @@ import {
   createOAuthDefaultHandler,
   refreshGrantProps,
 } from "./oauth.js";
-import { principalFromOAuthClaims } from "./graph-memory/policy.js";
+import {
+  assertCurrentSpecialistPackage,
+  principalFromOAuthClaims,
+} from "./graph-memory/policy.js";
 import {
   GRAPH_MEMORY_SERVICES,
   handleMcpRequest,
@@ -28,6 +31,17 @@ import {
 const protectedApi = {
   async fetch(request, env, ctx) {
     const principal = principalFromOAuthClaims(ctx?.props);
+    try {
+      assertCurrentSpecialistPackage(
+        principal,
+        env.SPECIALIST_PACKAGE_VERSION,
+      );
+    } catch {
+      return Response.json(
+        { error: "specialist_package_stale" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     const path = new URL(request.url).pathname;
     const featureState = graphMemoryFeatureState(env);
     const services = featureGatedGraphServices(env, GRAPH_MEMORY_SERVICES);

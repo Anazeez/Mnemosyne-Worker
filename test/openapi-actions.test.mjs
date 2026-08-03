@@ -93,6 +93,14 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
       "mesh:inbox": "Read the authenticated specialist's private mesh inbox",
     },
   );
+  assert.equal(
+    OPENAPI_DOCUMENT.paths["/ping"].get.responses[200].content["application/json"].schema.additionalProperties,
+    false,
+  );
+  assert.equal(
+    OPENAPI_DOCUMENT.paths["/v1/session"].get.responses[200].content["application/json"].schema.additionalProperties,
+    false,
+  );
 });
 
 test("verifyPrincipal returns bounded authenticated specialist grants", async () => {
@@ -130,6 +138,24 @@ test("verifyPrincipal rejects a non-specialist OAuth principal", async () => {
     {
       env: {},
       principal: { ...principal, role: "portal", capabilities: ["identity.read"] },
+      requestId: () => "request-test",
+    },
+  );
+
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error.code, "IDENTITY_SCOPE_DENIED");
+});
+
+test("verifyPrincipal rejects a specialist without identity read scope", async () => {
+  const response = await handleOpenApiRequest(
+    new Request("https://memory.example/v1/session"),
+    {
+      env: {},
+      principal: {
+        ...specialistPrincipal,
+        scopes: ["mesh:inbox"],
+        capabilities: ["exchanges.inbox", "security.preflight"],
+      },
       requestId: () => "request-test",
     },
   );

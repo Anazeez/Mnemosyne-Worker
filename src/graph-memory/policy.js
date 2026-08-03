@@ -112,6 +112,19 @@ export function principalFromOAuthClaims(claims) {
   };
 }
 
+export function assertCurrentSpecialistPackage(principal, expectedVersion) {
+  if (principal?.role !== "specialist") return principal;
+  const expected = String(expectedVersion ?? "").trim();
+  const observed = String(principal.package_version ?? "").trim();
+  if (!expected || observed !== expected) {
+    throw Object.assign(new Error("SPECIALIST_PACKAGE_STALE"), {
+      code: "SPECIALIST_PACKAGE_STALE",
+      status: 401,
+    });
+  }
+  return principal;
+}
+
 export function assertGraphAccess(principal, target, capability) {
   const normalizedTarget = normalizeGraphTarget(target);
 

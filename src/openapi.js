@@ -16,6 +16,65 @@ const targetProperties = {
   project_id: { type: "string", minLength: 2, maxLength: 64 },
 };
 
+const boundedId = { type: "string", minLength: 2, maxLength: 128 };
+const boundedIdList = {
+  type: "array",
+  uniqueItems: true,
+  items: boundedId,
+};
+const graphHealthProperties = Object.fromEntries(
+  [
+    "actions", "mcp", "owner_commit", "owner_review", "propose",
+    "publication", "read", "resolution", "review", "validation",
+  ].map(name => [name, { type: "boolean" }]),
+);
+const healthResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "status", "worker", "d1", "oauth", "graph_memory",
+    "specialist_policy_version", "mesh_ingress",
+  ],
+  properties: {
+    status: { const: "ok" },
+    worker: { const: "ready" },
+    d1: { enum: ["available", "unavailable"] },
+    oauth: { enum: ["available", "unavailable"] },
+    graph_memory: {
+      type: "object",
+      additionalProperties: false,
+      required: Object.keys(graphHealthProperties),
+      properties: graphHealthProperties,
+    },
+    specialist_policy_version: boundedId,
+    mesh_ingress: { enum: ["ready", "unavailable"] },
+  },
+};
+const principalResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "authenticated", "tenant_id", "principal_id", "role", "specialist_id",
+    "project_ids", "domain_ids", "memory_domains", "lane_permissions",
+    "oauth_scopes", "capabilities", "package_version", "grant_version",
+  ],
+  properties: {
+    authenticated: { const: true },
+    tenant_id: boundedId,
+    principal_id: boundedId,
+    role: { const: "specialist" },
+    specialist_id: boundedId,
+    project_ids: boundedIdList,
+    domain_ids: boundedIdList,
+    memory_domains: boundedIdList,
+    lane_permissions: boundedIdList,
+    oauth_scopes: boundedIdList,
+    capabilities: boundedIdList,
+    package_version: boundedId,
+    grant_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
+  },
+};
+
 export const OPENAPI_DOCUMENT = Object.freeze({
   openapi: "3.1.0",
   info: {
@@ -31,7 +90,7 @@ export const OPENAPI_DOCUMENT = Object.freeze({
         summary: "Check Mnemosyne availability",
         security: [],
         responses: {
-          200: { description: "Bounded Mnemosyne health status" },
+          200: jsonResponse("Bounded Mnemosyne health status", healthResponseSchema),
         },
       },
     },
@@ -40,7 +99,13 @@ export const OPENAPI_DOCUMENT = Object.freeze({
         operationId: "verifyPrincipal",
         summary: "Verify the authenticated specialist identity and bounded grants",
         security: [{ oauth: ["identity:read"] }],
-        responses: standardResponses(),
+        responses: {
+          ...standardResponses(),
+          200: jsonResponse(
+            "Bounded authenticated specialist identity and grants",
+            principalResponseSchema,
+          ),
+        },
       },
     },
     "/v1/mesh/inbox": {
@@ -280,6 +345,13 @@ function standardResponses() {
     401: { description: "Authentication required" },
     403: { description: "Requested scope is not authorized" },
     404: { description: "Resource unavailable" },
+  };
+}
+
+function jsonResponse(description, schema) {
+  return {
+    description,
+    content: { "application/json": { schema } },
   };
 }
 
