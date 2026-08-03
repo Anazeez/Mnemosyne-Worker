@@ -21,6 +21,8 @@
 |---|---|---|---|
 | GET | `/ping` | ✗ | Health check |
 | GET | `/openapi.json` | ✗ | Custom GPT Actions contract |
+| GET | `/v1/identity` | Matrix key | Return only the key-bound specialist identity and bounded grants |
+| GET | `/v1/session` | OAuth specialist | Return only the token-bound specialist identity and bounded grants |
 | POST | `/v1/mesh/messages` | signed gateway | Accept one bounded mesh envelope |
 | GET | `/v1/mesh/inbox` | OAuth specialist | Read the caller's private inbox |
 | POST | `/hash` | ✓ | Compute SHA-256 before ingest |

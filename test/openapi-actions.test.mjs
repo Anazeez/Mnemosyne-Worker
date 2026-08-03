@@ -69,6 +69,7 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
   assert.equal(OPENAPI_DOCUMENT.openapi, "3.1.0");
   assert.deepEqual(Object.keys(OPENAPI_DOCUMENT.paths).sort(), [
     "/ping",
+    "/v1/identity",
     "/v1/memory/candidates",
     "/v1/memory/candidates/{candidate_id}",
     "/v1/memory/rehydrate",
@@ -101,6 +102,15 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
     OPENAPI_DOCUMENT.paths["/v1/session"].get.responses[200].content["application/json"].schema.additionalProperties,
     false,
   );
+  assert.deepEqual(
+    OPENAPI_DOCUMENT.paths["/v1/identity"].get.security,
+    [{ matrixKey: [] }],
+  );
+  assert.deepEqual(OPENAPI_DOCUMENT.components.securitySchemes.matrixKey, {
+    type: "apiKey",
+    in: "header",
+    name: "X-Matrix-Key",
+  });
 });
 
 test("verifyPrincipal returns bounded authenticated specialist grants", async () => {

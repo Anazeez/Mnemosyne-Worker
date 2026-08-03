@@ -17,7 +17,10 @@ import {
   GRAPH_MEMORY_SERVICES,
   handleMcpRequest,
 } from "./mcp.js";
-import { handleOpenApiRequest } from "./openapi.js";
+import {
+  handleMatrixIdentityRequest,
+  handleOpenApiRequest,
+} from "./openapi.js";
 import {
   featureGatedGraphServices,
   graphMemoryFeatureState,
@@ -65,8 +68,14 @@ const protectedApi = {
   },
 };
 
-const publicAndLegacyApi = {
+export const publicAndLegacyApi = {
   async fetch(request, env, ctx) {
+    if (
+      new URL(request.url).pathname === "/v1/identity"
+      && request.method === "GET"
+    ) {
+      return handleMatrixIdentityRequest(request, env);
+    }
     if (
       new URL(request.url).pathname === "/v1/mesh/messages"
       && request.method === "POST"

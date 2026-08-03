@@ -1,6 +1,7 @@
 import { executeMemoryOperation } from "./mcp.js";
 import { buildHealthPayload } from "./health.js";
 import { handleMeshInboxRequest } from "./mesh/routes.js";
+import { authenticateLegacyRequest } from "./auth/legacy-credentials.js";
 
 const scopeDescriptions = Object.freeze({
   "identity:read": "Verify the authenticated specialist identity and bounded grants",
@@ -96,13 +97,27 @@ export const OPENAPI_DOCUMENT = Object.freeze({
     },
     "/v1/session": {
       get: {
-        operationId: "verifyPrincipal",
+        operationId: "verifyOAuthPrincipal",
         summary: "Verify the authenticated specialist identity and bounded grants",
         security: [{ oauth: ["identity:read"] }],
         responses: {
           ...standardResponses(),
           200: jsonResponse(
             "Bounded authenticated specialist identity and grants",
+            principalResponseSchema,
+          ),
+        },
+      },
+    },
+    "/v1/identity": {
+      get: {
+        operationId: "verifyPrincipal",
+        summary: "Verify the Matrix-key-bound specialist identity and grants",
+        security: [{ matrixKey: [] }],
+        responses: {
+          ...standardResponses(),
+          200: jsonResponse(
+            "Bounded Matrix-key-bound specialist identity and grants",
             principalResponseSchema,
           ),
         },
@@ -192,6 +207,11 @@ export const OPENAPI_DOCUMENT = Object.freeze({
   },
   components: {
     securitySchemes: {
+      matrixKey: {
+        type: "apiKey",
+        in: "header",
+        name: "X-Matrix-Key",
+      },
       oauth: {
         type: "oauth2",
         flows: {
@@ -205,6 +225,42 @@ export const OPENAPI_DOCUMENT = Object.freeze({
     },
   },
 });
+
+export async function handleMatrixIdentityRequest(request, env) {
+  const packageVersion = String(env?.SPECIALIST_PACKAGE_VERSION ?? "").trim();
+  if (!packageVersion) {
+    return Response.json(
+      { error: "identity_policy_unavailable" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  const principal = await authenticateLegacyRequest(request, env);
+  if (!principal) {
+    return Response.json(
+      { error: "identity_not_authenticated" },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  const identityPrincipal = {
+    ...principal,
+    scopes: [],
+    capabilities: [...new Set([
+      ...(principal.capabilities ?? []),
+      "identity.read",
+    ])],
+    package_version: packageVersion,
+  };
+  try {
+    return Response.json(verifiedPrincipalView(identityPrincipal), {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch {
+    return Response.json(
+      { error: "identity_scope_denied" },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+}
 
 const ACTION_ROUTES = Object.freeze({
   "POST /v1/memory/rehydrate": "memory_rehydrate",
