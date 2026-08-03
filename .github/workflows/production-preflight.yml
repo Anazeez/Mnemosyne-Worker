@@ -54,7 +54,8 @@ jobs:
           fi
       - name: Record code-only D1 verification scope
         if: steps.d1_scope.outputs.required != 'true'
-        run: echo "D1 verification skipped: migrations unchanged"
+        run: |
+          echo "D1 verification skipped: migrations unchanged"
       - name: Inspect and validate live binding shapes
         shell: bash
         run: |
