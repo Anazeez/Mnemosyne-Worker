@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: mnemosyne-production-preflight
@@ -74,3 +75,14 @@ jobs:
         shell: bash
         run: |
           npx wrangler d1 execute DB --remote --config /tmp/wrangler.d1.json --command "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_invocations'; PRAGMA table_info(memory_invocations); SELECT COUNT(*) AS invocation_count FROM memory_invocations;"
+      - name: Publish exact required preflight status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success \
+            -f context=preflight \
+            -f description="Production preflight passed" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

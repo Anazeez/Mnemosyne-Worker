@@ -209,4 +209,9 @@ test("code-only releases do not require direct D1 migration authority", async ()
     2,
   );
   assert.match(preflightWorkflow, /D1 verification skipped: migrations unchanged/);
+  assert.match(preflightWorkflow, /statuses: write/);
+  assert.match(
+    preflightWorkflow,
+    /statuses\/\$\{GITHUB_SHA\}[\s\S]*state=success[\s\S]*context=preflight/,
+  );
 });
