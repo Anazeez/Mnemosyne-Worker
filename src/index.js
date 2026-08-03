@@ -22,7 +22,16 @@ import {
   exportMemoryScope,
   rebuildMemoryProjection
 } from "./graph-memory/privacy.js";
-import { graphMemoryFeatureState } from "./graph-memory/flags.js";
+import {
+  authenticateLegacyRequest,
+  constantTimeSecretEqual,
+} from "./auth/legacy-credentials.js";
+import {
+  SpecialistPolicyError,
+  assertSpecialistAccess,
+} from "./specialists/policy.js";
+import { optionalAuthorizedVectorFilter } from "./specialists/retrieval.js";
+import { buildHealthPayload } from "./health.js";
 
 /**
  * Project Mnemosyne — Mnemosyne's Matrix (ROLE-BASED AUTHORIZATION)
@@ -45,7 +54,7 @@ import { graphMemoryFeatureState } from "./graph-memory/flags.js";
 const SECTION_ROUTING = {
   agents: [
     "names", "roles", "specialist", "destination",
-    "registry", "haava", "boundary"
+    "registry", "boundary"
   ],
 
   knowledge: [
@@ -196,7 +205,6 @@ const SPECIALIST_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_ACK,
   CAPABILITY.EXCHANGES_REPLY,
-  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_OWN,
   CAPABILITY.CONTINUITY_READ,
   CAPABILITY.CONTINUITY_WRITE
@@ -225,7 +233,6 @@ const ORCHESTRATOR_CAPABILITIES = Object.freeze([
   CAPABILITY.EXCHANGES_DISPATCH,
   CAPABILITY.EXCHANGES_INBOX,
   CAPABILITY.EXCHANGES_HISTORY,
-  CAPABILITY.ARIADNE_CORE_OPENAI_TEST,
   CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY,
   CAPABILITY.CONTINUITY_READ,
   CAPABILITY.CONTINUITY_WRITE,
@@ -307,30 +314,12 @@ export default {
     const method = request.method;
 
     if (url.pathname === "/ping" && method === "GET") {
-      return Response.json({
-        status: "alive",
-        project: "Project Mnemosyne",
-        worker: "mnemosyne-worker",
-        api: "v1-governed-memory",
-        matrix: Object.keys(INDEX_BINDING),
-        model: EMBEDDING_MODEL,
-        threshold: RETRIEVAL_THRESHOLD,
-        identity: "credential-identity-role-policy",
-        mandates: Boolean(env.DB) ? "d1-enabled" : "d1-not-bound",
-        email_route: Boolean(env.MATRIX_MAIL)
-          ? "active-event-driven"
-          : "missing-binding",
-        queue_state: Boolean(env.MATRIX_EMAIL_QUEUE)
-          ? "buffered-pipeline-active"
-          : "no-queue-binding",
-        artifacts: Boolean(env.MATRIX_ARTIFACTS)
-          ? "r2-enabled"
-          : "inline-only",
-        graph_memory: graphMemoryFeatureState(env)
+      return Response.json(buildHealthPayload(env), {
+        headers: { "Cache-Control": "no-store" }
       });
     }
 
-    const auth = authenticateRequest(request, env);
+    const auth = await authenticateRequest(request, env);
 
     if (!auth.ok) {
       return jsonError(auth.error, auth.status);
@@ -340,7 +329,7 @@ export default {
 
     try {
       if (url.pathname === "/api/ariadne/core/intake" && method === "POST") {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         await requireInvocationContinuity({
           request,
           env,
@@ -351,7 +340,7 @@ export default {
       }
 
       if (url.pathname === "/api/ariadne/core/review" && method === "POST") {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         await requireInvocationContinuity({
           request,
           env,
@@ -362,7 +351,7 @@ export default {
       }
 
       if (url.pathname === "/api/ariadne/core/status" && method === "GET") {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         return handleAriadneCoreStatus();
       }
 
@@ -370,7 +359,7 @@ export default {
         url.pathname === "/api/ariadne/core/openai-test" &&
         method === "GET"
       ) {
-        requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+        assertAriadneRouteAccess(principal);
         return handleAriadneCoreDiagnostic(env);
       }
 
@@ -387,7 +376,7 @@ export default {
       if (url.pathname === "/query" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_SEARCH);
 
-        return handleMemorySearch(request, env, principal, {
+        return await handleMemorySearch(request, env, principal, {
           legacy: true
         });
       }
@@ -400,7 +389,7 @@ export default {
       if (url.pathname === "/v1/memory/search" && method === "POST") {
         requireCapability(principal, CAPABILITY.MEMORY_SEARCH);
 
-        return handleMemorySearch(request, env, principal, {
+        return await handleMemorySearch(request, env, principal, {
           legacy: false
         });
       }
@@ -408,7 +397,7 @@ export default {
       if (url.pathname === "/v1/skills/retrieval" && method === "POST") {
         requireCapability(principal, CAPABILITY.SKILLS_RETRIEVAL);
 
-        return handleMemorySearch(request, env, principal, {
+        return await handleMemorySearch(request, env, principal, {
           legacy: false,
           forcedIndex: "skills"
         });
@@ -729,6 +718,28 @@ export default {
         );
       }
 
+      if (error instanceof SpecialistPolicyError) {
+        if (url.pathname === "/api/ariadne/core/openai-test") {
+          return Response.json(
+            { ok: false, error: "forbidden" },
+            { status: error.status }
+          );
+        }
+        if (
+          url.pathname.startsWith("/api/ariadne/core/")
+          && error.code === "CAPABILITY_DENIED"
+        ) {
+          return jsonError(
+            `Role lacks capability: ${CAPABILITY.ARIADNE_CORE_OPENAI_TEST}`,
+            error.status
+          );
+        }
+        return Response.json(
+          { ok: false, error: error.code },
+          { status: error.status }
+        );
+      }
+
       if (error instanceof AuthzError) {
         if (url.pathname === "/api/ariadne/core/openai-test") {
           return Response.json(
@@ -745,62 +756,13 @@ export default {
     }
   },
 
-  async email(message, env, ctx) {
-    const sender = String(message.from || "").trim().toLowerCase() || "unknown";
-    const recipient = String(message.to || "").trim().toLowerCase();
-    const recipientPersona = deriveRecipientPersona(recipient);
-    const subject = message.headers.get("subject") || "Automated Mesh Exchange";
-    const exchangeId = crypto.randomUUID();
-    const createdAt = new Date().toISOString();
-
-    try {
-      const ingress = await prepareEmailIngressPayload(message, env, {
-        exchange_id: exchangeId,
-        sender,
-        recipient,
-        recipient_persona: recipientPersona,
-        subject,
-        created_at: createdAt
-      });
-
-      if (env.MATRIX_EMAIL_QUEUE) {
-        await env.MATRIX_EMAIL_QUEUE.send(ingress);
-
-        console.log(
-          `[Queue Pipeline] Buffered exchange ${exchangeId} for ${recipientPersona}`
-        );
-      } else {
-        ensureD1(env);
-
-        await archiveExchangeRecord(
-          env,
-          buildExchangeRecordFromIngress(ingress, "direct")
-        );
-
-        console.log(
-          `[Direct Ingress] Stored exchange ${exchangeId} for ${recipientPersona}`
-        );
-      }
-    } catch (error) {
-      console.error(`[Email Intercept Exception]: ${error.message}`);
-      throw error;
-    }
-
-    const mirrorDestination =
-      env.MATRIX_MAIL_FORWARD_TO || "izeesub@gmail.com";
-
-    if (mirrorDestination && message.canBeForwarded) {
-      ctx.waitUntil(
-        message.forward(mirrorDestination).catch(error => {
-          console.error(`[Email Mirror Exception]: ${error.message}`);
-        })
-      );
-    }
+  async email(message) {
+    message.setReject(
+      "Direct email ingress disabled; route through mnemosyne-mail-gateway"
+    );
   },
 
   async queue(batch, env) {
-    ensureD1(env);
-
     for (const message of batch.messages) {
       try {
         if (String(message.body?.type || "").startsWith("continuity.")) {
@@ -813,19 +775,12 @@ export default {
           message.ack();
           continue;
         }
-
-        const ingress = normalizeQueuedIngress(message.body, message.id);
-
-        await archiveExchangeRecord(
-          env,
-          buildExchangeRecordFromIngress(ingress, "queue")
-        );
-
         message.ack();
-
-        console.log(
-          `[Queue Consumer] Stored exchange ${ingress.exchange_id} for ${ingress.recipient_persona}`
-        );
+        console.warn(JSON.stringify({
+          event: "mesh.queue.payload.rejected",
+          message_id: message.id,
+          reason_code: "DIRECT_EMAIL_INGRESS_RETIRED"
+        }));
       } catch (error) {
         if (String(message.body?.type || "").startsWith("continuity.")) {
           console.error(JSON.stringify({
@@ -866,7 +821,7 @@ class AuthzError extends Error {
   }
 }
 
-function authenticateRequest(request, env) {
+async function authenticateRequest(request, env) {
   const authorization = request.headers.get("Authorization");
   if (authorization) {
     return {
@@ -885,14 +840,20 @@ function authenticateRequest(request, env) {
     };
   }
 
-  if (env.MATRIX_AUTH_KEY && authKey === env.MATRIX_AUTH_KEY) {
+  if (
+    env.MATRIX_AUTH_KEY
+    && await constantTimeSecretEqual(authKey, env.MATRIX_AUTH_KEY)
+  ) {
     return {
       ok: true,
       principal: ARCHITECTUS_PRINCIPAL
     };
   }
 
-  if (env.MATRIX_DASHBOARD_KEY && authKey === env.MATRIX_DASHBOARD_KEY) {
+  if (
+    env.MATRIX_DASHBOARD_KEY
+    && await constantTimeSecretEqual(authKey, env.MATRIX_DASHBOARD_KEY)
+  ) {
     return {
       ok: true,
       principal: {
@@ -909,7 +870,7 @@ function authenticateRequest(request, env) {
     };
   }
 
-  const principal = principalFromScopedKey(authKey, env);
+  const principal = await authenticateLegacyRequest(request, env);
 
   if (!principal) {
     return {
@@ -938,49 +899,6 @@ function privacyScopeFromUrl(url) {
       ? { candidate_id: url.searchParams.get("candidate_id") }
       : {})
   };
-}
-
-function principalFromScopedKey(authKey, env) {
-  let records =
-    env.MATRIX_PRINCIPAL_KEYS ||
-    env.MNEMOSYNE_PRINCIPAL_KEYS;
-
-  if (!records) {
-    return null;
-  }
-
-  if (typeof records === "string") {
-    try {
-      records = JSON.parse(records);
-    } catch (error) {
-      console.error(
-        "Failed to parse MATRIX_PRINCIPAL_KEYS:",
-        error.message
-      );
-
-      return null;
-    }
-  }
-
-  let record = null;
-
-  if (Array.isArray(records)) {
-    record = records.find(
-      item =>
-        item?.key === authKey ||
-        item?.action_key === authKey
-    );
-  } else if (typeof records === "object") {
-    record = records[authKey] || null;
-  }
-
-  if (!record) {
-    return null;
-  }
-
-  return resolveCredentialPrincipal(
-    unwrapCredentialRecord(record)
-  );
 }
 
 function unwrapCredentialRecord(record) {
@@ -1221,6 +1139,19 @@ function requireAnyCapability(principal, capabilities) {
   }
 }
 
+function assertAriadneRouteAccess(principal) {
+  if (principal?.role === "root") {
+    requireCapability(principal, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+    return;
+  }
+  assertSpecialistAccess(principal, {
+    tenant_id: principal?.tenant_id,
+    project_id: principal?.project_ids?.[0],
+    domain_id: "logic-trend-analysis",
+    identity_id: "ariadne",
+  }, CAPABILITY.ARIADNE_CORE_OPENAI_TEST);
+}
+
 function allowedDomains(principal) {
   const allDomains = Object.keys(INDEX_BINDING);
 
@@ -1316,7 +1247,10 @@ async function handleMemorySearch(
     body.top_k ?? body.topK ?? DEFAULT_TOP_K
   );
   const threshold = sanitizeRetrievalThreshold(body.threshold);
-  const metadataFilter = buildMemoryMetadataFilter(body);
+  const metadataFilter = optionalAuthorizedVectorFilter(principal, {
+    ...body,
+    tenant_id: body.tenant_id ?? principal.tenant_id,
+  });
 
   if (!query) {
     return jsonError("query is required", 400);
@@ -1421,8 +1355,10 @@ async function executeSupplementalMemorySearch(input, env, principal) {
   const domains = [...new Set(input.domains || [])]
     .flatMap(domain => resolveSearchDomains(domain, principal));
   const topK = sanitizeTopK(input.topK);
-  const metadataFilter = buildMemoryMetadataFilter({
+  const metadataFilter = optionalAuthorizedVectorFilter(principal, {
+    tenant_id: principal.tenant_id,
     project_id: input.projectId,
+    domain_id: input.domainId,
     scope_key: input.scopeKey,
     runway_id: input.runwayId,
     created_after: input.createdAfter,
@@ -1469,28 +1405,6 @@ async function executeSupplementalMemorySearch(input, env, principal) {
       .map(formatVectorMatch),
     errors
   };
-}
-
-function buildMemoryMetadataFilter(body) {
-  const filter = {};
-  const bounded = (value, maximum = 128) => {
-    const normalized = String(value || "").trim();
-    return normalized && normalized.length <= maximum ? normalized : null;
-  };
-  const projectId = bounded(body.project_id);
-  const scopeKey = bounded(body.scope_key);
-  const runwayId = bounded(body.runway_id);
-  const createdAfter = bounded(body.created_after);
-  const sourceRefs = Array.isArray(body.source_refs)
-    ? body.source_refs.map(item => bounded(item, 500)).filter(Boolean).slice(0, 100)
-    : [];
-
-  if (projectId) filter.project_id = projectId;
-  if (scopeKey) filter.scope_key = scopeKey;
-  if (runwayId) filter.runway_id = runwayId;
-  if (createdAfter) filter.created = { $gte: createdAfter };
-  if (sourceRefs.length > 0) filter.source_ref = { $in: sourceRefs };
-  return filter;
 }
 
 function formatVectorMatch(match) {
@@ -2389,68 +2303,6 @@ async function handleExchangeArtifact(env, principal, exchangeId) {
   });
 }
 
-async function prepareEmailIngressPayload(message, env, envelope) {
-  const payloadSize = Number(message.rawSize || 0);
-
-  if (payloadSize <= MAX_INLINE_QUEUE_BYTES) {
-    const rawBody = await new Response(message.raw).text();
-
-    return {
-      ...envelope,
-      source: "email",
-      payload_mode: "inline",
-      payload_size: byteLength(rawBody),
-      raw_body: rawBody,
-      artifact_key: null,
-      artifact_content_type: null
-    };
-  }
-
-  if (!env.MATRIX_ARTIFACTS) {
-    message.setReject(
-      "Incoming artifact exceeds inline queue capacity. Configure MATRIX_ARTIFACTS or send an artifact reference."
-    );
-
-    throw new Error(
-      "Oversized email requires MATRIX_ARTIFACTS R2 binding"
-    );
-  }
-
-  const artifactKey = buildArtifactKey(
-    "email",
-    envelope.exchange_id,
-    "eml"
-  );
-
-  await env.MATRIX_ARTIFACTS.put(
-    artifactKey,
-    message.raw,
-    {
-      httpMetadata: {
-        contentType: "message/rfc822"
-      },
-
-      customMetadata: {
-        source: "email",
-        sender: envelope.sender,
-        recipient: envelope.recipient_persona,
-        exchange_id: envelope.exchange_id,
-        created_at: envelope.created_at
-      }
-    }
-  );
-
-  return {
-    ...envelope,
-    source: "email",
-    payload_mode: "artifact",
-    payload_size: payloadSize,
-    raw_body: "",
-    artifact_key: artifactKey,
-    artifact_content_type: "message/rfc822"
-  };
-}
-
 async function prepareTextExchangePayload(
   env,
   {
@@ -2508,128 +2360,6 @@ async function prepareTextExchangePayload(
     data: "",
     artifact_key: artifactKey,
     artifact_content_type: content_type
-  };
-}
-
-function normalizeQueuedIngress(payload, fallbackExchangeId) {
-  const source = String(payload?.source || "email");
-
-  if (source !== "email") {
-    throw new Error(
-      `Unsupported queue payload source: ${source}`
-    );
-  }
-
-  const recipient = String(payload?.recipient || "")
-    .trim()
-    .toLowerCase();
-
-  const recipientPersona = String(
-    payload?.recipient_persona ||
-    deriveRecipientPersona(recipient)
-  )
-    .trim()
-    .toLowerCase() || "unmapped";
-
-  const payloadMode =
-    payload?.payload_mode === "artifact"
-      ? "artifact"
-      : "inline";
-
-  return {
-    exchange_id: String(
-      payload?.exchange_id || fallbackExchangeId
-    ),
-
-    sender:
-      String(payload?.sender || "unknown")
-        .trim()
-        .toLowerCase() || "unknown",
-
-    recipient,
-    recipient_persona: recipientPersona,
-
-    subject: String(
-      payload?.subject || "Automated Mesh Exchange"
-    ),
-
-    created_at:
-      payload?.created_at ||
-      payload?.timestamp ||
-      new Date().toISOString(),
-
-    source,
-    payload_mode: payloadMode,
-
-    payload_size: Number(
-      payload?.payload_size ||
-      byteLength(String(payload?.raw_body || ""))
-    ),
-
-    raw_body:
-      payloadMode === "inline"
-        ? String(payload?.raw_body ?? payload?.rawBody ?? "")
-        : "",
-
-    artifact_key:
-      payloadMode === "artifact"
-        ? String(payload?.artifact_key || "")
-        : "",
-
-    artifact_content_type:
-      payloadMode === "artifact"
-        ? String(
-            payload?.artifact_content_type ||
-            "application/octet-stream"
-          )
-        : null
-  };
-}
-
-function buildExchangeRecordFromIngress(
-  ingress,
-  transport = "queue"
-) {
-  const prefix =
-    ingress.source === "email"
-      ? transport === "direct"
-        ? "Mail Exchange"
-        : "Queue Exchange"
-      : "Mesh Exchange";
-
-  const title =
-    ingress.source === "email"
-      ? `${prefix} [${ingress.recipient_persona}]: ${ingress.subject}`
-      : `${prefix} [${ingress.recipient_persona}]`;
-
-  return {
-    mandate_id: ingress.exchange_id,
-
-    title,
-
-    body: buildExchangeLedgerBody({
-      sender: ingress.sender,
-      recipient: ingress.recipient_persona,
-      recipient_address: ingress.recipient,
-      source: ingress.source,
-
-      payload: {
-        mode: ingress.payload_mode,
-        payload_size: ingress.payload_size,
-        data: ingress.raw_body,
-        artifact_key: ingress.artifact_key,
-        artifact_content_type: ingress.artifact_content_type
-      }
-    }),
-
-    created_by: ingress.sender,
-    created_at: ingress.created_at,
-
-    expires_at: new Date(
-      Date.now() + 24 * 60 * 60 * 1000
-    ).toISOString(),
-
-    state: "archived"
   };
 }
 

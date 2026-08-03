@@ -55,7 +55,7 @@ test("continuity capabilities are explicit per role and never inherited from mem
   assert.equal(roles.get("dashboard").capabilities.includes("continuity.write"), false);
 });
 
-test("scoped credentials expose only explicit normalized project scopes", async () => {
+test("specialist credentials expose only server-bound normalized project scopes", async () => {
   const worker = await loadWorker();
   const absent = await worker.fetch(
     authenticatedRequest("/v1/memory/self"),
@@ -75,7 +75,7 @@ test("scoped credentials expose only explicit normalized project scopes", async 
   );
 
   assert.equal(absent.status, 200);
-  assert.deepEqual((await absent.json()).project_ids, []);
+  assert.deepEqual((await absent.json()).project_ids, ["project-infinitum"]);
   assert.equal(explicit.status, 200);
   assert.deepEqual((await explicit.json()).project_ids, ["project-infinitum"]);
 });

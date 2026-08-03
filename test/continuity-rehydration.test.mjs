@@ -6,7 +6,7 @@ import {
   buildRunwayManifest,
   canonicalJson
 } from "../src/continuity.js";
-import { loadWorker } from "./helpers/worker-harness.mjs";
+import { loadWorker, migrateTestPrincipalEnvironment } from "./helpers/worker-harness.mjs";
 import { ContinuityMemoryD1 } from "./helpers/d1-continuity-memory.mjs";
 
 async function seededDatabase({ publishedAt = "2026-07-15T10:00:00.000Z" } = {}) {
@@ -102,11 +102,11 @@ async function seededDatabase({ publishedAt = "2026-07-15T10:00:00.000Z" } = {})
 }
 
 function environment(db, overrides = {}) {
-  return {
+  return migrateTestPrincipalEnvironment({
     DB: db,
     CONTINUITY_READ_ENABLED: "true",
     MATRIX_PRINCIPAL_KEYS: {
-      "specialist-key": {
+      "specialist-key-with-entropy": {
         credential_id: "ariadne",
         principal_id: "specialist",
         project_ids: ["project-infinitum"],
@@ -120,10 +120,10 @@ function environment(db, overrides = {}) {
       }
     },
     ...overrides
-  };
+  });
 }
 
-function rehydrateRequest(body = {}, key = "specialist-key") {
+function rehydrateRequest(body = {}, key = "specialist-key-with-entropy") {
   return new Request("https://worker.invalid/v1/continuity/rehydrate", {
     method: "POST",
     headers: {
@@ -174,6 +174,7 @@ test("older higher-scoring semantic evidence remains supplemental and separate",
   let queryOptions;
   const response = await worker.fetch(rehydrateRequest({
     supplemental_query: "continuity architecture",
+    domain_id: "logic-trend-analysis",
     supplemental_domains: ["knowledge", "files"],
     top_k: 5
   }), environment(db, {
@@ -219,6 +220,7 @@ test("supplemental failure is bounded and cannot erase exact context", async () 
   const db = await seededDatabase();
   const response = await worker.fetch(rehydrateRequest({
     supplemental_query: "continuity",
+    domain_id: "logic-trend-analysis",
     supplemental_domains: ["knowledge"]
   }), environment(db, {
     AI: { async run() { throw new Error("private provider details"); } }
@@ -248,7 +250,7 @@ test("audit routes require continuity.audit and preserve bounded lineage", async
   const db = await seededDatabase();
   const denied = await worker.fetch(new Request(
     "https://worker.invalid/v1/continuity/history?identity_id=ariadne&project_id=project-infinitum&scope_key=architecture",
-    { headers: { "X-Matrix-Key": "specialist-key" } }
+    { headers: { "X-Matrix-Key": "specialist-key-with-entropy" } }
   ), environment(db));
   const allowed = await worker.fetch(new Request(
     "https://worker.invalid/v1/continuity/history?identity_id=ariadne&project_id=project-infinitum&scope_key=architecture",

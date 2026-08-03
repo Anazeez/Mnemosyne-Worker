@@ -15,6 +15,7 @@ import {
   reviewMemoryCandidate,
 } from "./graph-memory/human-review.js";
 import { repairPendingProjections } from "./graph-memory/projection.js";
+import { contractForSpecialist } from "./specialists/policy.js";
 
 const OAUTH_STATE_TTL_SECONDS = 600;
 const OWNER_VALIDATION_STATE_PREFIX = "owner-validation.";
@@ -29,7 +30,13 @@ export const PUBLIC_OAUTH_SCOPES = Object.freeze(Object.keys(PUBLIC_SCOPE_CAPABI
 export const HUMAN_REVIEW_SCOPE = "memory:review";
 
 export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
-  apiRoute: Object.freeze(["/mcp", "/v1/memory/", "/admin/memory/"]),
+  apiRoute: Object.freeze([
+    "/mcp",
+    "/v1/session",
+    "/v1/memory/",
+    "/v1/mesh/",
+    "/admin/memory/",
+  ]),
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
@@ -137,6 +144,17 @@ export async function refreshGrantProps(props, { fetchImpl = fetch } = {}) {
     ...props,
     project_ids: [...new Set(grant.project_ids)].sort(),
     grant_version: grant.grant_version,
+    ...(grant.specialist_id ? {
+      principal_id: grant.principal_id,
+      role: "specialist",
+      specialist_id: grant.specialist_id,
+      identity_ids: [grant.specialist_id],
+      domain_ids: grant.domain_ids,
+      memory_domains: grant.memory_domains,
+      lane_permissions: grant.lane_permissions,
+      capabilities: grant.capabilities,
+      package_version: grant.package_version,
+    } : {}),
   };
 }
 
@@ -147,6 +165,7 @@ export function buildGrantClaims({
   projectIds = [],
   requestedScopes,
   allowOwnerReview = false,
+  specialistGrant = null,
 }) {
   const scope = narrowRequestedScopes(requestedScopes, {
     allowReview: allowOwnerReview,
@@ -161,6 +180,10 @@ export function buildGrantClaims({
     throw new Error("invalid_assistant_identity");
   }
   const login = String(githubUser.login ?? "");
+  const isSpecialist = !isOwnerReview && specialistGrant !== null;
+  if (isSpecialist && specialistGrant.assistant_id !== assistantId) {
+    throw new Error("invalid_assistant_identity");
+  }
   return {
     userId: `github-${numericId}`,
     scope,
@@ -172,14 +195,96 @@ export function buildGrantClaims({
       props: {
         auth_source: "oauth",
         credential_id: `github-${numericId}`,
-        principal_id: isOwnerReview ? "owner" : `github:${numericId}`,
-        role: isOwnerReview ? "owner" : "portal",
+        principal_id: isOwnerReview
+          ? "owner"
+          : isSpecialist
+            ? specialistGrant.principal_id
+            : `github:${numericId}`,
+        role: isOwnerReview ? "owner" : isSpecialist ? "specialist" : "portal",
         assistant_id: isOwnerReview ? "human-review-console" : assistantId,
         tenant_id: tenantId,
         project_ids: [...new Set(projectIds.map(String))],
-        identity_ids: [],
+        identity_ids: isSpecialist ? [specialistGrant.specialist_id] : [],
         scopes: scope,
+        ...(isSpecialist ? {
+          specialist_id: specialistGrant.specialist_id,
+          domain_ids: specialistGrant.domain_ids,
+          memory_domains: specialistGrant.memory_domains,
+          lane_permissions: specialistGrant.lane_permissions,
+          capabilities: specialistGrant.capabilities,
+          grant_version: specialistGrant.grant_version,
+          package_version: specialistGrant.package_version,
+        } : {}),
       },
+  };
+}
+
+export async function resolveSpecialistAssistantBinding(
+  db,
+  assistantId,
+  { packageVersion } = {},
+) {
+  if (!db || !/^oauth-[a-f0-9]{32}$/.test(String(assistantId ?? ""))) return null;
+  let row;
+  try {
+    row = await db.prepare(`
+      SELECT
+        b.assistant_id,
+        b.package_version,
+        p.principal_id,
+        p.specialist_id,
+        p.tenant_id,
+        p.project_ids_json,
+        p.domain_ids_json,
+        p.memory_domains_json,
+        p.capabilities_json,
+        p.lane_permissions_json,
+        p.grant_version
+      FROM specialist_assistant_bindings b
+      JOIN specialist_principals p ON p.principal_id = b.principal_id
+      WHERE b.assistant_id = ? AND b.active = 1 AND p.active = 1
+    `).bind(assistantId).first();
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message ?? error))) return null;
+    throw error;
+  }
+  if (!row) return null;
+  if (packageVersion && row.package_version !== packageVersion) {
+    throw statusError("grant_resolution_denied", 403);
+  }
+  const contract = contractForSpecialist(row.specialist_id);
+  const projectIds = parseGrantList(row.project_ids_json);
+  const domainIds = parseGrantList(row.domain_ids_json);
+  const memoryDomains = parseGrantList(row.memory_domains_json);
+  const capabilities = parseGrantList(row.capabilities_json);
+  const lanePermissions = parseGrantList(row.lane_permissions_json);
+  if (
+    !contract ||
+    projectIds.length === 0 ||
+    projectIds.includes("*") ||
+    domainIds.length === 0 ||
+    domainIds.includes("*") ||
+    memoryDomains.length === 0 ||
+    memoryDomains.includes("*") ||
+    !domainIds.every(value => contract.domain_ids.includes(value)) ||
+    !capabilities.every(value => contract.capabilities.includes(value)) ||
+    !lanePermissions.every(value => contract.lane_permissions.includes(value)) ||
+    !/^[a-f0-9]{64}$/.test(String(row.grant_version ?? ""))
+  ) {
+    throw statusError("grant_resolution_denied", 403);
+  }
+  return {
+    assistant_id: row.assistant_id,
+    package_version: row.package_version,
+    principal_id: row.principal_id,
+    specialist_id: row.specialist_id,
+    tenant_id: row.tenant_id,
+    project_ids: projectIds,
+    domain_ids: domainIds,
+    memory_domains: memoryDomains,
+    capabilities,
+    lane_permissions: lanePermissions,
+    grant_version: row.grant_version,
   };
 }
 
@@ -818,7 +923,21 @@ async function resolvePrivateGrant(request, env) {
     assistantId: body?.assistant_id,
     now: new Date().toISOString(),
   });
-  return Response.json(grant, {
+  const specialistGrant = await resolveSpecialistAssistantBinding(
+    env.DB,
+    body?.assistant_id,
+    { packageVersion: env.SPECIALIST_PACKAGE_VERSION || undefined },
+  );
+  const responseGrant = specialistGrant
+    ? {
+        ...specialistGrant,
+        project_ids: intersectProjects(grant.project_ids, specialistGrant.project_ids),
+      }
+    : grant;
+  if (specialistGrant && responseGrant.project_ids.length === 0) {
+    return Response.json({ error: "grant_resolution_denied" }, { status: 403 });
+  }
+  return Response.json(responseGrant, {
     headers: { "Cache-Control": "no-store" },
   });
 }
@@ -943,15 +1062,27 @@ async function completeGitHubAuthorization({
     assistantId,
     now: new Date().toISOString(),
   });
+  const specialistGrant = await resolveSpecialistAssistantBinding(
+    env.DB,
+    assistantId,
+    { packageVersion: env.SPECIALIST_PACKAGE_VERSION || undefined },
+  );
+  const projectIds = specialistGrant
+    ? intersectProjects(grant.project_ids, specialistGrant.project_ids)
+    : grant.project_ids;
+  if (specialistGrant && projectIds.length === 0) {
+    throw statusError("grant_resolution_denied", 403);
+  }
   const claims = buildGrantClaims({
     githubUser,
     tenantId: env.MEMORY_TENANT_ID || "personal",
     assistantId,
-    projectIds: grant.project_ids,
+    projectIds,
     requestedScopes: stored.scopes,
     allowOwnerReview:
       Boolean(stored.allowOwnerReview) &&
       parseCsv(env.MEMORY_OWNER_GITHUB_IDS).includes(String(githubUser.id)),
+    specialistGrant,
   });
   const resolverToken = String(env.GRANT_RESOLVER_TOKEN || "");
   if (resolverToken.length < 32) {
@@ -1198,6 +1329,23 @@ function parseCsv(value) {
     .split(",")
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function parseGrantList(value) {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]"));
+    if (!Array.isArray(parsed) || parsed.some(item => typeof item !== "string")) {
+      return [];
+    }
+    return [...new Set(parsed.map(item => item.trim().toLowerCase()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+function intersectProjects(ownerProjects, specialistProjects) {
+  const allowed = new Set(specialistProjects ?? []);
+  return [...new Set(ownerProjects ?? [])].filter(project => allowed.has(project)).sort();
 }
 
 function parseProjectIds(value) {

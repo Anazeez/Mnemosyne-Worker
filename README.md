@@ -2,9 +2,9 @@
 
 > الأصل نصٌّ والبقية ظلال
 
-**Role:** Vector memory layer for Project Infinitum  
+**Role:** Governed shared memory and signed private specialist-mesh persistence
 **Worker:** `mnemosyne-worker.izeesub.workers.dev`  
-**Auth:** `X-Matrix-Key` header  
+**Auth:** OAuth 2.1 primary; D1-backed HMAC compatibility during migration
 
 ## Matrix Indexes
 
@@ -20,6 +20,11 @@
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/ping` | ✗ | Health check |
+| GET | `/openapi.json` | ✗ | Custom GPT Actions contract |
+| GET | `/v1/identity` | Matrix key | Return only the key-bound specialist identity and bounded grants |
+| GET | `/v1/session` | OAuth specialist | Return only the token-bound specialist identity and bounded grants |
+| POST | `/v1/mesh/messages` | signed gateway | Accept one bounded mesh envelope |
+| GET | `/v1/mesh/inbox` | OAuth specialist | Read the caller's private inbox |
 | POST | `/hash` | ✓ | Compute SHA-256 before ingest |
 | POST | `/ingest` | ✓ | Validate + embed + upsert |
 | POST | `/query` | ✓ | Semantic search |
@@ -28,9 +33,22 @@
 
 The Worker now contains an OAuth 2.1, tenant-scoped graph-memory surface.
 Deployment remains progressive and default-off. The public contract contains
-exactly five operations: rehydrate, search, bounded traversal, candidate
-proposal, and own-candidate status. Assistants cannot review, resolve, publish,
-invalidate, delete, export, or repair projections.
+the five governed memory operations, public `checkHealth`, and a specialist-only
+private mesh inbox. Assistants cannot review, resolve, publish, invalidate,
+delete, export, or repair projections.
+
+## Specialist mesh and email boundary
+
+The Worker accepts only HMAC-signed `mnemosyne.mesh.v1` envelopes at
+`/v1/mesh/messages`. Message IDs are idempotent, root-local exchanges stay
+private, and only cleared security preflights may enter `running`. A blocked
+message requires an explicit Architectus override record.
+
+Direct Cloudflare Email Routing delivery to this Worker is deliberately
+rejected. Email must terminate at the standalone `mnemosyne-mail-gateway`,
+which authenticates the sender, applies Synn preflight, normalizes attachments,
+and signs the bounded mesh envelope. The Worker does not archive raw MIME,
+mirror mail to Gmail, or read plaintext per-persona passwords.
 
 See [graph-memory operations](docs/graph-memory-operations.md) for flags,
 deployment order, recovery, and the D1-authoritative privacy model.

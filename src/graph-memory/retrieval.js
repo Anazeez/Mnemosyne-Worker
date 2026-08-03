@@ -4,6 +4,7 @@ import {
   normalizeGraphTarget
 } from "./contracts.js";
 import { assertGraphAccess } from "./policy.js";
+import { optionalAuthorizedVectorFilter } from "../specialists/retrieval.js";
 import {
   buildContextPackage,
   DEFAULT_CONTEXT_BUDGET_TOKENS,
@@ -89,6 +90,11 @@ export async function searchAcceptedMemory({ env, principal, body }) {
   requireDatabase(env);
   const target = normalizeGraphTarget(body);
   assertGraphAccess(principal, target, "memory.search");
+  const vectorFilter = optionalAuthorizedVectorFilter(principal, {
+    tenant_id: target.tenant_id,
+    project_id: target.project_id,
+    domain_id: body?.domain_id,
+  });
   const query = String(body?.query ?? "").trim();
   if (query.length < 1 || query.length > 1_000) {
     throw new GraphMemoryError(
@@ -127,7 +133,8 @@ export async function searchAcceptedMemory({ env, principal, body }) {
     target,
     query,
     allowedAssertionIds,
-    topK
+    topK,
+    vectorFilter,
   });
   const rankedIds = fuseRankedAssertionIds({
     lexicalIds,
@@ -192,7 +199,11 @@ export async function semanticAcceptedAssertionIds({
   target,
   query,
   allowedAssertionIds,
-  topK
+  topK,
+  vectorFilter = {
+    tenant_id: target.tenant_id,
+    project_id: target.project_id,
+  },
 }) {
   if (!env?.MATRIX_KNOWLEDGE?.query) {
     return {
@@ -232,10 +243,7 @@ export async function semanticAcceptedAssertionIds({
     const result = await env.MATRIX_KNOWLEDGE.query(vector, {
       topK: Math.min(Math.max(topK * 3, 10), 50),
       returnMetadata: "all",
-      filter: {
-        tenant_id: target.tenant_id,
-        project_id: target.project_id
-      }
+      filter: vectorFilter
     });
     const matches = (result?.matches || []).map(match => ({
       id: String(

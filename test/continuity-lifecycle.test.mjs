@@ -8,7 +8,7 @@ import {
   canonicalJson
 } from "../src/continuity.js";
 import { buildBackfillRequests } from "../scripts/backfill-context-runways.mjs";
-import { loadWorker } from "./helpers/worker-harness.mjs";
+import { loadWorker, migrateTestPrincipalEnvironment } from "./helpers/worker-harness.mjs";
 import { ContinuityMemoryD1 } from "./helpers/d1-continuity-memory.mjs";
 
 async function databaseWithHead() {
@@ -75,12 +75,12 @@ async function databaseWithHead() {
 }
 
 function environment(db, overrides = {}) {
-  return {
+  return migrateTestPrincipalEnvironment({
     DB: db,
     CONTINUITY_READ_ENABLED: "true",
     CONTINUITY_WRITE_ENABLED: "true",
     MATRIX_PRINCIPAL_KEYS: {
-      "specialist-key": {
+      "specialist-key-with-entropy": {
         credential_id: "ariadne",
         principal_id: "specialist",
         project_ids: ["project-infinitum"]
@@ -92,7 +92,7 @@ function environment(db, overrides = {}) {
       project_ids: ["project-infinitum"]
     },
     ...overrides
-  };
+  });
 }
 
 function post(path, body) {
@@ -100,7 +100,7 @@ function post(path, body) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Matrix-Key": "specialist-key"
+      "X-Matrix-Key": "specialist-key-with-entropy"
     },
     body: JSON.stringify(body)
   });
@@ -201,6 +201,7 @@ test("shadow mode compares exact continuity with supplemental evidence without r
     invocation_id: "inv_shadow",
     identity_id: "ariadne",
     project_id: "project-infinitum",
+    domain_id: "logic-trend-analysis",
     scope_key: "architecture",
     shadow_query: "older context",
     supplemental_domains: ["knowledge"]
@@ -331,7 +332,7 @@ test("invocation enforcement requires an eligible exact-resolution receipt at Ar
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Matrix-Key": "specialist-key",
+          "X-Matrix-Key": "specialist-key-with-entropy",
           "X-Continuity-Receipt": receiptId
         },
         body: JSON.stringify(intakeBody)
