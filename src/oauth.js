@@ -235,7 +235,7 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
           return await beginConsent(request, env);
         }
         if (url.pathname === "/authorize" && request.method === "POST") {
-          return await acceptConsent(request, env);
+          return await acceptConsent(request, env, fetchImpl);
         }
         if (url.pathname === "/callback" && request.method === "GET") {
           const ownerState = String(url.searchParams.get("state") || "");
@@ -862,7 +862,7 @@ async function beginConsent(request, env) {
   );
 }
 
-async function acceptConsent(request, env) {
+async function acceptConsent(request, env, fetchImpl) {
   requireOAuthBindings(env);
   const requestId = new URL(request.url).searchParams.get("request");
   const stored = await readState(env, requestId, "consent");
@@ -871,8 +871,21 @@ async function acceptConsent(request, env) {
   if (!csrf || csrf !== stored.csrf || csrf !== readCookie(request, "mnemosyne_csrf")) {
     throw statusError("csrf_validation_failed", 403);
   }
-  const githubState = randomToken();
+  const githubCredential = githubBearerCredential(request);
   await env.OAUTH_KV.delete(stateKey(requestId));
+  if (githubCredential) {
+    const githubUser = await fetchGithubUser(
+      githubCredential,
+      fetchImpl,
+    );
+    return await completeGitHubAuthorization({
+      stored,
+      githubUser,
+      env,
+      resourceOrigin: new URL(request.url).origin,
+    });
+  }
+  const githubState = randomToken();
   await env.OAUTH_KV.put(
     stateKey(githubState),
     JSON.stringify({
@@ -902,6 +915,20 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
   await env.OAUTH_KV.delete(stateKey(state));
   const githubUser = await exchangeGithubIdentity(url, env, fetchImpl);
 
+  return await completeGitHubAuthorization({
+    stored,
+    githubUser,
+    env,
+    resourceOrigin: url.origin,
+  });
+}
+
+async function completeGitHubAuthorization({
+  stored,
+  githubUser,
+  env,
+  resourceOrigin,
+}) {
   const ownerGithubId = assertAllowedGithubUser(
     githubUser,
     parseAllowedGithubUserIds(env.AUTHORIZED_GITHUB_USER_IDS),
@@ -933,7 +960,7 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
   claims.props.owner_github_id = ownerGithubId;
   claims.props.grant_version = grant.grant_version;
   claims.props.grant_resolver_url =
-    `${url.origin}/internal/oauth/grants`;
+    `${resourceOrigin}/internal/oauth/grants`;
   claims.props.grant_resolver_token = resolverToken;
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
     request: stored.authRequest,
@@ -958,10 +985,14 @@ async function exchangeGithubIdentity(url, env, fetchImpl) {
   if (!tokenResponse.ok || !tokenBody.access_token) {
     throw statusError(`github_token_exchange_failed status=${tokenResponse.status}`, 502);
   }
+  return await fetchGithubUser(tokenBody.access_token, fetchImpl);
+}
+
+async function fetchGithubUser(accessToken, fetchImpl) {
   const userResponse = await fetchImpl(GITHUB_USER_URL, {
     headers: {
       Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${tokenBody.access_token}`,
+      Authorization: `Bearer ${accessToken}`,
       "User-Agent": "mnemosyne-shared-memory",
       "X-GitHub-Api-Version": "2022-11-28",
     },
@@ -971,6 +1002,14 @@ async function exchangeGithubIdentity(url, env, fetchImpl) {
     throw statusError(`github_identity_failed status=${userResponse.status}`, 502);
   }
   return githubUser;
+}
+
+function githubBearerCredential(request) {
+  const header = request.headers.get("Authorization") || "";
+  if (!header) return "";
+  const match = header.match(/^Bearer ([^\s]+)$/);
+  if (!match) throw statusError("github_bearer_invalid", 401);
+  return match[1];
 }
 
 function requireOAuthBindings(env) {

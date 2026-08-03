@@ -832,6 +832,80 @@ test("OAuth authorization resolves project claims from D1 grants", async () => {
   );
 });
 
+test("owner GitHub bearer credential completes a one-time CLI authorization", async () => {
+  const kv = memoryKv();
+  const env = await migratedGraphMemoryEnvironment(oauthEnvironment(kv));
+  env.AUTHORIZED_GITHUB_USER_IDS = "277895262";
+  env.MEMORY_TENANT_ID = "personal";
+  env.GRANT_RESOLVER_TOKEN = "resolver-token-with-at-least-32-characters";
+  const assistantId = await assistantIdForOAuthClient("client");
+  await approveAssistantGrant(env.DB, {
+    tenant_id: "personal",
+    owner_github_id: 277895262,
+    assistant_id: assistantId,
+    project_id: "project-alpha",
+    capabilities: ["memory.read", "memory.search"],
+    approved_by: "owner:277895262",
+    reason: "owner approved CLI access",
+    idempotency_key: "grant-cli-project-alpha",
+    permanent: true,
+    now: "2026-07-27T00:00:00.000Z",
+  });
+  let completedGrant;
+  env.OAUTH_PROVIDER.completeAuthorization = async grant => {
+    completedGrant = grant;
+    return {
+      redirectTo:
+        "http://127.0.0.1:38195/callback/codex?code=issued&state=client-state",
+    };
+  };
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+    fetchImpl: async (url, init) => {
+      assert.equal(url, "https://api.github.com/user");
+      assert.equal(init.headers.Authorization, "Bearer github-cli-token");
+      return Response.json({ id: 277895262, login: "Anazeez" });
+    },
+  });
+  const consent = await handler.fetch(
+    new Request("https://memory.example/authorize?client_id=client"),
+    env,
+  );
+  const cookie = consent.headers.get("set-cookie").split(";")[0];
+  const html = await consent.text();
+  const requestId = html.match(/request=([^"]+)/)[1];
+  const csrf = html.match(/name="csrf" value="([^"]+)"/)[1];
+  const request = () => new Request(
+    `https://memory.example/authorize?request=${requestId}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer github-cli-token",
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookie,
+      },
+      body: `csrf=${encodeURIComponent(csrf)}`,
+    },
+  );
+
+  const completed = await handler.fetch(request(), env);
+  assert.equal(completed.status, 302);
+  assert.equal(
+    completed.headers.get("location"),
+    "http://127.0.0.1:38195/callback/codex?code=issued&state=client-state",
+  );
+  assert.equal(completedGrant.props.principal_id, "github:277895262");
+  assert.deepEqual(completedGrant.props.project_ids, [
+    "global-canon",
+    "project-alpha",
+  ]);
+  assert.doesNotMatch(JSON.stringify(completedGrant), /github-cli-token/);
+
+  const replay = await handler.fetch(request(), env);
+  assert.equal(replay.status, 400);
+  assert.equal((await replay.json()).detail, "oauth_state_invalid_or_expired");
+});
+
 test("refresh resolves the current project grant through the private resolver", async () => {
   const calls = [];
   const props = {
