@@ -1014,8 +1014,26 @@ async function administerVisualSkillConsumer(request, env) {
 async function hasOwnerKey(request, env) {
   const configuredKey = String(env.MATRIX_AUTH_KEY || "");
   const suppliedKey = request.headers.get("X-Matrix-Key") || "";
-  return configuredKey.length >= 20
-    && await constantTimeEqual(configuredKey, suppliedKey);
+  if (
+    configuredKey.length >= 20
+    && await constantTimeEqual(configuredKey, suppliedKey)
+  ) return true;
+  const resolverToken = String(env.GRANT_RESOLVER_TOKEN || "");
+  if (resolverToken.length < 32) return false;
+  return constantTimeEqual(
+    await deriveVisualSkillAdminKey(resolverToken),
+    suppliedKey,
+  );
+}
+
+export async function deriveVisualSkillAdminKey(resolverToken) {
+  const token = String(resolverToken || "");
+  if (token.length < 32) throw new Error("visual_skill_admin_key_source_invalid");
+  const bytes = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`mnemosyne:visual-skill-admin:v1\0${token}`),
+  ));
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function assertAdminGrantTarget(input, env) {

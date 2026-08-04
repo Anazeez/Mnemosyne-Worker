@@ -30,5 +30,13 @@
     "line": 4,
     "evidence": "The database assistant identifier glob admitted non-hex suffix characters; the constraint now rejects every non-hex character after oauth-.",
     "verification": "passed"
+  },
+  {
+    "dimension": "security",
+    "severity": "high",
+    "path": "src/oauth.js",
+    "line": 1014,
+    "evidence": "Deployment automation uses a domain-separated SHA-256 derivative of the resolver secret; the raw resolver token and foreign keys are denied before packet parsing or mutation.",
+    "verification": "passed"
   }
 ]

@@ -214,3 +214,17 @@ test("production workflow ensures every scalar visual retrieval filter is indexe
     assert.match(workflow, new RegExp(`ensure_metadata_index ${property}`));
   }
 });
+
+test("visual rollout workflow can mutate only the exact reviewed projection packet", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/visual-skill-rollout.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /GRANT_RESOLVER_TOKEN: \$\{\{ secrets\.GRANT_RESOLVER_TOKEN \}\}/);
+  assert.match(workflow, /deriveVisualSkillAdminKey/);
+  assert.match(workflow, /projection-manifest\.json/);
+  assert.match(workflow, /2026-08-04\.1/);
+  assert.match(workflow, /f7f1069e200d4f22e03dd8de219dfbec897817da18bebc2a6a44c908f484e5ea/);
+  assert.match(workflow, /upsert\|remove-version/);
+  assert.doesNotMatch(workflow, /visual-skills:consumer|command.?approve/);
+});

@@ -4,7 +4,10 @@ import test from "node:test";
 
 import { manageVisualSkillProjection } from "../src/visual-skills/management.js";
 import { prepareVisualSkillProjection } from "../src/visual-skills/projection.js";
-import { createOAuthDefaultHandler } from "../src/oauth.js";
+import {
+  createOAuthDefaultHandler,
+  deriveVisualSkillAdminKey,
+} from "../src/oauth.js";
 
 const card = JSON.parse(await readFile(
   new URL("fixtures/visual-skills/accepted-card.json", import.meta.url),
@@ -151,7 +154,7 @@ test("management rejects hash drift, foreign environments, broad prefixes, and u
 
 test("owner-protected projection endpoint applies only the exact reviewed packet", async () => {
   const env = bindings();
-  env.MATRIX_AUTH_KEY = "owner-key-with-enough-entropy";
+  env.GRANT_RESOLVER_TOKEN = "resolver-token-with-at-least-32-characters";
   env.ENVIRONMENT = "production";
   const handler = createOAuthDefaultHandler({
     legacyWorker: { fetch: () => new Response("legacy") },
@@ -161,7 +164,7 @@ test("owner-protected projection endpoint applies only the exact reviewed packet
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Matrix-Key": env.MATRIX_AUTH_KEY,
+        "X-Matrix-Key": await deriveVisualSkillAdminKey(env.GRANT_RESOLVER_TOKEN),
       },
       body: JSON.stringify({
         command: "upsert",
@@ -178,4 +181,30 @@ test("owner-protected projection endpoint applies only the exact reviewed packet
   assert.equal(response.status, 200);
   assert.equal((await response.json()).applied, 2);
   assert.equal(env.stored.size, 2);
+});
+
+test("visual admin derivation never accepts the resolver token itself or a foreign key", async () => {
+  const env = bindings();
+  env.GRANT_RESOLVER_TOKEN = "resolver-token-with-at-least-32-characters";
+  env.ENVIRONMENT = "production";
+  const handler = createOAuthDefaultHandler({
+    legacyWorker: { fetch: () => new Response("legacy") },
+  });
+  for (const supplied of [env.GRANT_RESOLVER_TOKEN, "0".repeat(64)]) {
+    const response = await handler.fetch(
+      new Request("https://memory.example/internal/admin/visual-skills/projection", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Matrix-Key": supplied,
+        },
+        body: JSON.stringify({ command: "plan" }),
+      }),
+      env,
+    );
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, "visual_skill_admin_denied");
+  }
+  assert.equal(env.calls.ai, 0);
+  assert.equal(env.calls.upsert, 0);
 });

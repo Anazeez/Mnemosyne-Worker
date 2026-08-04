@@ -1,0 +1,62 @@
+name: Visual skill rollout
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: Exact reviewed projection operation
+        required: true
+        type: choice
+        options:
+          - plan
+          - upsert
+          - verify
+          - remove-version
+        default: plan
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mnemosyne-visual-skill-rollout
+  cancel-in-progress: false
+
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GRANT_RESOLVER_TOKEN: ${{ secrets.GRANT_RESOLVER_TOKEN }}
+      MNEMOSYNE_ADMIN_URL: https://memory.azzayezz.com
+      VISUAL_SKILL_MANIFEST: artifacts/visual-skills/2026-08-04.1/projection-manifest.json
+      VISUAL_SKILL_CATALOG_VERSION: 2026-08-04.1
+      VISUAL_SKILL_INSTALLED_HASH: f7f1069e200d4f22e03dd8de219dfbec897817da18bebc2a6a44c908f484e5ea
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Validate exact rollout packet
+        run: node --test test/visual-skills-contracts.test.mjs test/visual-skills-projection.test.mjs test/manage-visual-skill-projection.test.mjs
+      - name: Execute bounded projection operation
+        shell: bash
+        run: |
+          test -n "$GRANT_RESOLVER_TOKEN"
+          VISUAL_ADMIN_KEY="$(node --input-type=module -e 'import {deriveVisualSkillAdminKey} from "./src/oauth.js"; process.stdout.write(await deriveVisualSkillAdminKey(process.env.GRANT_RESOLVER_TOKEN));')"
+          echo "::add-mask::$VISUAL_ADMIN_KEY"
+          APPLY=()
+          case "${{ inputs.command }}" in
+            upsert|remove-version) APPLY=(--apply) ;;
+            plan|verify) ;;
+            *) exit 2 ;;
+          esac
+          MATRIX_AUTH_KEY="$VISUAL_ADMIN_KEY" node scripts/manage-visual-skill-projection.mjs \
+            "${{ inputs.command }}" \
+            --manifest "$VISUAL_SKILL_MANIFEST" \
+            --expected-catalog-version "$VISUAL_SKILL_CATALOG_VERSION" \
+            --expected-installed-skill-hash "$VISUAL_SKILL_INSTALLED_HASH" \
+            --environment production \
+            "${APPLY[@]}" | tee /tmp/visual-skill-receipt.json

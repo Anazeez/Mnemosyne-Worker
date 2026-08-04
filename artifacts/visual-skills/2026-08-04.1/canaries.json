@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "id": "health-actions-enabled",
+      "kind": "http",
+      "url": "https://memory.azzayezz.com/ping",
+      "expect_status": 200,
+      "contains": "\"actions\":true",
+      "timeout_seconds": 8
+    },
+    {
+      "id": "openapi-visual-retrieval",
+      "kind": "http",
+      "url": "https://memory.azzayezz.com/openapi.json?revision=cb04235",
+      "expect_status": 200,
+      "contains": "retrieveSkills",
+      "timeout_seconds": 8
+    }
+  ]
+}

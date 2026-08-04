@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "id": "health-actions-enabled",
+      "kind": "http",
+      "latency_ms": 422.146,
+      "reasons": [],
+      "status": 200,
+      "verification": "passed"
+    },
+    {
+      "id": "openapi-visual-retrieval",
+      "kind": "http",
+      "latency_ms": 327.052,
+      "reasons": [],
+      "status": 200,
+      "verification": "passed"
+    }
+  ],
+  "verification": "passed"
+}
