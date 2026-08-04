@@ -26,7 +26,11 @@ export class VisualSkillContractError extends Error {
 export function projectionIdFor(consumerId, skillId) {
   const consumer = normalizeConsumer(consumerId);
   const skill = normalizeIdentifier(skillId, "VISUAL_SKILL_ID_INVALID");
-  return `${VISUAL_SKILL_CONTRACT.projection_prefix}${consumer}:${skill}`;
+  const id = `${VISUAL_SKILL_CONTRACT.projection_prefix}${consumer}:${stableIdToken(skill)}`;
+  if (new TextEncoder().encode(id).length > 64) {
+    throw invalid("VISUAL_SKILL_PROJECTION_ID_TOO_LONG");
+  }
+  return id;
 }
 
 export function buildVisualSkillProjection(card, consumerId, clientMetadata = {}) {
@@ -148,6 +152,15 @@ function normalizeIdentifier(value, code) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!IDENTIFIER.test(normalized) || normalized.includes("..")) throw invalid(code);
   return normalized;
+}
+
+function stableIdToken(value) {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(value)) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
 }
 
 function invalid(code) {

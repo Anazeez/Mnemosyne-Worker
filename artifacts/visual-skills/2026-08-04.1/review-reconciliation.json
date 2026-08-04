@@ -35,6 +35,16 @@
       "dimensions": [
         "correctness"
       ],
+      "evidence": "Human-readable projection identifiers exceeded Cloudflare Vectorize's 64-byte ID limit; deterministic FNV-1a tokens now cap all 48 unique IDs at 60 bytes.",
+      "line": 26,
+      "path": "src/visual-skills/contracts.js",
+      "severity": "high",
+      "verification": "passed"
+    },
+    {
+      "dimensions": [
+        "correctness"
+      ],
       "evidence": "Retrieval scope checks did not validate all projection provenance fields; the full projection contract is now validated before a match is returned.",
       "line": 84,
       "path": "src/visual-skills/retrieval.js",

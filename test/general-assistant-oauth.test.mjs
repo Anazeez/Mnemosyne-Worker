@@ -15,6 +15,7 @@ import {
   revokeVisualSkillConsumer,
 } from "../src/visual-skills/consumers.js";
 import { assistantIdForOAuthClient } from "../src/oauth.js";
+import { projectionIdFor } from "../src/visual-skills/contracts.js";
 import {
   handleOpenApiRequest,
   OPENAPI_DOCUMENT,
@@ -229,7 +230,7 @@ test("OAuth session and skills route expose bounded general-assistant identity a
         MATRIX_SKILLS: {
           async query() {
             return { matches: [{
-              id: "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
+              id: projectionIdFor("general-assistant", metadata.skill_id),
               score: 0.9,
               metadata,
             }] };

@@ -38,5 +38,13 @@
     "line": 1014,
     "evidence": "Deployment automation uses a domain-separated SHA-256 derivative of the resolver secret; the raw resolver token and foreign keys are denied before packet parsing or mutation.",
     "verification": "passed"
+  },
+  {
+    "dimension": "correctness",
+    "severity": "high",
+    "path": "src/visual-skills/contracts.js",
+    "line": 26,
+    "evidence": "Human-readable projection identifiers exceeded Cloudflare Vectorize's 64-byte ID limit; deterministic FNV-1a tokens now cap all 48 unique IDs at 60 bytes.",
+    "verification": "passed"
   }
 ]

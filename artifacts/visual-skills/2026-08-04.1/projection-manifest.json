@@ -8,248 +8,248 @@
   "card_count": 24,
   "projection_count": 48,
   "ids": [
-    "visual-skill:2026-08-04.1:general-assistant:cdv-apply-design-standards",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-audit-presentation-coherence",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-build-a-visual-practice",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-choose-tool-by-data-and-output",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-contextualize-scale",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-critique-against-standards",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-define-visualization-purpose",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-design-for-clarity-without-interaction",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-ensure-presentation-readability",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-explain-every-chart",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-explore-then-explain",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-invite-audience-interaction",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-make-insight-familiar-and-obvious",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-match-chart-to-visual-literacy",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-pair-insight-display-and-attention",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-protect-data-in-visualization-tools",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-redesign-slide-for-clarity",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-remove-non-data-ink",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-select-static-animated-or-interactive",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-share-data-for-decision-culture",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-test-with-audience",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-understand-and-prepare-data",
-    "visual-skill:2026-08-04.1:general-assistant:cdv-visual-evidence-for-decisions",
-    "visual-skill:2026-08-04.1:haava:cdv-apply-design-standards",
-    "visual-skill:2026-08-04.1:haava:cdv-audit-presentation-coherence",
-    "visual-skill:2026-08-04.1:haava:cdv-build-a-visual-practice",
-    "visual-skill:2026-08-04.1:haava:cdv-choose-tool-by-data-and-output",
-    "visual-skill:2026-08-04.1:haava:cdv-contextualize-scale",
-    "visual-skill:2026-08-04.1:haava:cdv-critique-against-standards",
-    "visual-skill:2026-08-04.1:haava:cdv-define-visualization-purpose",
-    "visual-skill:2026-08-04.1:haava:cdv-design-for-clarity-without-interaction",
-    "visual-skill:2026-08-04.1:haava:cdv-ensure-presentation-readability",
-    "visual-skill:2026-08-04.1:haava:cdv-explain-every-chart",
-    "visual-skill:2026-08-04.1:haava:cdv-explore-then-explain",
-    "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
-    "visual-skill:2026-08-04.1:haava:cdv-invite-audience-interaction",
-    "visual-skill:2026-08-04.1:haava:cdv-make-insight-familiar-and-obvious",
-    "visual-skill:2026-08-04.1:haava:cdv-match-chart-to-visual-literacy",
-    "visual-skill:2026-08-04.1:haava:cdv-pair-insight-display-and-attention",
-    "visual-skill:2026-08-04.1:haava:cdv-protect-data-in-visualization-tools",
-    "visual-skill:2026-08-04.1:haava:cdv-redesign-slide-for-clarity",
-    "visual-skill:2026-08-04.1:haava:cdv-remove-non-data-ink",
-    "visual-skill:2026-08-04.1:haava:cdv-select-static-animated-or-interactive",
-    "visual-skill:2026-08-04.1:haava:cdv-share-data-for-decision-culture",
-    "visual-skill:2026-08-04.1:haava:cdv-test-with-audience",
-    "visual-skill:2026-08-04.1:haava:cdv-understand-and-prepare-data",
-    "visual-skill:2026-08-04.1:haava:cdv-visual-evidence-for-decisions"
+    "visual-skill:2026-08-04.1:general-assistant:10053410718f2c95",
+    "visual-skill:2026-08-04.1:general-assistant:1248e43168b20986",
+    "visual-skill:2026-08-04.1:general-assistant:2c8fe3af9be90e40",
+    "visual-skill:2026-08-04.1:general-assistant:30a8606db6049194",
+    "visual-skill:2026-08-04.1:general-assistant:33d6ff14104fb561",
+    "visual-skill:2026-08-04.1:general-assistant:3d9dff55fee970be",
+    "visual-skill:2026-08-04.1:general-assistant:54b64c5639d65243",
+    "visual-skill:2026-08-04.1:general-assistant:6ba09d93531e656a",
+    "visual-skill:2026-08-04.1:general-assistant:84b8255a658a13f2",
+    "visual-skill:2026-08-04.1:general-assistant:8f889595ad2a1ee5",
+    "visual-skill:2026-08-04.1:general-assistant:8fef1275b4044b83",
+    "visual-skill:2026-08-04.1:general-assistant:942ffcdf70dfcae3",
+    "visual-skill:2026-08-04.1:general-assistant:a01543473f46e0e3",
+    "visual-skill:2026-08-04.1:general-assistant:ad50afd8a2f68fac",
+    "visual-skill:2026-08-04.1:general-assistant:ae9de198b1b0e2e8",
+    "visual-skill:2026-08-04.1:general-assistant:bfa131cd1737e8a3",
+    "visual-skill:2026-08-04.1:general-assistant:c5e92c98442b2351",
+    "visual-skill:2026-08-04.1:general-assistant:c7df066400f1edf7",
+    "visual-skill:2026-08-04.1:general-assistant:dfce67c824e615fd",
+    "visual-skill:2026-08-04.1:general-assistant:e2215a14a23f4d52",
+    "visual-skill:2026-08-04.1:general-assistant:e93f9b7d8e0c0448",
+    "visual-skill:2026-08-04.1:general-assistant:ea7bd8f7883ffde2",
+    "visual-skill:2026-08-04.1:general-assistant:ea9c524a3f7034a2",
+    "visual-skill:2026-08-04.1:general-assistant:fcdb5050a13b881e",
+    "visual-skill:2026-08-04.1:haava:10053410718f2c95",
+    "visual-skill:2026-08-04.1:haava:1248e43168b20986",
+    "visual-skill:2026-08-04.1:haava:2c8fe3af9be90e40",
+    "visual-skill:2026-08-04.1:haava:30a8606db6049194",
+    "visual-skill:2026-08-04.1:haava:33d6ff14104fb561",
+    "visual-skill:2026-08-04.1:haava:3d9dff55fee970be",
+    "visual-skill:2026-08-04.1:haava:54b64c5639d65243",
+    "visual-skill:2026-08-04.1:haava:6ba09d93531e656a",
+    "visual-skill:2026-08-04.1:haava:84b8255a658a13f2",
+    "visual-skill:2026-08-04.1:haava:8f889595ad2a1ee5",
+    "visual-skill:2026-08-04.1:haava:8fef1275b4044b83",
+    "visual-skill:2026-08-04.1:haava:942ffcdf70dfcae3",
+    "visual-skill:2026-08-04.1:haava:a01543473f46e0e3",
+    "visual-skill:2026-08-04.1:haava:ad50afd8a2f68fac",
+    "visual-skill:2026-08-04.1:haava:ae9de198b1b0e2e8",
+    "visual-skill:2026-08-04.1:haava:bfa131cd1737e8a3",
+    "visual-skill:2026-08-04.1:haava:c5e92c98442b2351",
+    "visual-skill:2026-08-04.1:haava:c7df066400f1edf7",
+    "visual-skill:2026-08-04.1:haava:dfce67c824e615fd",
+    "visual-skill:2026-08-04.1:haava:e2215a14a23f4d52",
+    "visual-skill:2026-08-04.1:haava:e93f9b7d8e0c0448",
+    "visual-skill:2026-08-04.1:haava:ea7bd8f7883ffde2",
+    "visual-skill:2026-08-04.1:haava:ea9c524a3f7034a2",
+    "visual-skill:2026-08-04.1:haava:fcdb5050a13b881e"
   ],
   "record_hashes": [
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-apply-design-standards",
-      "record_sha256": "f71f3ef274a9d944925b35e00f06ec8a2fbd9a7ad0f580de004c21bd791a89a1"
+      "id": "visual-skill:2026-08-04.1:general-assistant:10053410718f2c95",
+      "record_sha256": "b300c19a19414babd715dda763f3e145ff0e56cc93094629dde1b459267bc112"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-audit-presentation-coherence",
-      "record_sha256": "a15638f152d60a22f244c0e35bb4aefaa477c407f4961eea6f7da8e89ece0997"
+      "id": "visual-skill:2026-08-04.1:general-assistant:1248e43168b20986",
+      "record_sha256": "6c11978bdbd270b2be9526b1c83a62e843c265b8fccb4165d6b338ed5322ef80"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-build-a-visual-practice",
-      "record_sha256": "72568e13e6e1bfc559b80e3e0c1c33da00b7e38c76d601bb93ee70ae707847ac"
+      "id": "visual-skill:2026-08-04.1:general-assistant:2c8fe3af9be90e40",
+      "record_sha256": "93c3607646f2f38aa74e19edc802d2772be60429af90c7c29a980ba8c8a324d6"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-choose-tool-by-data-and-output",
-      "record_sha256": "abb0fd3b852744c34cf3e8b0e32c1e9eca1a7131e4aee7c32886b724df6ba45f"
+      "id": "visual-skill:2026-08-04.1:general-assistant:30a8606db6049194",
+      "record_sha256": "979246f30c4ee3c6ff82b3766f505351604ae0d09ce1011f11d6d2e797e91b09"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-contextualize-scale",
-      "record_sha256": "5ff9944727c3ec4c153a17b62215c592fbfa30eb148c52d955ace4fb581a9da2"
+      "id": "visual-skill:2026-08-04.1:general-assistant:33d6ff14104fb561",
+      "record_sha256": "98036c7cc18b87d449ae99c50e40940a205328aa66e7f3caa0e237dbde31be0d"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-critique-against-standards",
-      "record_sha256": "4cd5e58f8979e6f06c8251e6e4916d27dde6261ac5f8b7d414f2bcf7c3f265e0"
+      "id": "visual-skill:2026-08-04.1:general-assistant:3d9dff55fee970be",
+      "record_sha256": "fd47dde0fe22dc2169c483e87dae09e5a22ebfdfb0ab1ddd47a5e3294c4e5edc"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-define-visualization-purpose",
-      "record_sha256": "bdebde673907902e211eaf823c71f3ff30dd8ee2c16d8b6d26c6d85bc13e3a1b"
+      "id": "visual-skill:2026-08-04.1:general-assistant:54b64c5639d65243",
+      "record_sha256": "4b69a5aea214b489746fb87a8222a5fb6257f024f724e734251fae74b704a49f"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-design-for-clarity-without-interaction",
-      "record_sha256": "e86de19b523f0d8196bf833345455c01cc944d1960344d1f0d71efd42bd36886"
+      "id": "visual-skill:2026-08-04.1:general-assistant:6ba09d93531e656a",
+      "record_sha256": "ef29590c42f8e325eb6c29a02db072c8599a77c2f0233167523f984ee338dfec"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-ensure-presentation-readability",
-      "record_sha256": "16d6b99e5fdade06ce182817c1872a0af2bf772a830cd428a567c0ed73173598"
+      "id": "visual-skill:2026-08-04.1:general-assistant:84b8255a658a13f2",
+      "record_sha256": "cd648b92a45cfc0be7c69dd303d07e8a13a1a9dab0592f6064218277f146a49f"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-explain-every-chart",
-      "record_sha256": "e4b26a69bef45ca33f29eea5c6de29a051c186e059d49c767ec65d92a72f10f1"
+      "id": "visual-skill:2026-08-04.1:general-assistant:8f889595ad2a1ee5",
+      "record_sha256": "5c329c1099483bd8ca71eb6b9a69fc673fdccc9765876c84d11576b07db64fc6"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-explore-then-explain",
-      "record_sha256": "31d6ba4f41d721329e437ea8271406a3d00f66a7786b45a5d6fa1a5921349ea1"
+      "id": "visual-skill:2026-08-04.1:general-assistant:8fef1275b4044b83",
+      "record_sha256": "ac8fe6dac91d0e259c3e4d4536c48af7df48c8ce6cb3cf8e2db16e7dfac13a0f"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
-      "record_sha256": "9fee2c835c23fecde5f55c70b8afbd532979624ba6fc8ea414cf043706d80418"
+      "id": "visual-skill:2026-08-04.1:general-assistant:942ffcdf70dfcae3",
+      "record_sha256": "1e11e424a56ef7c2a3be62cdf7f285d2c9944fed40df0489161629653b9b31f7"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-invite-audience-interaction",
-      "record_sha256": "0c570a21d8a4b257f427d195ee72afc42a770f1a4ebedee95742e16a1c033f6c"
+      "id": "visual-skill:2026-08-04.1:general-assistant:a01543473f46e0e3",
+      "record_sha256": "76c0f6d3e3824e0fce12a0bedd3f4a4b1ec6d22791c0be2184dfcde269bf9ed0"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-make-insight-familiar-and-obvious",
-      "record_sha256": "682a8f6e1284d371147fc4b4c49610a8a0f9298329390f100413a17447c5e8bf"
+      "id": "visual-skill:2026-08-04.1:general-assistant:ad50afd8a2f68fac",
+      "record_sha256": "9d70ea65b8b68aa955d4322c773cbe9d158ee59127121019eaf8f5f67011fd75"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-match-chart-to-visual-literacy",
-      "record_sha256": "61a0d95957af8f5e7cfc3a84786c92b4a0570e26c926306112f68d96895402e6"
+      "id": "visual-skill:2026-08-04.1:general-assistant:ae9de198b1b0e2e8",
+      "record_sha256": "789d47694cf56973c33f1db8b2718c731a07335d5a5aa742294c6b6d95fc1891"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-pair-insight-display-and-attention",
-      "record_sha256": "54c02f5b87f8eb27f33722cf90a07d620ca0b9b9b8ac80934b343a92f7dc86ea"
+      "id": "visual-skill:2026-08-04.1:general-assistant:bfa131cd1737e8a3",
+      "record_sha256": "3a9a34616fe2616f1d406d4f11d954c2df99ae5b6ecd0a69e17e01d192b15de5"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-protect-data-in-visualization-tools",
-      "record_sha256": "9079760f1c863813ffcfaa8fa7250d2e86f8a1dd1aaa550ad72ff0b59c2bfe56"
+      "id": "visual-skill:2026-08-04.1:general-assistant:c5e92c98442b2351",
+      "record_sha256": "6907c4e38e5663080d6ccb85d07713797ae7923363f7ff3775121336675836f3"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-redesign-slide-for-clarity",
-      "record_sha256": "e4405dc99f1b53be8a386c3ccb73dc6394819bdc4da49d20c5c6f2bed291e485"
+      "id": "visual-skill:2026-08-04.1:general-assistant:c7df066400f1edf7",
+      "record_sha256": "609593f473d67e7150f31ee1b7bd87390a6552f8a1d9d1394b6df360c9e5b097"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-remove-non-data-ink",
-      "record_sha256": "36c1ba2c836a12d1345e8baa13c71910ef276b57bbf5ae05417b15beb51f00bf"
+      "id": "visual-skill:2026-08-04.1:general-assistant:dfce67c824e615fd",
+      "record_sha256": "4622a4e18afda6e95c1b435c2111856153517d26f17f480b61234cdd75c34e09"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-select-static-animated-or-interactive",
-      "record_sha256": "53168ae902ef67cc8c06cf1e2016a031971200eb31dc0b7a84a93487c051180c"
+      "id": "visual-skill:2026-08-04.1:general-assistant:e2215a14a23f4d52",
+      "record_sha256": "d4fe4672af06951e2b3452644f5b4af3765f7a3e33790eaee5d21793b15db5b8"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-share-data-for-decision-culture",
-      "record_sha256": "2680d2ca54a843ec50686775a88cbbd4eda17d8d1db4a833fe24a13bd6879af4"
+      "id": "visual-skill:2026-08-04.1:general-assistant:e93f9b7d8e0c0448",
+      "record_sha256": "6d44e6ffc09833b7af24f4074a9a9eca9bf48d2fe2cecbd5efa5d2f474c8ece7"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-test-with-audience",
-      "record_sha256": "6a791f7b84183dd83cf630a22ec82af89428deab9226469ba8b540a3efcf54eb"
+      "id": "visual-skill:2026-08-04.1:general-assistant:ea7bd8f7883ffde2",
+      "record_sha256": "2e2918e7decc0a3b625611d916788dec54c1a7ce168dba43ae9b4e12ac09c5e7"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-understand-and-prepare-data",
-      "record_sha256": "f14f542aefb63b3cd8b9baeb22c8fa462f57e2d37739a2c291572af39e924c13"
+      "id": "visual-skill:2026-08-04.1:general-assistant:ea9c524a3f7034a2",
+      "record_sha256": "e3f9da6e4fb20437c9a3eb01e2ae9cb6d6e90252adfc7a1dc09995ccac478fc7"
     },
     {
-      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-visual-evidence-for-decisions",
-      "record_sha256": "89e7f6ad8e7dad4e392d9e9cb255a43f16ece5a35525c508b77aeb696ace87cc"
+      "id": "visual-skill:2026-08-04.1:general-assistant:fcdb5050a13b881e",
+      "record_sha256": "45b758f133ecd1dfcfd95084362907554be8499197d21a3a92ccfc54186c6a64"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-apply-design-standards",
-      "record_sha256": "279a78fe2d47d2f4b0e8bc067628e80100f7be779ff13b32ff202254d1ef10e5"
+      "id": "visual-skill:2026-08-04.1:haava:10053410718f2c95",
+      "record_sha256": "a0ec1209f109a2302a32bedcceccd922e6d0ae4db91bc672d87346ab1b746ad5"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-audit-presentation-coherence",
-      "record_sha256": "da1795acd8cfa2fa00b89fd92760793d91729494a45b1058492501bcfff62d36"
+      "id": "visual-skill:2026-08-04.1:haava:1248e43168b20986",
+      "record_sha256": "d317154e274f033f74d365c620e3de723444f697748123f926607eb72fab40cd"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-build-a-visual-practice",
-      "record_sha256": "07b8594aa6adc5e8e55f8771d0eefbca9d11f2288925605a8659be5eb29e65e2"
+      "id": "visual-skill:2026-08-04.1:haava:2c8fe3af9be90e40",
+      "record_sha256": "4735419e16a8876e5557ffc2efac3ef40281a510ae425452ea765b988f612a11"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-choose-tool-by-data-and-output",
-      "record_sha256": "6e8cde344b3b27aaf2cd22488b6f22b16e18be580496dbcf00f2ab5943a96270"
+      "id": "visual-skill:2026-08-04.1:haava:30a8606db6049194",
+      "record_sha256": "679b0c358b10dd2005ad5f3b9f874dc30513b8a2309b643b27df65033e71d7fb"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-contextualize-scale",
-      "record_sha256": "84625fa624dea8d38ac2d321f3266c0341c4d53ed8813b47e13132d37ac14ca0"
+      "id": "visual-skill:2026-08-04.1:haava:33d6ff14104fb561",
+      "record_sha256": "25799b241b124e952749f3766c4eb25bfe48a7688b5ebde7ab5f87b76f079e05"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-critique-against-standards",
-      "record_sha256": "945fbf38d3861855a82a6fee8128132c6a8f2fec18670388f36a53773f842b84"
+      "id": "visual-skill:2026-08-04.1:haava:3d9dff55fee970be",
+      "record_sha256": "390dbcdc865732a9fb162951014b36e89f739847ed2a525e7cc7b1ab435e7517"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-define-visualization-purpose",
-      "record_sha256": "4866a51cfc95508614f0c2a99f6e63bd568daf801c77ad404fae4271cd7068ea"
+      "id": "visual-skill:2026-08-04.1:haava:54b64c5639d65243",
+      "record_sha256": "b697a293562f522491918c8ea59e0ae4df422613b12572807b12b7279cf31ac2"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-design-for-clarity-without-interaction",
-      "record_sha256": "084f76564058f4a228664d18ac779cabcf4cc5f17004c120d1296bc4d37a1e45"
+      "id": "visual-skill:2026-08-04.1:haava:6ba09d93531e656a",
+      "record_sha256": "7a56e3f0a9908bf1fbc5c5d7e6e52eb732c3a9dcf81bcc6be46d6e59d3b772ab"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-ensure-presentation-readability",
-      "record_sha256": "f13efeb270423972197320e0a01880af6ac58ad057dd0678ce2c8a2d2a65bf48"
+      "id": "visual-skill:2026-08-04.1:haava:84b8255a658a13f2",
+      "record_sha256": "4841b50d93ed7476795e69fac78575b394b94f497ba5342347e9512b00c3651b"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-explain-every-chart",
-      "record_sha256": "bc091400b4e13f4636e9e676708d5302268eb66d9fe41d77c40e639af159ba70"
+      "id": "visual-skill:2026-08-04.1:haava:8f889595ad2a1ee5",
+      "record_sha256": "5acd1017183d52f3410cc2e125ece195f1dc978bd79b70964844fe1960b48ff8"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-explore-then-explain",
-      "record_sha256": "b053c3c9d367ede91eef7f6eeb3cc62beebab079855e014851815d0238c726b6"
+      "id": "visual-skill:2026-08-04.1:haava:8fef1275b4044b83",
+      "record_sha256": "d7786d3338428aaa9200ef77e0a47a0520db78809c76766b380d5ea6682a3f55"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
-      "record_sha256": "9b29c706b4cd267153c734afc1d735ec90fff32d663d980a5f04f9c67e3805a9"
+      "id": "visual-skill:2026-08-04.1:haava:942ffcdf70dfcae3",
+      "record_sha256": "8b9b3ca519cf80fd78020ec2324a36b6f92dd5a049886e933c15a5595d3de0ed"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-invite-audience-interaction",
-      "record_sha256": "5439d28e984404f1864570286d89bbea39412fb7529fa73b12c74d9a970a50d2"
+      "id": "visual-skill:2026-08-04.1:haava:a01543473f46e0e3",
+      "record_sha256": "6b08f846f6ad37b4ff61ac7523a7b29648e474d7d0c6a464792ef9b563309868"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-make-insight-familiar-and-obvious",
-      "record_sha256": "6ea1f77e3fb331b82b6a645d8d87a5ac693de09e8bcb12e80fedb02930768d3c"
+      "id": "visual-skill:2026-08-04.1:haava:ad50afd8a2f68fac",
+      "record_sha256": "be986b2ca2d8875daa8a77d1372735f7b17512c79a3a96372d16bf1170cc0b9d"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-match-chart-to-visual-literacy",
-      "record_sha256": "8e8877d2c6e34cf2885a3bd0653f521c2c6225743c535f3afe32f4861df36266"
+      "id": "visual-skill:2026-08-04.1:haava:ae9de198b1b0e2e8",
+      "record_sha256": "1df5360676c4eb4bcdfaece834c77c875f79600d44db876d7f9a3d4bc8bc6674"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-pair-insight-display-and-attention",
-      "record_sha256": "cdc25b2150e4d17e673744f730c0b98409de9493b112df85d0de55eee044f012"
+      "id": "visual-skill:2026-08-04.1:haava:bfa131cd1737e8a3",
+      "record_sha256": "2cdb489bdc8854efcc3f07579288b1b8d66836fc8b0e2809c48220bd7fd4a2d0"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-protect-data-in-visualization-tools",
-      "record_sha256": "da72f33ddde255fad598d0289e0f888be373e8f1c828ac90e73561f4ed8e3b20"
+      "id": "visual-skill:2026-08-04.1:haava:c5e92c98442b2351",
+      "record_sha256": "6aefcd047e09d57e6c606a827043ce06c159923d7cb31c76221e6eedd69c33bc"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-redesign-slide-for-clarity",
-      "record_sha256": "14d3c83edb4d25804606176915beeb143dc3b8a47726a1f97be5f50e20561740"
+      "id": "visual-skill:2026-08-04.1:haava:c7df066400f1edf7",
+      "record_sha256": "69ad8fb56bde13022f59943f038df3dd4ea62663ac58a1874be8a32d34c7476b"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-remove-non-data-ink",
-      "record_sha256": "babc32177cba08f26eb84e4cbbcf5682d1f7e61521d1b15fddbc47353def8909"
+      "id": "visual-skill:2026-08-04.1:haava:dfce67c824e615fd",
+      "record_sha256": "07cafeab90664a88b100377da53fe8d7423881aecaa0d267b39326119f3bee8b"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-select-static-animated-or-interactive",
-      "record_sha256": "6b128fd52813d02113c0d4de08508b4fd2bb42af4df6462d40e55cf15a9e30da"
+      "id": "visual-skill:2026-08-04.1:haava:e2215a14a23f4d52",
+      "record_sha256": "7d5904c82f07ab1439170373071e015685e9b0077be5731773dbf4b303f755c2"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-share-data-for-decision-culture",
-      "record_sha256": "cfa5f353c2e4c57c88128b4dc9413020a5bb3aa85d0b341ed83793c30032f2b5"
+      "id": "visual-skill:2026-08-04.1:haava:e93f9b7d8e0c0448",
+      "record_sha256": "e358fe805820f9735ca79c346f61d0dd7e1a380482e3ab6380bb7624dc98170a"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-test-with-audience",
-      "record_sha256": "ceb00812935fb3f506d46c8927ec3e729f8990f0909857255ca25531e5615e1c"
+      "id": "visual-skill:2026-08-04.1:haava:ea7bd8f7883ffde2",
+      "record_sha256": "6cd18cd430dd4fccecba6a8a9011fe7533b03d639f824548fe3eedcc22cf9449"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-understand-and-prepare-data",
-      "record_sha256": "3f6f874105277232fed91bac945ffac75891febdf6294287d0586f9ac3a71b90"
+      "id": "visual-skill:2026-08-04.1:haava:ea9c524a3f7034a2",
+      "record_sha256": "1477426ed2ed4ee49390fde4e250f2983c9c62f7f16028d88a66e03c9d632203"
     },
     {
-      "id": "visual-skill:2026-08-04.1:haava:cdv-visual-evidence-for-decisions",
-      "record_sha256": "adbd2994cef6a1d1ccf732d4e0daddfa4ca0999131d78d8e146c6b033c583474"
+      "id": "visual-skill:2026-08-04.1:haava:fcdb5050a13b881e",
+      "record_sha256": "1ea1853dd3f350cd1e3b8d25113d4ace84e0e006c2e4f606829ed66954977cd9"
     }
   ],
-  "manifest_sha256": "08614c4e79b773ecfca6d0c1ffe1cfd540cad8284522c57ab171ade5faa5bf80"
+  "manifest_sha256": "5f2760d03000595f43398f82c5b5e8d1fbd10e0f9e863b703d584b77586d6805"
 }

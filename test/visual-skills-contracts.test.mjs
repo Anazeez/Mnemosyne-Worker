@@ -30,7 +30,8 @@ test("server contract fixes the exact owner, scope, consumers, and version", () 
 
 test("projection metadata is scalar, bounded, and server-owned", () => {
   const record = buildVisualSkillProjection(card, "general-assistant");
-  assert.equal(record.id, "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart");
+  assert.ok(new TextEncoder().encode(record.id).length <= 64);
+  assert.match(record.id, /^visual-skill:2026-08-04\.1:general-assistant:[a-f0-9]{16}$/u);
   assert.deepEqual(record.metadata, {
     tenant_id: "personal",
     project_id: "project-infinitum",
@@ -93,7 +94,7 @@ test("validator rejects non-Haava authority, wildcard scope, overlong metadata, 
 test("projection IDs are stable and reject wildcard or malformed identifiers", () => {
   assert.equal(
     projectionIdFor("haava", card.skill_id),
-    "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
+    "visual-skill:2026-08-04.1:haava:54b64c5639d65243",
   );
   assert.throws(() => projectionIdFor("*", card.skill_id), /VISUAL_SKILL_CONSUMER_DENIED/u);
   assert.throws(() => projectionIdFor("haava", "../foreign"), /VISUAL_SKILL_ID_INVALID/u);

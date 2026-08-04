@@ -37,9 +37,10 @@ test("preparation emits stable sorted consumer projections and exact manifest me
   });
   assert.equal(packet.records.length, 2);
   assert.deepEqual(packet.manifest.ids, [
-    "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
-    "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
+    "visual-skill:2026-08-04.1:general-assistant:54b64c5639d65243",
+    "visual-skill:2026-08-04.1:haava:54b64c5639d65243",
   ]);
+  assert.ok(packet.manifest.ids.every((id) => new TextEncoder().encode(id).length <= 64));
   assert.equal(packet.manifest.card_count, 1);
   assert.equal(packet.manifest.projection_count, 2);
   assert.equal(packet.manifest.installed_skill_hash, installedSkillHash);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { retrieveVisualSkills } from "../src/visual-skills/retrieval.js";
+import { projectionIdFor } from "../src/visual-skills/contracts.js";
 import {
   loadWorker,
   migrateTestPrincipalEnvironment,
@@ -43,7 +44,7 @@ const generalAssistant = {
   capabilities: ["memory.search"],
 };
 
-function environment(matches = [{ id: "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart", score: 0.91, metadata }]) {
+function environment(matches = [{ id: projectionIdFor("haava", metadata.skill_id), score: 0.91, metadata }]) {
   const calls = { ai: 0, query: 0, filter: null };
   return {
     calls,
@@ -93,7 +94,7 @@ test("Haava retrieves a grounded visual card with her inherited consumer filter"
 test("approved general assistant retrieves the same card through its own scalar projection", async () => {
   const generalMetadata = { ...metadata, consumer_id: "general-assistant" };
   const env = environment([{
-    id: "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
+    id: projectionIdFor("general-assistant", metadata.skill_id),
     score: 0.91,
     metadata: generalMetadata,
   }]);
@@ -153,7 +154,7 @@ test("empty, below-threshold, and unavailable retrieval states stay distinct", a
 
   const below = await retrieveVisualSkills({
     env: environment([{
-      id: "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
+      id: projectionIdFor("haava", metadata.skill_id),
       score: 0.51,
       metadata,
     }]),
@@ -173,7 +174,7 @@ test("empty, below-threshold, and unavailable retrieval states stay distinct", a
 
 test("tampered provenance metadata is discarded even when Vectorize returns it", async () => {
   const env = environment([{
-    id: "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
+    id: projectionIdFor("haava", metadata.skill_id),
     score: 0.99,
     metadata: {
       ...metadata,
