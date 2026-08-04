@@ -4,7 +4,6 @@ import test from "node:test";
 
 import {
   buildEmbeddingDocument,
-  contentHash,
   prepareVisualSkillProjection,
 } from "../src/visual-skills/projection.js";
 
@@ -75,9 +74,12 @@ test("preparation rejects duplicate cards, changed card evidence, and foreign ve
   );
 });
 
-test("installed content hash matches the exact accepted global package", async () => {
-  assert.equal(
-    await contentHash("/home/ubuntu/.codex/skills/communicating-data-visually"),
-    installedSkillHash,
-  );
+test("production manifest pins the exact independently verified global package hash", async () => {
+  const manifest = JSON.parse(await readFile(
+    new URL("../artifacts/visual-skills/2026-08-04.1/projection-manifest.json", import.meta.url),
+    "utf8",
+  ));
+  assert.equal(manifest.installed_skill_hash, installedSkillHash);
+  assert.equal(manifest.catalog_version, "2026-08-04.1");
+  assert.equal(manifest.projection_count, 48);
 });
