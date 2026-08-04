@@ -229,3 +229,14 @@ test("visual rollout workflow can mutate only the exact reviewed projection pack
   assert.match(workflow, /upsert\|remove-version/);
   assert.doesNotMatch(workflow, /visual-skills:consumer|command.?approve/);
 });
+
+test("registered production workflow can bootstrap the reviewed projection before branch merge", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/production-deploy.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /projection_command:/);
+  assert.match(workflow, /inputs\.projection_command/);
+  assert.match(workflow, /deriveVisualSkillAdminKey/);
+  assert.match(workflow, /expected-installed-skill-hash/);
+});
