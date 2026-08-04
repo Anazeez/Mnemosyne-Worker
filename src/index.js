@@ -381,12 +381,18 @@ export default {
         });
       }
 
-      if (url.pathname === "/v1/memory/self" && method === "GET") {
+      if (
+        url.pathname === "/v1/specialists/memory/self" &&
+        method === "GET"
+      ) {
         requireCapability(principal, CAPABILITY.MEMORY_READ);
         return handleMemorySelf(principal);
       }
 
-      if (url.pathname === "/v1/memory/search" && method === "POST") {
+      if (
+        url.pathname === "/v1/specialists/memory/search" &&
+        method === "POST"
+      ) {
         requireCapability(principal, CAPABILITY.MEMORY_SEARCH);
 
         return await handleMemorySearch(request, env, principal, {

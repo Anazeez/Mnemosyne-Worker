@@ -58,11 +58,11 @@ test("continuity capabilities are explicit per role and never inherited from mem
 test("specialist credentials expose only server-bound normalized project scopes", async () => {
   const worker = await loadWorker();
   const absent = await worker.fetch(
-    authenticatedRequest("/v1/memory/self"),
+    authenticatedRequest("/v1/specialists/memory/self"),
     scopedEnvironment("specialist")
   );
   const explicit = await worker.fetch(
-    authenticatedRequest("/v1/memory/self"),
+    authenticatedRequest("/v1/specialists/memory/self"),
     scopedEnvironment("specialist", {
       MATRIX_PRINCIPAL_KEYS: {
         "test-key": {
@@ -83,7 +83,7 @@ test("specialist credentials expose only server-bound normalized project scopes"
 test("root bootstrap scope is explicit and does not depend on credential metadata", async () => {
   const worker = await loadWorker();
   const response = await worker.fetch(
-    new Request("https://worker.invalid/v1/memory/self", {
+    new Request("https://worker.invalid/v1/specialists/memory/self", {
       headers: { "X-Matrix-Key": "root-key" }
     }),
     { MATRIX_AUTH_KEY: "root-key" }

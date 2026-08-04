@@ -38,7 +38,7 @@ function specialistEnvironment() {
 }
 
 function searchRequest(body) {
-  return new Request("https://worker.invalid/v1/memory/search", {
+  return new Request("https://worker.invalid/v1/specialists/memory/search", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

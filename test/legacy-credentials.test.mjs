@@ -12,7 +12,7 @@ import {
 import { buildLegacyCredentialSql } from "../scripts/migrate-legacy-credentials.mjs";
 
 function requestWithKey(key) {
-  return new Request("https://worker.invalid/v1/memory/search", {
+  return new Request("https://worker.invalid/v1/specialists/memory/search", {
     headers: { "X-Matrix-Key": key },
   });
 }
