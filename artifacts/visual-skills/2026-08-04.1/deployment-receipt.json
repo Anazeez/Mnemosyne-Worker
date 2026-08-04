@@ -1,0 +1,77 @@
+{
+  "deployment_revision": "555624b201e976bfaa6628061c7cbbe0aeaa9eec",
+  "catalog_version": "2026-08-04.1",
+  "installed_skill_sha256": "f7f1069e200d4f22e03dd8de219dfbec897817da18bebc2a6a44c908f484e5ea",
+  "projection_manifest_sha256": "5f2760d03000595f43398f82c5b5e8d1fbd10e0f9e863b703d584b77586d6805",
+  "projection_count": 48,
+  "consumers": {
+    "haava": {
+      "projection_count": 24,
+      "authorization": "matrix-principal"
+    },
+    "general-assistant": {
+      "projection_count": 24,
+      "authorization": "unbound",
+      "verification": "skipped",
+      "reason": "No exact OAuth client was designated; the projections are inert until an approved binding exists. Codex uses the independently installed global skill."
+    }
+  },
+  "capability_flags": {
+    "actions": true,
+    "read": false,
+    "mcp": false,
+    "propose": false,
+    "validation": false,
+    "resolution": false,
+    "owner_review": false,
+    "owner_commit": false
+  },
+  "verification": {
+    "deployment": {
+      "status": "passed",
+      "run_id": 30951669607
+    },
+    "projection_plan": {
+      "status": "passed",
+      "run_id": 30951734599,
+      "adds": 48,
+      "unchanged": 0,
+      "conflicts": 0
+    },
+    "projection_upsert": {
+      "status": "passed",
+      "run_id": 30951907833,
+      "applied": 48,
+      "unchanged": 0,
+      "conflicts": 0
+    },
+    "projection_verify": {
+      "status": "passed",
+      "run_id": 30952005415,
+      "verified": 48,
+      "missing_ids": [],
+      "mismatched_ids": []
+    },
+    "idempotent_replay": {
+      "status": "passed",
+      "run_id": 30952100090,
+      "adds": 0,
+      "unchanged": 48,
+      "conflicts": 0
+    },
+    "live_canaries": {
+      "status": "passed",
+      "receipt": "canary-receipt.json"
+    },
+    "live_destructive_rollback": {
+      "status": "skipped",
+      "reason": "The exact-version removal path is regression-tested; deleting verified production records solely to recreate them would add avoidable destructive churn."
+    }
+  },
+  "rollback": {
+    "workflow": "production-deploy.yml",
+    "projection_command": "remove-version",
+    "scope": "Only the 48 IDs in this exact manifest and catalog version",
+    "requires_explicit_apply": true
+  }
+}

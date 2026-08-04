@@ -11,7 +11,7 @@
     {
       "id": "openapi-visual-retrieval",
       "kind": "http",
-      "url": "https://memory.azzayezz.com/openapi.json?revision=cb04235",
+      "url": "https://memory.azzayezz.com/openapi.json?revision=555624b",
       "expect_status": 200,
       "contains": "retrieveSkills",
       "timeout_seconds": 8
