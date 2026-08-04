@@ -36,6 +36,7 @@ export function principalFromOAuthClaims(claims) {
   const identityIds = normalizeIdList(claims.identity_ids);
   const specialistId = normalizePrincipalId(claims.specialist_id);
   const domainIds = normalizeIdList(claims.domain_ids);
+  const consumerIds = normalizeIdList(claims.consumer_ids);
   const memoryDomains = normalizeIdList(claims.memory_domains);
   const lanePermissions = normalizeIdList(claims.lane_permissions);
   const scopes = Array.isArray(claims.scopes)
@@ -70,6 +71,22 @@ export function principalFromOAuthClaims(claims) {
   )) {
     throw invalidClaims();
   }
+  const isVisualConsumer = role === "portal" && consumerIds.length > 0;
+  if (isVisualConsumer && (
+    consumerIds.length !== 1
+    || consumerIds[0] !== "general-assistant"
+    || domainIds.length !== 1
+    || domainIds[0] !== "visual-design-expression"
+    || projectIds.length !== 1
+    || projectIds[0] !== "project-infinitum"
+    || claims.principal_id !== "general-assistant"
+    || !/^oauth-[a-f0-9]{32}$/u.test(String(claims.assistant_id ?? ""))
+    || !/^[a-f0-9]{64}$/u.test(String(claims.grant_version ?? ""))
+    || !/^[a-f0-9]{64}$/u.test(String(claims.consumer_grant_version ?? ""))
+    || scopes.some((scope) => !["identity:read", "memory:read", "memory:search"].includes(scope))
+  )) {
+    throw invalidClaims();
+  }
 
   const capabilities = [];
   const scopeCapabilities = role === "owner"
@@ -95,7 +112,11 @@ export function principalFromOAuthClaims(claims) {
     tenant_id: tenantId,
     credential_id: credentialId,
     assistant_id: assistantId,
-    principal_id: role === "specialist" ? specialistId : role,
+    principal_id: role === "specialist"
+      ? specialistId
+      : isVisualConsumer
+        ? "general-assistant"
+        : role,
     role,
     ...(role === "specialist" ? {
       specialist_id: specialistId,
@@ -104,6 +125,12 @@ export function principalFromOAuthClaims(claims) {
       lane_permissions: lanePermissions,
       grant_version: claims.grant_version,
       package_version: String(claims.package_version ?? ""),
+    } : {}),
+    ...(isVisualConsumer ? {
+      consumer_ids: consumerIds,
+      domain_ids: domainIds,
+      grant_version: claims.grant_version,
+      consumer_grant_version: claims.consumer_grant_version,
     } : {}),
     project_ids: projectIds,
     identity_ids: identityIds,

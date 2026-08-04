@@ -1,0 +1,12 @@
+{
+  "schema": "mnemosyne-visual-skill-projection-v1",
+  "catalog_version": "2026-08-04.1",
+  "projection_prefix": "visual-skill:2026-08-04.1:",
+  "source_sha256": "30a4f87a42821a21e633424ab333d6103b6a6ad911d963bd756fb9ca16ca715a",
+  "card_count": 1,
+  "projection_count": 2,
+  "ids": [
+    "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
+    "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart"
+  ]
+}

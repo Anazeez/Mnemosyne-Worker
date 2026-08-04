@@ -77,6 +77,7 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
     "/v1/memory/traverse",
     "/v1/mesh/inbox",
     "/v1/session",
+    "/v1/skills/retrieval",
   ]);
   assert.equal(
     Object.keys(OPENAPI_DOCUMENT.paths).some(path =>
@@ -90,7 +91,7 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
       "memory:search": "Search accepted project memory",
       "memory:propose": "Submit an immutable memory candidate",
       "memory:candidate:read": "Read status of candidates submitted by this credential",
-      "identity:read": "Verify the authenticated specialist identity and bounded grants",
+      "identity:read": "Verify the authenticated identity and bounded grants",
       "mesh:inbox": "Read the authenticated specialist's private mesh inbox",
     },
   );
@@ -98,9 +99,9 @@ test("public OpenAPI schema exposes only retrieval, proposal, and own status", (
     OPENAPI_DOCUMENT.paths["/ping"].get.responses[200].content["application/json"].schema.additionalProperties,
     false,
   );
-  assert.equal(
-    OPENAPI_DOCUMENT.paths["/v1/session"].get.responses[200].content["application/json"].schema.additionalProperties,
-    false,
+  assert.ok(
+    OPENAPI_DOCUMENT.paths["/v1/session"].get.responses[200].content["application/json"].schema.oneOf
+      .every((schema) => schema.additionalProperties === false),
   );
   assert.deepEqual(
     OPENAPI_DOCUMENT.paths["/v1/identity"].get.security,

@@ -5,7 +5,12 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "test:graph": "node --test test/graph-memory-*.test.mjs test/oauth.test.mjs test/mcp.test.mjs test/openapi-actions.test.mjs",
-    "evaluate:memory": "node scripts/evaluate-graph-memory-retrieval.mjs"
+    "evaluate:memory": "node scripts/evaluate-graph-memory-retrieval.mjs",
+    "visual-skills:plan": "node scripts/manage-visual-skill-projection.mjs plan",
+    "visual-skills:upsert": "node scripts/manage-visual-skill-projection.mjs upsert",
+    "visual-skills:verify": "node scripts/manage-visual-skill-projection.mjs verify",
+    "visual-skills:remove-version": "node scripts/manage-visual-skill-projection.mjs remove-version",
+    "visual-skills:consumer": "node scripts/manage-visual-skill-consumers.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.2",

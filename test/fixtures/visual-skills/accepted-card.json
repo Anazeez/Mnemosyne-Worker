@@ -1,0 +1,50 @@
+{
+  "skill_id": "cdv-guide-audience-through-chart",
+  "name": "Guide the audience through a chart",
+  "triggers": [
+    "presenting a chart",
+    "explaining findings",
+    "designing for client questions"
+  ],
+  "method": [
+    "Start from what the audience already knows, does not know, and is trying to decide.",
+    "Introduce the chart context before asking viewers to interpret marks.",
+    "Direct attention progressively to the decisive points and reinforce the message with suitable narration."
+  ],
+  "constraints": [
+    "Never show a chart without context or an explanation of why it matters."
+  ],
+  "primary_family": "storytelling",
+  "tags": [
+    "audience",
+    "data visualization",
+    "storytelling"
+  ],
+  "source_pages": [16, 136, 142, 148],
+  "source_sha256": "30a4f87a42821a21e633424ab333d6103b6a6ad911d963bd756fb9ca16ca715a",
+  "chunk_sha256s": [
+    "08e16e0f8778b87df45e69764be17c07268b8a804e20b92979b6978142c96b91",
+    "626879865a4d4459f929ed5b1835eaef3bc49e7ce5e25d009bff20c29df3da75",
+    "8aa8ea0ad62ce62bc71cda0e2ce2ee5eaef4fa5bbf757dd50bcccc011981857b",
+    "b95a20c25d6877d1501fb6c7289ec65bdbd41b4535ddc15bfd4d5540da57c417",
+    "e8c39011bd0ff2c295e4fb063116b68c21f36fe4d366836a7dcdce4a9fa81fd7"
+  ],
+  "source_record_ids": [
+    "doc_30a4f87a42821a21:p136:s1:c0",
+    "doc_30a4f87a42821a21:p136:s4:c0",
+    "doc_30a4f87a42821a21:p142:s1:c0",
+    "doc_30a4f87a42821a21:p148:s1:c0",
+    "doc_30a4f87a42821a21:p16:s3:c0"
+  ],
+  "extracted_skill_ids": [
+    "skill_08e16e0f8778b87df45e",
+    "skill_626879865a4d4459f929"
+  ],
+  "packet_evidence_ids": [
+    "doc_30a4f87a42821a21:p142:s1:c0",
+    "doc_30a4f87a42821a21:p148:s1:c0",
+    "doc_30a4f87a42821a21:p16:s3:c0"
+  ],
+  "status": "accepted",
+  "content_sha256": "3817be65a9f26852a87bb95433f76cfd7e97c6887126c7a06a9447b1127e75cb"
+}

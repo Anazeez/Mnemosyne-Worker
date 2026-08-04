@@ -16,6 +16,12 @@ import {
 } from "./graph-memory/human-review.js";
 import { repairPendingProjections } from "./graph-memory/projection.js";
 import { contractForSpecialist } from "./specialists/policy.js";
+import {
+  approveVisualSkillConsumer,
+  resolveVisualSkillConsumerBinding,
+  revokeVisualSkillConsumer,
+} from "./visual-skills/consumers.js";
+import { manageVisualSkillProjection } from "./visual-skills/management.js";
 
 const OAUTH_STATE_TTL_SECONDS = 600;
 const OWNER_VALIDATION_STATE_PREFIX = "owner-validation.";
@@ -140,6 +146,16 @@ export async function refreshGrantProps(props, { fetchImpl = fetch } = {}) {
   ) {
     throw new Error("grant_refresh_denied");
   }
+  const hadConsumer = props?.consumer_ids?.includes("general-assistant");
+  const hasConsumer = grant?.consumer_id === "general-assistant";
+  if (hadConsumer && !hasConsumer) throw new Error("grant_refresh_denied");
+  if (hasConsumer && (
+    grant.project_id !== "project-infinitum"
+    || grant.domain_id !== "visual-design-expression"
+    || !Array.isArray(grant.allowed_scopes)
+    || !/^[a-f0-9]{64}$/.test(String(grant.consumer_grant_version || ""))
+    || !grant.project_ids.includes(grant.project_id)
+  )) throw new Error("grant_refresh_denied");
   return {
     ...props,
     project_ids: [...new Set(grant.project_ids)].sort(),
@@ -155,6 +171,14 @@ export async function refreshGrantProps(props, { fetchImpl = fetch } = {}) {
       capabilities: grant.capabilities,
       package_version: grant.package_version,
     } : {}),
+    ...(hasConsumer ? {
+      principal_id: "general-assistant",
+      role: "portal",
+      consumer_ids: ["general-assistant"],
+      domain_ids: ["visual-design-expression"],
+      consumer_grant_version: grant.consumer_grant_version,
+      scopes: (props.scopes ?? []).filter((scope) => grant.allowed_scopes.includes(scope)),
+    } : {}),
   };
 }
 
@@ -166,11 +190,13 @@ export function buildGrantClaims({
   requestedScopes,
   allowOwnerReview = false,
   specialistGrant = null,
+  consumerGrant = null,
 }) {
-  const scope = narrowRequestedScopes(requestedScopes, {
+  let scope = narrowRequestedScopes(requestedScopes, {
     allowReview: allowOwnerReview,
   });
-  const isOwnerReview = scope.includes(HUMAN_REVIEW_SCOPE);
+  const hasConsumerGrant = consumerGrant !== null;
+  const isOwnerReview = !hasConsumerGrant && scope.includes(HUMAN_REVIEW_SCOPE);
   const numericId = Number(githubUser?.id);
   if (!Number.isSafeInteger(numericId) || numericId <= 0) {
     throw new Error("invalid_github_identity");
@@ -180,9 +206,23 @@ export function buildGrantClaims({
     throw new Error("invalid_assistant_identity");
   }
   const login = String(githubUser.login ?? "");
-  const isSpecialist = !isOwnerReview && specialistGrant !== null;
+  const isSpecialist = !isOwnerReview && !hasConsumerGrant && specialistGrant !== null;
+  const isConsumer = !isOwnerReview && !isSpecialist && hasConsumerGrant;
   if (isSpecialist && specialistGrant.assistant_id !== assistantId) {
     throw new Error("invalid_assistant_identity");
+  }
+  if (isConsumer) {
+    if (
+      consumerGrant.assistant_id !== assistantId
+      || consumerGrant.consumer_id !== "general-assistant"
+      || consumerGrant.tenant_id !== tenantId
+      || consumerGrant.project_id !== "project-infinitum"
+      || consumerGrant.domain_id !== "visual-design-expression"
+      || !projectIds.includes(consumerGrant.project_id)
+      || !/^[a-f0-9]{64}$/u.test(String(consumerGrant.grant_version ?? ""))
+    ) throw new Error("invalid_consumer_grant");
+    scope = scope.filter((item) => consumerGrant.allowed_scopes.includes(item));
+    if (scope.length === 0) throw new Error("no_supported_scope_requested");
   }
   return {
     userId: `github-${numericId}`,
@@ -199,11 +239,15 @@ export function buildGrantClaims({
           ? "owner"
           : isSpecialist
             ? specialistGrant.principal_id
-            : `github:${numericId}`,
+            : isConsumer
+              ? "general-assistant"
+              : `github:${numericId}`,
         role: isOwnerReview ? "owner" : isSpecialist ? "specialist" : "portal",
         assistant_id: isOwnerReview ? "human-review-console" : assistantId,
         tenant_id: tenantId,
-        project_ids: [...new Set(projectIds.map(String))],
+        project_ids: isConsumer
+          ? [consumerGrant.project_id]
+          : [...new Set(projectIds.map(String))],
         identity_ids: isSpecialist ? [specialistGrant.specialist_id] : [],
         scopes: scope,
         ...(isSpecialist ? {
@@ -214,6 +258,11 @@ export function buildGrantClaims({
           capabilities: specialistGrant.capabilities,
           grant_version: specialistGrant.grant_version,
           package_version: specialistGrant.package_version,
+        } : {}),
+        ...(isConsumer ? {
+          consumer_ids: [consumerGrant.consumer_id],
+          domain_ids: [consumerGrant.domain_id],
+          consumer_grant_version: consumerGrant.grant_version,
         } : {}),
       },
   };
@@ -326,6 +375,18 @@ export function createOAuthDefaultHandler({ legacyWorker, fetchImpl = fetch }) {
           request.method === "POST"
         ) {
           return await administerPrivateGrant(request, env);
+        }
+        if (
+          url.pathname === "/internal/admin/visual-skills/projection"
+          && request.method === "POST"
+        ) {
+          return await administerVisualSkillProjection(request, env);
+        }
+        if (
+          url.pathname === "/internal/admin/visual-skills/consumers"
+          && request.method === "POST"
+        ) {
+          return await administerVisualSkillConsumer(request, env);
         }
         if (url.pathname.startsWith("/owner/memory/candidates/")) {
           if (!["GET", "POST"].includes(request.method)) {
@@ -879,6 +940,84 @@ async function administerPrivateGrant(request, env) {
   return Response.json({ error: "grant_admin_command_invalid" }, { status: 400 });
 }
 
+async function administerVisualSkillProjection(request, env) {
+  if (!await hasOwnerKey(request, env)) {
+    return Response.json({ error: "visual_skill_admin_denied" }, { status: 403 });
+  }
+  const operation = await request.json();
+  const expectedEnvironment = String(env.ENVIRONMENT || "production");
+  if (operation?.environment !== expectedEnvironment) {
+    return Response.json({ error: "VISUAL_SKILL_ENVIRONMENT_MISMATCH" }, { status: 403 });
+  }
+  try {
+    return Response.json(await manageVisualSkillProjection({
+      command: operation?.command,
+      records: operation?.records,
+      manifest: operation?.manifest,
+      expectedCatalogVersion: operation?.expected_catalog_version,
+      expectedInstalledSkillHash: operation?.expected_installed_skill_hash,
+      environment: operation?.environment,
+      apply: operation?.apply === true,
+      bindings: env,
+    }), {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    return Response.json(
+      { error: error?.code || "VISUAL_SKILL_OPERATION_FAILED" },
+      { status: Number.isInteger(error?.status) ? error.status : 400 },
+    );
+  }
+}
+
+async function administerVisualSkillConsumer(request, env) {
+  if (!await hasOwnerKey(request, env)) {
+    return Response.json({ error: "visual_skill_admin_denied" }, { status: 403 });
+  }
+  if (!env.DB) {
+    return Response.json({ error: "visual_skill_consumer_database_unavailable" }, { status: 503 });
+  }
+  const operation = await request.json();
+  try {
+    if (operation?.command === "inspect") {
+      const binding = await resolveVisualSkillConsumerBinding(env.DB, operation.assistant_id);
+      return Response.json({
+        verification: "passed",
+        binding,
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
+    if (!operation?.apply || !["approve", "revoke"].includes(operation?.command)) {
+      return Response.json({ error: "VISUAL_SKILL_APPLY_REQUIRED" }, { status: 400 });
+    }
+    const input = {
+      assistant_id: operation.assistant_id,
+      actor_id: operation.actor_id,
+      reason: operation.reason,
+      now: operation.now,
+    };
+    const binding = operation.command === "approve"
+      ? await approveVisualSkillConsumer(env.DB, input)
+      : await revokeVisualSkillConsumer(env.DB, input);
+    return Response.json({
+      verification: "passed",
+      command: operation.command,
+      binding,
+    }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return Response.json(
+      { error: error?.code || "VISUAL_SKILL_CONSUMER_OPERATION_FAILED" },
+      { status: Number.isInteger(error?.status) ? error.status : 400 },
+    );
+  }
+}
+
+async function hasOwnerKey(request, env) {
+  const configuredKey = String(env.MATRIX_AUTH_KEY || "");
+  const suppliedKey = request.headers.get("X-Matrix-Key") || "";
+  return configuredKey.length >= 20
+    && await constantTimeEqual(configuredKey, suppliedKey);
+}
+
 function assertAdminGrantTarget(input, env) {
   const ownerGithubId = Number(input?.owner_github_id);
   if (input?.grant_id) return;
@@ -928,13 +1067,32 @@ async function resolvePrivateGrant(request, env) {
     body?.assistant_id,
     { packageVersion: env.SPECIALIST_PACKAGE_VERSION || undefined },
   );
+  const consumerGrant = await resolveVisualSkillConsumerBinding(
+    env.DB,
+    body?.assistant_id,
+  );
+  if (specialistGrant && consumerGrant) {
+    return Response.json({ error: "grant_resolution_denied" }, { status: 403 });
+  }
   const responseGrant = specialistGrant
     ? {
         ...specialistGrant,
         project_ids: intersectProjects(grant.project_ids, specialistGrant.project_ids),
       }
-    : grant;
-  if (specialistGrant && responseGrant.project_ids.length === 0) {
+    : consumerGrant
+      ? {
+          ...grant,
+          project_ids: grant.project_ids.includes(consumerGrant.project_id)
+            ? [consumerGrant.project_id]
+            : [],
+          consumer_id: consumerGrant.consumer_id,
+          project_id: consumerGrant.project_id,
+          domain_id: consumerGrant.domain_id,
+          allowed_scopes: consumerGrant.allowed_scopes,
+          consumer_grant_version: consumerGrant.grant_version,
+        }
+      : grant;
+  if ((specialistGrant || consumerGrant) && responseGrant.project_ids.length === 0) {
     return Response.json({ error: "grant_resolution_denied" }, { status: 403 });
   }
   return Response.json(responseGrant, {
@@ -949,7 +1107,15 @@ async function beginConsent(request, env) {
   if (!client) return Response.json({ error: "unknown_client" }, { status: 400 });
   const reviewClients = parseCsv(env.MEMORY_REVIEW_CLIENT_IDS);
   const allowReview = reviewClients.includes(String(authRequest.clientId));
-  const scopes = narrowRequestedScopes(authRequest.scope, { allowReview });
+  let scopes = narrowRequestedScopes(authRequest.scope, { allowReview });
+  if (env.DB) {
+    const assistantId = await assistantIdForOAuthClient(authRequest.clientId);
+    const consumerGrant = await resolveVisualSkillConsumerBinding(env.DB, assistantId);
+    if (consumerGrant) {
+      scopes = scopes.filter((scope) => consumerGrant.allowed_scopes.includes(scope));
+      if (scopes.length === 0) throw statusError("no_supported_scope_requested", 400);
+    }
+  }
   const requestId = randomToken();
   const csrf = randomToken();
   await env.OAUTH_KV.put(
@@ -1040,10 +1206,16 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
     assistantId,
     { packageVersion: env.SPECIALIST_PACKAGE_VERSION || undefined },
   );
+  const consumerGrant = await resolveVisualSkillConsumerBinding(env.DB, assistantId);
+  if (specialistGrant && consumerGrant) {
+    throw statusError("grant_resolution_denied", 403);
+  }
   const projectIds = specialistGrant
     ? intersectProjects(grant.project_ids, specialistGrant.project_ids)
-    : grant.project_ids;
-  if (specialistGrant && projectIds.length === 0) {
+    : consumerGrant
+      ? intersectProjects(grant.project_ids, [consumerGrant.project_id])
+      : grant.project_ids;
+  if ((specialistGrant || consumerGrant) && projectIds.length === 0) {
     throw statusError("grant_resolution_denied", 403);
   }
   const claims = buildGrantClaims({
@@ -1056,6 +1228,7 @@ async function finishGitHubIdentity(request, env, fetchImpl) {
       Boolean(stored.allowOwnerReview) &&
       parseCsv(env.MEMORY_OWNER_GITHUB_IDS).includes(String(githubUser.id)),
     specialistGrant,
+    consumerGrant,
   });
   const resolverToken = String(env.GRANT_RESOLVER_TOKEN || "");
   if (resolverToken.length < 32) {

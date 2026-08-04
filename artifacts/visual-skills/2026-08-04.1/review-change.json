@@ -1,0 +1,36 @@
+{
+  "files": [
+    "migrations/011_visual_skill_consumers.sql",
+    "scripts/manage-visual-skill-consumers.mjs",
+    "scripts/manage-visual-skill-projection.mjs",
+    "scripts/prepare-visual-skill-projection.mjs",
+    "src/graph-memory/policy.js",
+    "src/index.js",
+    "src/oauth.js",
+    "src/openapi.js",
+    "src/specialists/retrieval.js",
+    "src/visual-skills/consumers.js",
+    "src/visual-skills/contracts.js",
+    "src/visual-skills/management.js",
+    "src/visual-skills/projection.js",
+    "src/visual-skills/retrieval.js",
+    "wrangler.toml",
+    "test/general-assistant-oauth.test.mjs",
+    "test/manage-visual-skill-consumers.test.mjs",
+    "test/manage-visual-skill-projection.test.mjs",
+    "test/visual-skills-contracts.test.mjs",
+    "test/visual-skills-projection.test.mjs",
+    "test/visual-skills-retrieval.test.mjs"
+  ],
+  "signals": [
+    "authentication",
+    "authorization",
+    "api",
+    "migration",
+    "secrets",
+    "bounded deletion",
+    "vector retrieval",
+    "oauth refresh",
+    "tests"
+  ]
+}

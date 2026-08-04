@@ -4,6 +4,11 @@ import {
 } from "./policy.js";
 
 const IDENTIFIER = /^[a-z0-9][a-z0-9._-]{1,127}$/u;
+const VISUAL_SCOPE = Object.freeze({
+  tenant_id: "personal",
+  project_id: "project-infinitum",
+  domain_id: "visual-design-expression",
+});
 
 export function buildAuthorizedVectorFilter(principal, input = {}) {
   const tenantId = boundedId(input.tenant_id ?? principal?.tenant_id, "TENANT_SCOPE_REQUIRED");
@@ -65,6 +70,51 @@ export function optionalAuthorizedVectorFilter(principal, input = {}) {
   }
   if (domainId) filter.domain_id = domainId;
   return filter;
+}
+
+export function buildAuthorizedVisualSkillFilter(principal, input = {}) {
+  if (!principal?.capabilities?.includes("memory.search")) {
+    throw denied("VISUAL_SKILL_SCOPE_DENIED", "Visual skill search is outside the principal grant");
+  }
+  let consumerId;
+  if (principal.role === "specialist") {
+    if (principal.specialist_id !== "haava") {
+      throw denied("VISUAL_SKILL_CONSUMER_DENIED", "Only Haava owns the specialist projection");
+    }
+    consumerId = "haava";
+  } else if (
+    principal.role === "portal"
+    && principal.consumer_ids?.includes("general-assistant")
+  ) {
+    consumerId = "general-assistant";
+  } else {
+    throw denied("VISUAL_SKILL_CONSUMER_DENIED", "The principal has no visual skill consumer binding");
+  }
+  if (input.consumer_id && String(input.consumer_id).trim().toLowerCase() !== consumerId) {
+    throw denied("VISUAL_SKILL_CONSUMER_DENIED", "Caller consumer impersonation is denied");
+  }
+  if (principal.role === "portal" && (!input.project_id || !input.domain_id)) {
+    throw denied("VISUAL_SKILL_SCOPE_DENIED", "Portal visual skill search requires explicit project and domain");
+  }
+  const target = {
+    tenant_id: input.tenant_id ?? principal.tenant_id,
+    project_id: input.project_id ?? soleScope(principal.project_ids),
+    domain_id: input.domain_id ?? soleScope(principal.domain_ids),
+  };
+  if (
+    target.tenant_id !== VISUAL_SCOPE.tenant_id
+    || target.project_id !== VISUAL_SCOPE.project_id
+    || target.domain_id !== VISUAL_SCOPE.domain_id
+    || principal.tenant_id !== VISUAL_SCOPE.tenant_id
+    || !principal.project_ids?.includes(VISUAL_SCOPE.project_id)
+    || !principal.domain_ids?.includes(VISUAL_SCOPE.domain_id)
+  ) {
+    throw denied("VISUAL_SKILL_SCOPE_DENIED", "Visual skill target is outside the bounded contract");
+  }
+  if (principal.role === "specialist") {
+    buildAuthorizedVectorFilter(principal, target);
+  }
+  return { ...VISUAL_SCOPE, consumer_id: consumerId };
 }
 
 function soleScope(values) {

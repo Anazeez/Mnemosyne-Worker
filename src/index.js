@@ -31,6 +31,7 @@ import {
   assertSpecialistAccess,
 } from "./specialists/policy.js";
 import { optionalAuthorizedVectorFilter } from "./specialists/retrieval.js";
+import { retrieveVisualSkills } from "./visual-skills/retrieval.js";
 import { buildHealthPayload } from "./health.js";
 
 /**
@@ -403,10 +404,7 @@ export default {
       if (url.pathname === "/v1/skills/retrieval" && method === "POST") {
         requireCapability(principal, CAPABILITY.SKILLS_RETRIEVAL);
 
-        return await handleMemorySearch(request, env, principal, {
-          legacy: false,
-          forcedIndex: "skills"
-        });
+        return await handleSkillsRetrieval(request, env, principal);
       }
 
       if (url.pathname === "/v1/registry" && method === "GET") {
@@ -1352,6 +1350,27 @@ async function handleMemorySearch(
   });
 }
 
+async function handleSkillsRetrieval(request, env, principal) {
+  let body;
+  try {
+    body = await request.clone().json();
+  } catch {
+    return jsonError("Invalid JSON body", 400);
+  }
+  const visualRequest = body.domain_id === "visual-design-expression"
+    || principal.specialist_id === "haava"
+    || principal.consumer_ids?.includes("general-assistant");
+  if (!visualRequest) {
+    return handleMemorySearch(request, env, principal, {
+      legacy: false,
+      forcedIndex: "skills"
+    });
+  }
+  return Response.json(await retrieveVisualSkills({ env, principal, input: body }), {
+    headers: { "Cache-Control": "no-store" }
+  });
+}
+
 async function executeSupplementalMemorySearch(input, env, principal) {
   const query = String(input.query || "").trim();
   if (!query) {
@@ -1432,10 +1451,20 @@ function formatVectorMatch(match) {
     source_ref: metadata.source_ref,
     created: metadata.created,
     schema: metadata.schema,
+    skill_id: metadata.skill_id,
+    authority_owner: metadata.authority_owner,
+    source_sha256: metadata.source_sha256,
+    card_sha256: metadata.card_sha256,
+    source_pages: metadata.source_pages
+      ? String(metadata.source_pages).split(",").filter(Boolean).map(Number)
+      : undefined,
+    catalog_version: metadata.catalog_version,
+    domain_id: metadata.domain_id,
     citation:
-      metadata.path && metadata.sha256
+      metadata.citation_path
+      || (metadata.path && metadata.sha256
         ? `${metadata.path}#${metadata.sha256}`
-        : null
+        : null)
   };
 }
 

@@ -2,9 +2,10 @@ import { executeMemoryOperation } from "./mcp.js";
 import { buildHealthPayload } from "./health.js";
 import { handleMeshInboxRequest } from "./mesh/routes.js";
 import { authenticateLegacyRequest } from "./auth/legacy-credentials.js";
+import { retrieveVisualSkills } from "./visual-skills/retrieval.js";
 
 const scopeDescriptions = Object.freeze({
-  "identity:read": "Verify the authenticated specialist identity and bounded grants",
+  "identity:read": "Verify the authenticated identity and bounded grants",
   "memory:read": "Read accepted project memory and continuity",
   "memory:search": "Search accepted project memory",
   "memory:propose": "Submit an immutable memory candidate",
@@ -51,7 +52,7 @@ const healthResponseSchema = {
     mesh_ingress: { enum: ["ready", "unavailable"] },
   },
 };
-const principalResponseSchema = {
+const specialistPrincipalResponseSchema = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -74,6 +75,32 @@ const principalResponseSchema = {
     package_version: boundedId,
     grant_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
   },
+};
+const visualPortalPrincipalResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "authenticated", "tenant_id", "principal_id", "role", "assistant_id",
+    "project_ids", "domain_ids", "consumer_ids", "oauth_scopes",
+    "capabilities", "grant_version", "consumer_grant_version",
+  ],
+  properties: {
+    authenticated: { const: true },
+    tenant_id: boundedId,
+    principal_id: { const: "general-assistant" },
+    role: { const: "portal" },
+    assistant_id: { type: "string", pattern: "^oauth-[a-f0-9]{32}$" },
+    project_ids: boundedIdList,
+    domain_ids: boundedIdList,
+    consumer_ids: boundedIdList,
+    oauth_scopes: boundedIdList,
+    capabilities: boundedIdList,
+    grant_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    consumer_grant_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
+  },
+};
+const principalResponseSchema = {
+  oneOf: [specialistPrincipalResponseSchema, visualPortalPrincipalResponseSchema],
 };
 
 export const OPENAPI_DOCUMENT = Object.freeze({
@@ -98,12 +125,12 @@ export const OPENAPI_DOCUMENT = Object.freeze({
     "/v1/session": {
       get: {
         operationId: "verifyOAuthPrincipal",
-        summary: "Verify the authenticated specialist identity and bounded grants",
+        summary: "Verify the authenticated identity and bounded grants",
         security: [{ oauth: ["identity:read"] }],
         responses: {
           ...standardResponses(),
           200: jsonResponse(
-            "Bounded authenticated specialist identity and grants",
+            "Bounded authenticated identity and grants",
             principalResponseSchema,
           ),
         },
@@ -118,7 +145,7 @@ export const OPENAPI_DOCUMENT = Object.freeze({
           ...standardResponses(),
           200: jsonResponse(
             "Bounded Matrix-key-bound specialist identity and grants",
-            principalResponseSchema,
+            specialistPrincipalResponseSchema,
           ),
         },
       },
@@ -153,6 +180,19 @@ export const OPENAPI_DOCUMENT = Object.freeze({
         top_k: { type: "integer", minimum: 1, maximum: 25 },
       },
       ["tenant_id", "project_id", "query"],
+    ),
+    "/v1/skills/retrieval": postOperation(
+      "retrieveSkills",
+      "Retrieve grounded visual communication capabilities",
+      "memory:search",
+      {
+        ...targetProperties,
+        domain_id: { type: "string", const: "visual-design-expression" },
+        query: { type: "string", minLength: 1, maxLength: 1_000 },
+        top_k: { type: "integer", minimum: 1, maximum: 25 },
+        threshold: { type: "number", minimum: 0.5, maximum: 0.95 },
+      },
+      ["tenant_id", "project_id", "domain_id", "query"],
     ),
     "/v1/memory/traverse": postOperation(
       "traverseMemory",
@@ -303,6 +343,23 @@ export async function handleOpenApiRequest(request, {
   if (url.pathname === "/v1/mesh/inbox" && request.method === "GET") {
     return handleMeshInboxRequest(request, { env, principal });
   }
+  if (url.pathname === "/v1/skills/retrieval" && request.method === "POST") {
+    try {
+      return Response.json(await retrieveVisualSkills({
+        env,
+        principal,
+        input: await request.json(),
+      }), {
+        headers: { "Cache-Control": "no-store" },
+      });
+    } catch (error) {
+      return normalizedError(
+        error?.code || "VISUAL_SKILL_RETRIEVAL_FAILED",
+        Number.isInteger(error?.status) ? error.status : 500,
+        requestId(),
+      );
+    }
+  }
   const candidateMatch = url.pathname.match(
     /^\/v1\/memory\/candidates\/([^/]+)$/,
   );
@@ -342,6 +399,28 @@ export async function handleOpenApiRequest(request, {
 }
 
 export function verifiedPrincipalView(principal) {
+  if (
+    principal?.role === "portal"
+    && principal?.principal_id === "general-assistant"
+    && principal?.consumer_ids?.includes("general-assistant")
+    && principal?.capabilities?.includes("identity.read")
+  ) {
+    const sorted = value => [...new Set(value ?? [])].map(String).sort();
+    return {
+      authenticated: true,
+      tenant_id: principal.tenant_id,
+      principal_id: "general-assistant",
+      role: "portal",
+      assistant_id: principal.assistant_id,
+      project_ids: sorted(principal.project_ids),
+      domain_ids: sorted(principal.domain_ids),
+      consumer_ids: sorted(principal.consumer_ids),
+      oauth_scopes: sorted(principal.scopes),
+      capabilities: sorted(principal.capabilities),
+      grant_version: String(principal.grant_version ?? ""),
+      consumer_grant_version: String(principal.consumer_grant_version ?? ""),
+    };
+  }
   if (
     principal?.role !== "specialist"
     || !principal?.specialist_id

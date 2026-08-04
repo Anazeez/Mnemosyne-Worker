@@ -161,6 +161,24 @@ jobs:
             --config /tmp/wrangler.production.json \
             --file /tmp/specialist-credentials.sql >/dev/null
           echo "Registered specialist credentials migrated as HMAC hashes."
+      - name: Ensure bounded visual skill metadata indexes
+        shell: bash
+        run: |
+          ensure_metadata_index() {
+            local property="$1"
+            npx wrangler vectorize list-metadata-index mnemosyne-skills --json > /tmp/vectorize-metadata.json
+            if jq -e --arg property "$property" \
+              '.. | objects | select((.propertyName? // .property_name? // .name?) == $property and .type? == "string")' \
+              /tmp/vectorize-metadata.json >/dev/null; then
+              return 0
+            fi
+            npx wrangler vectorize create-metadata-index mnemosyne-skills \
+              --propertyName "$property" --type string >/dev/null
+          }
+          ensure_metadata_index tenant_id
+          ensure_metadata_index project_id
+          ensure_metadata_index domain_id
+          ensure_metadata_index consumer_id
       - name: Deploy with existing bindings preserved
         shell: bash
         run: |

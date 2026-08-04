@@ -199,3 +199,18 @@ test("production workflow installs the credential pepper and migrates only hashe
   assert.match(workflow, /wrangler d1 execute DB --remote/);
   assert.doesNotMatch(workflow, /echo.*LEGACY_CREDENTIAL_PEPPER/);
 });
+
+test("production workflow ensures every scalar visual retrieval filter is indexed", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/production-deploy.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /vectorize list-metadata-index mnemosyne-skills/);
+  assert.match(
+    workflow,
+    /vectorize create-metadata-index mnemosyne-skills[\s\S]+--propertyName "\$property" --type string/,
+  );
+  for (const property of ["tenant_id", "project_id", "domain_id", "consumer_id"]) {
+    assert.match(workflow, new RegExp(`ensure_metadata_index ${property}`));
+  }
+});

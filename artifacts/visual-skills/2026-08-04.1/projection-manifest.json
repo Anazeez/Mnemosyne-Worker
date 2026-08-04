@@ -1,0 +1,255 @@
+{
+  "schema": "mnemosyne-visual-skill-projection-v1",
+  "catalog_version": "2026-08-04.1",
+  "projection_prefix": "visual-skill:2026-08-04.1:",
+  "index_binding": "MATRIX_SKILLS",
+  "source_sha256": "30a4f87a42821a21e633424ab333d6103b6a6ad911d963bd756fb9ca16ca715a",
+  "installed_skill_hash": "f7f1069e200d4f22e03dd8de219dfbec897817da18bebc2a6a44c908f484e5ea",
+  "card_count": 24,
+  "projection_count": 48,
+  "ids": [
+    "visual-skill:2026-08-04.1:general-assistant:cdv-apply-design-standards",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-audit-presentation-coherence",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-build-a-visual-practice",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-choose-tool-by-data-and-output",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-contextualize-scale",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-critique-against-standards",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-define-visualization-purpose",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-design-for-clarity-without-interaction",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-ensure-presentation-readability",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-explain-every-chart",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-explore-then-explain",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-invite-audience-interaction",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-make-insight-familiar-and-obvious",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-match-chart-to-visual-literacy",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-pair-insight-display-and-attention",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-protect-data-in-visualization-tools",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-redesign-slide-for-clarity",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-remove-non-data-ink",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-select-static-animated-or-interactive",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-share-data-for-decision-culture",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-test-with-audience",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-understand-and-prepare-data",
+    "visual-skill:2026-08-04.1:general-assistant:cdv-visual-evidence-for-decisions",
+    "visual-skill:2026-08-04.1:haava:cdv-apply-design-standards",
+    "visual-skill:2026-08-04.1:haava:cdv-audit-presentation-coherence",
+    "visual-skill:2026-08-04.1:haava:cdv-build-a-visual-practice",
+    "visual-skill:2026-08-04.1:haava:cdv-choose-tool-by-data-and-output",
+    "visual-skill:2026-08-04.1:haava:cdv-contextualize-scale",
+    "visual-skill:2026-08-04.1:haava:cdv-critique-against-standards",
+    "visual-skill:2026-08-04.1:haava:cdv-define-visualization-purpose",
+    "visual-skill:2026-08-04.1:haava:cdv-design-for-clarity-without-interaction",
+    "visual-skill:2026-08-04.1:haava:cdv-ensure-presentation-readability",
+    "visual-skill:2026-08-04.1:haava:cdv-explain-every-chart",
+    "visual-skill:2026-08-04.1:haava:cdv-explore-then-explain",
+    "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
+    "visual-skill:2026-08-04.1:haava:cdv-invite-audience-interaction",
+    "visual-skill:2026-08-04.1:haava:cdv-make-insight-familiar-and-obvious",
+    "visual-skill:2026-08-04.1:haava:cdv-match-chart-to-visual-literacy",
+    "visual-skill:2026-08-04.1:haava:cdv-pair-insight-display-and-attention",
+    "visual-skill:2026-08-04.1:haava:cdv-protect-data-in-visualization-tools",
+    "visual-skill:2026-08-04.1:haava:cdv-redesign-slide-for-clarity",
+    "visual-skill:2026-08-04.1:haava:cdv-remove-non-data-ink",
+    "visual-skill:2026-08-04.1:haava:cdv-select-static-animated-or-interactive",
+    "visual-skill:2026-08-04.1:haava:cdv-share-data-for-decision-culture",
+    "visual-skill:2026-08-04.1:haava:cdv-test-with-audience",
+    "visual-skill:2026-08-04.1:haava:cdv-understand-and-prepare-data",
+    "visual-skill:2026-08-04.1:haava:cdv-visual-evidence-for-decisions"
+  ],
+  "record_hashes": [
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-apply-design-standards",
+      "record_sha256": "f71f3ef274a9d944925b35e00f06ec8a2fbd9a7ad0f580de004c21bd791a89a1"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-audit-presentation-coherence",
+      "record_sha256": "a15638f152d60a22f244c0e35bb4aefaa477c407f4961eea6f7da8e89ece0997"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-build-a-visual-practice",
+      "record_sha256": "72568e13e6e1bfc559b80e3e0c1c33da00b7e38c76d601bb93ee70ae707847ac"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-choose-tool-by-data-and-output",
+      "record_sha256": "abb0fd3b852744c34cf3e8b0e32c1e9eca1a7131e4aee7c32886b724df6ba45f"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-contextualize-scale",
+      "record_sha256": "5ff9944727c3ec4c153a17b62215c592fbfa30eb148c52d955ace4fb581a9da2"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-critique-against-standards",
+      "record_sha256": "4cd5e58f8979e6f06c8251e6e4916d27dde6261ac5f8b7d414f2bcf7c3f265e0"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-define-visualization-purpose",
+      "record_sha256": "bdebde673907902e211eaf823c71f3ff30dd8ee2c16d8b6d26c6d85bc13e3a1b"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-design-for-clarity-without-interaction",
+      "record_sha256": "e86de19b523f0d8196bf833345455c01cc944d1960344d1f0d71efd42bd36886"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-ensure-presentation-readability",
+      "record_sha256": "16d6b99e5fdade06ce182817c1872a0af2bf772a830cd428a567c0ed73173598"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-explain-every-chart",
+      "record_sha256": "e4b26a69bef45ca33f29eea5c6de29a051c186e059d49c767ec65d92a72f10f1"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-explore-then-explain",
+      "record_sha256": "31d6ba4f41d721329e437ea8271406a3d00f66a7786b45a5d6fa1a5921349ea1"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-guide-audience-through-chart",
+      "record_sha256": "9fee2c835c23fecde5f55c70b8afbd532979624ba6fc8ea414cf043706d80418"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-invite-audience-interaction",
+      "record_sha256": "0c570a21d8a4b257f427d195ee72afc42a770f1a4ebedee95742e16a1c033f6c"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-make-insight-familiar-and-obvious",
+      "record_sha256": "682a8f6e1284d371147fc4b4c49610a8a0f9298329390f100413a17447c5e8bf"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-match-chart-to-visual-literacy",
+      "record_sha256": "61a0d95957af8f5e7cfc3a84786c92b4a0570e26c926306112f68d96895402e6"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-pair-insight-display-and-attention",
+      "record_sha256": "54c02f5b87f8eb27f33722cf90a07d620ca0b9b9b8ac80934b343a92f7dc86ea"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-protect-data-in-visualization-tools",
+      "record_sha256": "9079760f1c863813ffcfaa8fa7250d2e86f8a1dd1aaa550ad72ff0b59c2bfe56"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-redesign-slide-for-clarity",
+      "record_sha256": "e4405dc99f1b53be8a386c3ccb73dc6394819bdc4da49d20c5c6f2bed291e485"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-remove-non-data-ink",
+      "record_sha256": "36c1ba2c836a12d1345e8baa13c71910ef276b57bbf5ae05417b15beb51f00bf"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-select-static-animated-or-interactive",
+      "record_sha256": "53168ae902ef67cc8c06cf1e2016a031971200eb31dc0b7a84a93487c051180c"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-share-data-for-decision-culture",
+      "record_sha256": "2680d2ca54a843ec50686775a88cbbd4eda17d8d1db4a833fe24a13bd6879af4"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-test-with-audience",
+      "record_sha256": "6a791f7b84183dd83cf630a22ec82af89428deab9226469ba8b540a3efcf54eb"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-understand-and-prepare-data",
+      "record_sha256": "f14f542aefb63b3cd8b9baeb22c8fa462f57e2d37739a2c291572af39e924c13"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:general-assistant:cdv-visual-evidence-for-decisions",
+      "record_sha256": "89e7f6ad8e7dad4e392d9e9cb255a43f16ece5a35525c508b77aeb696ace87cc"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-apply-design-standards",
+      "record_sha256": "279a78fe2d47d2f4b0e8bc067628e80100f7be779ff13b32ff202254d1ef10e5"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-audit-presentation-coherence",
+      "record_sha256": "da1795acd8cfa2fa00b89fd92760793d91729494a45b1058492501bcfff62d36"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-build-a-visual-practice",
+      "record_sha256": "07b8594aa6adc5e8e55f8771d0eefbca9d11f2288925605a8659be5eb29e65e2"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-choose-tool-by-data-and-output",
+      "record_sha256": "6e8cde344b3b27aaf2cd22488b6f22b16e18be580496dbcf00f2ab5943a96270"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-contextualize-scale",
+      "record_sha256": "84625fa624dea8d38ac2d321f3266c0341c4d53ed8813b47e13132d37ac14ca0"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-critique-against-standards",
+      "record_sha256": "945fbf38d3861855a82a6fee8128132c6a8f2fec18670388f36a53773f842b84"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-define-visualization-purpose",
+      "record_sha256": "4866a51cfc95508614f0c2a99f6e63bd568daf801c77ad404fae4271cd7068ea"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-design-for-clarity-without-interaction",
+      "record_sha256": "084f76564058f4a228664d18ac779cabcf4cc5f17004c120d1296bc4d37a1e45"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-ensure-presentation-readability",
+      "record_sha256": "f13efeb270423972197320e0a01880af6ac58ad057dd0678ce2c8a2d2a65bf48"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-explain-every-chart",
+      "record_sha256": "bc091400b4e13f4636e9e676708d5302268eb66d9fe41d77c40e639af159ba70"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-explore-then-explain",
+      "record_sha256": "b053c3c9d367ede91eef7f6eeb3cc62beebab079855e014851815d0238c726b6"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-guide-audience-through-chart",
+      "record_sha256": "9b29c706b4cd267153c734afc1d735ec90fff32d663d980a5f04f9c67e3805a9"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-invite-audience-interaction",
+      "record_sha256": "5439d28e984404f1864570286d89bbea39412fb7529fa73b12c74d9a970a50d2"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-make-insight-familiar-and-obvious",
+      "record_sha256": "6ea1f77e3fb331b82b6a645d8d87a5ac693de09e8bcb12e80fedb02930768d3c"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-match-chart-to-visual-literacy",
+      "record_sha256": "8e8877d2c6e34cf2885a3bd0653f521c2c6225743c535f3afe32f4861df36266"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-pair-insight-display-and-attention",
+      "record_sha256": "cdc25b2150e4d17e673744f730c0b98409de9493b112df85d0de55eee044f012"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-protect-data-in-visualization-tools",
+      "record_sha256": "da72f33ddde255fad598d0289e0f888be373e8f1c828ac90e73561f4ed8e3b20"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-redesign-slide-for-clarity",
+      "record_sha256": "14d3c83edb4d25804606176915beeb143dc3b8a47726a1f97be5f50e20561740"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-remove-non-data-ink",
+      "record_sha256": "babc32177cba08f26eb84e4cbbcf5682d1f7e61521d1b15fddbc47353def8909"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-select-static-animated-or-interactive",
+      "record_sha256": "6b128fd52813d02113c0d4de08508b4fd2bb42af4df6462d40e55cf15a9e30da"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-share-data-for-decision-culture",
+      "record_sha256": "cfa5f353c2e4c57c88128b4dc9413020a5bb3aa85d0b341ed83793c30032f2b5"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-test-with-audience",
+      "record_sha256": "ceb00812935fb3f506d46c8927ec3e729f8990f0909857255ca25531e5615e1c"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-understand-and-prepare-data",
+      "record_sha256": "3f6f874105277232fed91bac945ffac75891febdf6294287d0586f9ac3a71b90"
+    },
+    {
+      "id": "visual-skill:2026-08-04.1:haava:cdv-visual-evidence-for-decisions",
+      "record_sha256": "adbd2994cef6a1d1ccf732d4e0daddfa4ca0999131d78d8e146c6b033c583474"
+    }
+  ],
+  "manifest_sha256": "08614c4e79b773ecfca6d0c1ffe1cfd540cad8284522c57ab171ade5faa5bf80"
+}

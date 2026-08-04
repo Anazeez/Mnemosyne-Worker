@@ -1,0 +1,34 @@
+[
+  {
+    "dimension": "security",
+    "severity": "critical",
+    "path": "src/oauth.js",
+    "line": 198,
+    "evidence": "A bound consumer could be classified as owner review when review scope was requested; consumer binding now takes precedence and forces the exact portal project.",
+    "verification": "passed"
+  },
+  {
+    "dimension": "security",
+    "severity": "high",
+    "path": "src/graph-memory/policy.js",
+    "line": 80,
+    "evidence": "Visual consumer claims previously accepted additional projects; claims now require exactly project-infinitum.",
+    "verification": "passed"
+  },
+  {
+    "dimension": "correctness",
+    "severity": "high",
+    "path": "src/visual-skills/retrieval.js",
+    "line": 84,
+    "evidence": "Retrieval scope checks did not validate all projection provenance fields; the full projection contract is now validated before a match is returned.",
+    "verification": "passed"
+  },
+  {
+    "dimension": "security",
+    "severity": "medium",
+    "path": "migrations/011_visual_skill_consumers.sql",
+    "line": 4,
+    "evidence": "The database assistant identifier glob admitted non-hex suffix characters; the constraint now rejects every non-hex character after oauth-.",
+    "verification": "passed"
+  }
+]
