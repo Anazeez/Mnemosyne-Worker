@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildAuthorizedVectorFilter } from "../src/specialists/retrieval.js";
+import {
+  buildAuthorizedVectorFilter,
+  optionalAuthorizedVectorFilter,
+} from "../src/specialists/retrieval.js";
 import {
   loadWorker,
   migrateTestPrincipalEnvironment,
@@ -88,6 +91,16 @@ test("authorized specialist filter always contains tenant project and sole domai
     project_id: "project-infinitum",
     domain_id: "visual-design-expression",
     scope_key: "brand-refresh",
+  });
+});
+
+test("specialist search inherits its sole server-owned project and domain", () => {
+  assert.deepEqual(optionalAuthorizedVectorFilter(haavaPrincipal, {
+    tenant_id: "personal",
+  }), {
+    tenant_id: "personal",
+    project_id: "project-infinitum",
+    domain_id: "visual-design-expression",
   });
 });
 

@@ -1615,7 +1615,7 @@ async function handleRouterStatus(env, principal) {
     credential_id: principal.credential_id,
     principal_id: principal.principal_id,
     d1_bound: Boolean(env.DB),
-    artifacts_bound: Boolean(env.MATRIX_ARTIFACTS),
+    artifacts_bound: Boolean(exchangeArtifactBucket(env)),
     email_queue_bound: Boolean(env.MATRIX_EMAIL_QUEUE),
     memory_domains: Object.keys(INDEX_BINDING),
     mandate_tables: "unknown"
@@ -2221,8 +2221,9 @@ async function handleExchangeHistory(env, principal) {
 
 async function handleExchangeArtifact(env, principal, exchangeId) {
   ensureD1(env);
+  const artifactBucket = exchangeArtifactBucket(env);
 
-  if (!env.MATRIX_ARTIFACTS) {
+  if (!artifactBucket) {
     return jsonError(
       "Artifact storage is not configured",
       503
@@ -2262,6 +2263,10 @@ async function handleExchangeArtifact(env, principal, exchangeId) {
     );
   }
 
+  if (!isExchangeArtifactKey(artifactKey)) {
+    return jsonError("Exchange artifact not found", 404);
+  }
+
   const mayReadAnyExchange = hasCapability(
     principal,
     CAPABILITY.EXCHANGES_ARTIFACT_READ_ANY
@@ -2277,7 +2282,7 @@ async function handleExchangeArtifact(env, principal, exchangeId) {
     );
   }
 
-  const object = await env.MATRIX_ARTIFACTS.get(artifactKey);
+  const object = await artifactBucket.get(artifactKey);
 
   if (!object) {
     return jsonError("Artifact object is missing", 404);
@@ -2314,6 +2319,7 @@ async function prepareTextExchangePayload(
   }
 ) {
   const payloadSize = byteLength(payload_data);
+  const artifactBucket = exchangeArtifactBucket(env);
 
   if (payloadSize <= MAX_INLINE_QUEUE_BYTES) {
     return {
@@ -2325,7 +2331,7 @@ async function prepareTextExchangePayload(
     };
   }
 
-  if (!env.MATRIX_ARTIFACTS) {
+  if (!artifactBucket) {
     throw new AuthzError(
       "Payload exceeds inline exchange capacity. Configure MATRIX_ARTIFACTS or send an artifact reference.",
       413
@@ -2338,7 +2344,7 @@ async function prepareTextExchangePayload(
     "txt"
   );
 
-  await env.MATRIX_ARTIFACTS.put(
+  await artifactBucket.put(
     artifactKey,
     payload_data,
     {
@@ -2361,6 +2367,10 @@ async function prepareTextExchangePayload(
     artifact_key: artifactKey,
     artifact_content_type: content_type
   };
+}
+
+function exchangeArtifactBucket(env) {
+  return env.MATRIX_ARTIFACTS ?? env.R2_MATRIXIUM;
 }
 
 function buildExchangeLedgerBody({
@@ -2458,6 +2468,11 @@ function normalizePersonaRecipient(value) {
 
 function buildArtifactKey(source, exchangeId, extension) {
   return `exchanges/${source}/${exchangeId}/payload.${extension}`;
+}
+
+function isExchangeArtifactKey(value) {
+  return /^exchanges\/[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,127}\/payload\.[a-z0-9]{1,16}$/u
+    .test(String(value || ""));
 }
 
 function readLedgerField(body, fieldName) {

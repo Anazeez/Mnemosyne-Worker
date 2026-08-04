@@ -44,7 +44,11 @@ export function buildAuthorizedVectorFilter(principal, input = {}) {
 
 export function optionalAuthorizedVectorFilter(principal, input = {}) {
   if (principal?.role === "specialist") {
-    return buildAuthorizedVectorFilter(principal, input);
+    return buildAuthorizedVectorFilter(principal, {
+      ...input,
+      project_id: input.project_id ?? soleScope(principal.project_ids),
+      domain_id: input.domain_id ?? soleScope(principal.domain_ids),
+    });
   }
   const filter = safeOptionalFilters(input);
   const tenantId = optionalId(input.tenant_id ?? principal?.tenant_id);
@@ -61,6 +65,10 @@ export function optionalAuthorizedVectorFilter(principal, input = {}) {
   }
   if (domainId) filter.domain_id = domainId;
   return filter;
+}
+
+function soleScope(values) {
+  return Array.isArray(values) && values.length === 1 ? values[0] : undefined;
 }
 
 function safeOptionalFilters(input) {
