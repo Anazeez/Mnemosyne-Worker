@@ -45,6 +45,16 @@
       "dimensions": [
         "correctness"
       ],
+      "evidence": "The production packet attempted one 48-ID Vectorize read; reads and rollback deletions are now bounded to batches of at most 20 with explicit invalid-response failure.",
+      "line": 30,
+      "path": "src/visual-skills/management.js",
+      "severity": "high",
+      "verification": "passed"
+    },
+    {
+      "dimensions": [
+        "correctness"
+      ],
       "evidence": "Retrieval scope checks did not validate all projection provenance fields; the full projection contract is now validated before a match is returned.",
       "line": 84,
       "path": "src/visual-skills/retrieval.js",

@@ -21,6 +21,14 @@ const provenance = {
 const packet = await prepareVisualSkillProjection({
   cards: [card], provenance, installedSkillHash, catalogVersion: "2026-08-04.1",
 });
+const productionManifest = JSON.parse(await readFile(
+  new URL("../artifacts/visual-skills/2026-08-04.1/projection-manifest.json", import.meta.url),
+  "utf8",
+));
+const productionRecords = (await readFile(
+  new URL("../artifacts/visual-skills/2026-08-04.1/projection-records.jsonl", import.meta.url),
+  "utf8",
+)).trim().split("\n").map(JSON.parse);
 
 function bindings(seed = []) {
   const stored = new Map(seed.map((item) => [item.id, structuredClone(item)]));
@@ -73,6 +81,25 @@ test("plan is default, read-only, and reports exact missing IDs", async () => {
   assert.equal(receipt.conflicts, 0);
   assert.deepEqual(receipt.ids, packet.manifest.ids);
   assert.deepEqual(env.calls, { ai: 0, upsert: 0, delete: 0 });
+});
+
+test("production packet reads Vectorize in bounded batches", async () => {
+  const batches = [];
+  const receipt = await manageVisualSkillProjection(options({
+    records: productionRecords,
+    manifest: productionManifest,
+    bindings: {
+      MATRIX_SKILLS: {
+        async getByIds(ids) {
+          assert.ok(ids.length <= 20);
+          batches.push(ids);
+          return [];
+        },
+      },
+    },
+  }));
+  assert.equal(receipt.adds, 48);
+  assert.deepEqual(batches.map((ids) => ids.length), [20, 20, 8]);
 });
 
 test("upsert embeds each unique document once and replay is a no-op", async () => {

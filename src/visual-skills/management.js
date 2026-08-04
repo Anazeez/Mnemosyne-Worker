@@ -27,7 +27,12 @@ export async function manageVisualSkillProjection({
     if (environment !== "production") throw invalid("VISUAL_SKILL_ENVIRONMENT_MISMATCH");
   }
 
-  const existing = await index.getByIds(manifest.ids);
+  let existing;
+  try {
+    existing = await getVectorsByIds(index, manifest.ids);
+  } catch {
+    throw invalid("VISUAL_SKILL_INDEX_READ_FAILED");
+  }
   const existingById = new Map((existing ?? []).map((item) => [item.id, item]));
   const recordsById = new Map(records.map((item) => [item.id, item]));
   const missingIds = [];
@@ -55,7 +60,7 @@ export async function manageVisualSkillProjection({
   }
   if (normalizedCommand === "remove-version") {
     assertRemovalBounds(manifest, records);
-    await index.deleteByIds(manifest.ids);
+    for (const ids of chunks(manifest.ids, 20)) await index.deleteByIds(ids);
     return {
       command: normalizedCommand,
       verification: "passed",
@@ -101,6 +106,24 @@ export async function manageVisualSkillProjection({
     ids: vectors.map((item) => item.id),
     manifest_sha256: manifest.manifest_sha256,
   };
+}
+
+async function getVectorsByIds(index, ids) {
+  const output = [];
+  for (const batch of chunks(ids, 20)) {
+    const vectors = await index.getByIds(batch);
+    if (!Array.isArray(vectors)) throw invalid("VISUAL_SKILL_INDEX_RESPONSE_INVALID");
+    output.push(...vectors);
+  }
+  return output;
+}
+
+function chunks(values, size) {
+  const output = [];
+  for (let index = 0; index < values.length; index += size) {
+    output.push(values.slice(index, index + size));
+  }
+  return output;
 }
 
 async function validatePacket({ records, manifest, expectedCatalogVersion, expectedInstalledSkillHash }) {

@@ -46,5 +46,13 @@
     "line": 26,
     "evidence": "Human-readable projection identifiers exceeded Cloudflare Vectorize's 64-byte ID limit; deterministic FNV-1a tokens now cap all 48 unique IDs at 60 bytes.",
     "verification": "passed"
+  },
+  {
+    "dimension": "correctness",
+    "severity": "high",
+    "path": "src/visual-skills/management.js",
+    "line": 30,
+    "evidence": "The production packet attempted one 48-ID Vectorize read; reads and rollback deletions are now bounded to batches of at most 20 with explicit invalid-response failure.",
+    "verification": "passed"
   }
 ]
