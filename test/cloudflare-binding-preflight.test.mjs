@@ -210,6 +210,7 @@ test("production workflow ensures every scalar visual retrieval filter is indexe
     workflow,
     /vectorize create-metadata-index mnemosyne-skills[\s\S]+--propertyName "\$property" --type string/,
   );
+  assert.match(workflow, /40004/);
   for (const property of ["tenant_id", "project_id", "domain_id", "consumer_id"]) {
     assert.match(workflow, new RegExp(`ensure_metadata_index ${property}`));
   }

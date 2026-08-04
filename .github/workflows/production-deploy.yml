@@ -166,14 +166,22 @@ jobs:
         run: |
           ensure_metadata_index() {
             local property="$1"
+            local create_output
             npx wrangler vectorize list-metadata-index mnemosyne-skills --json > /tmp/vectorize-metadata.json
             if jq -e --arg property "$property" \
               '.. | objects | select((.propertyName? // .property_name? // .name?) == $property and .type? == "string")' \
               /tmp/vectorize-metadata.json >/dev/null; then
               return 0
             fi
-            npx wrangler vectorize create-metadata-index mnemosyne-skills \
-              --propertyName "$property" --type string >/dev/null
+            if create_output="$(npx wrangler vectorize create-metadata-index mnemosyne-skills \
+              --propertyName "$property" --type string 2>&1)"; then
+              return 0
+            fi
+            if grep -q 'code: 40004' <<<"$create_output"; then
+              return 0
+            fi
+            echo "Metadata index creation failed for a required property."
+            return 1
           }
           ensure_metadata_index tenant_id
           ensure_metadata_index project_id
