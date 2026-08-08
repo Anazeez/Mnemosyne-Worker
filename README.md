@@ -14,6 +14,7 @@
 | `MATRIX_AGENTS` | `mnemosyne-agents` | Roles, specialist DNA |
 | `MATRIX_SKILLS` | `mnemosyne-skills` | Capability maps |
 | `MATRIX_FILES` | `mnemosyne-files` | Artifacts, session outputs |
+| `MATRIX_LIBRARY` | `matrix-library` | Curated library entries |
 
 ## Routes
 
