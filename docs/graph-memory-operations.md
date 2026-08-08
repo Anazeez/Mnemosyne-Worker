@@ -9,8 +9,8 @@ and read their own candidate status.
 All rollout flags default off. Production deployment accepts explicit inputs
 for read, MCP, Actions, proposal, owner-authenticated validation,
 owner-authenticated entity resolution, owner review receipts, and the handoff
-acceptance gate. Internal review, publication, and handoff acceptance are
-fixed to off in deployment automation.
+acceptance gate. Internal review and publication remain fixed to off; handoff
+acceptance is available only through its explicit default-off owner pilot input.
 
 The handoff MCP surface is additive: `handoff.compact` creates a local pending
 epoch draft, `handoff.propose` creates a pending confirmation for any complete
@@ -48,7 +48,9 @@ confirmation/hash/receipt before any handoff is accepted.
 7. Enable read for the synthetic tenant.
 8. Enable MCP and Actions, then verify eight tools with an owner-scoped token;
    keep `GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED=0` until the approval adapter has
-   a reviewed owner client and rollback evidence.
+   a reviewed owner client and rollback evidence. The production workflow's
+   `enable_handoff_accept` input defaults to false and must be enabled only for
+   that explicit pilot.
 9. Enable proposal and prove it creates only `pending_validation`.
 10. Enable owner validation and prove it advances a valid candidate only to
     `pending_review`, with no accepted assertion or snapshot.
@@ -59,6 +61,30 @@ confirmation/hash/receipt before any handoff is accepted.
 
 Do not enable review or publication through public rollout automation.
 MCP and Actions deployment fails closed when `OAUTH_KV` cannot be resolved.
+
+## Handoff acceptance pilot
+
+The owner pilot exposes `handoff.accept` only after the production workflow is
+manually dispatched with `enable_handoff_accept=true`. This input changes
+capability availability; it does not approve a memory write. Every acceptance
+must still carry the exact `handoff.propose` confirmation ID, payload hash,
+normalized local draft, `approved=true`, the authenticated owner's credential
+ID, and a bounded SHA-256 approval receipt. MCP marks this operation as a
+confirmation-worthy consequential action.
+
+Pilot evidence must show, in order:
+
+1. an owner-scoped client can list the eight tools and read the latest handoff
+   resource;
+2. a complete draft produces `pending_confirmation` without an accepted row;
+3. a user-approved exact replay produces one accepted row and one idempotent
+   replay receipt, with lineage preserved;
+4. disabling the flag denies new acceptance attempts while preserving the
+   append-only accepted history.
+
+Do not use `memory.propose` or `handoff.accept` for a real project handoff
+until the owner has reviewed the exact draft and explicitly approved that
+single write in the active task.
 
 ## Owner validation
 

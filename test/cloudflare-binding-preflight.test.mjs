@@ -182,6 +182,32 @@ test("production workflow requires private OAuth inputs before activation", asyn
     )?.length,
     2,
   );
+  assert.equal(
+    workflow.match(
+      /GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED" == "1"/g,
+    )?.length,
+    2,
+  );
+});
+
+test("handoff acceptance is an explicit manual rollout input and remains off by default", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/production-deploy.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    workflow,
+    /enable_handoff_accept:[\s\S]*type: boolean[\s\S]*default: false/,
+  );
+  assert.match(
+    workflow,
+    /GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: \$\{\{ inputs\.enable_handoff_accept && '1' \|\| '0' \}\}/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: "0"/,
+  );
 });
 
 test("code-only releases do not require direct D1 migration authority", async () => {

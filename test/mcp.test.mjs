@@ -40,10 +40,16 @@ test("MCP publishes eight bounded public tools", () => {
 
 test("MCP annotations accurately isolate the proposal side effect", () => {
   for (const tool of MCP_TOOL_DEFINITIONS) {
-    if (
+    if (tool.name === "handoff.accept") {
+      assert.deepEqual(tool.annotations, {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+    } else if (
       tool.name === "memory_propose" ||
-      tool.name === "handoff.propose" ||
-      tool.name === "handoff.accept"
+      tool.name === "handoff.propose"
     ) {
       assert.deepEqual(tool.annotations, {
         readOnlyHint: false,

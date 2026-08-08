@@ -153,7 +153,7 @@ export const MCP_TOOL_DEFINITIONS = Object.freeze([
     }).strict(),
     annotations: Object.freeze({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: false,
     }),

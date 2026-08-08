@@ -23,6 +23,11 @@ on:
         required: true
         type: boolean
         default: false
+      enable_handoff_accept:
+        description: Enable owner-only handoff acceptance pilot
+        required: true
+        type: boolean
+        default: false
       enable_validation:
         description: Enable owner-authenticated candidate validation
         required: true
@@ -81,13 +86,13 @@ jobs:
       GRAPH_MEMORY_MCP_ENABLED: ${{ inputs.enable_mcp && '1' || '0' }}
       GRAPH_MEMORY_ACTIONS_ENABLED: ${{ inputs.enable_actions && '1' || '0' }}
       GRAPH_MEMORY_PROPOSE_ENABLED: ${{ inputs.enable_propose && '1' || '0' }}
+      GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: ${{ inputs.enable_handoff_accept && '1' || '0' }}
       GRAPH_MEMORY_VALIDATION_ENABLED: ${{ inputs.enable_validation && '1' || '0' }}
       GRAPH_MEMORY_RESOLUTION_ENABLED: ${{ inputs.enable_resolution && '1' || '0' }}
       GRAPH_MEMORY_OWNER_REVIEW_ENABLED: ${{ inputs.enable_owner_review && '1' || '0' }}
       GRAPH_MEMORY_OWNER_COMMIT_ENABLED: ${{ inputs.enable_owner_commit && '1' || '0' }}
       GRAPH_MEMORY_REVIEW_ENABLED: "0"
       GRAPH_MEMORY_PUBLICATION_ENABLED: "0"
-      GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: "0"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
