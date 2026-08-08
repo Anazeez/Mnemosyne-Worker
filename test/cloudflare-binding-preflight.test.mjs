@@ -60,6 +60,7 @@ test("deployment config preserves every supported non-secret live binding", () =
       GRAPH_MEMORY_OWNER_COMMIT_ENABLED: "0",
       GRAPH_MEMORY_REVIEW_ENABLED: "0",
       GRAPH_MEMORY_PUBLICATION_ENABLED: "0",
+      GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: "0",
       GRAPH_MEMORY_MCP_ENABLED: "1",
       GRAPH_MEMORY_ACTIONS_ENABLED: "0",
     },

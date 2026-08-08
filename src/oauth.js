@@ -27,6 +27,7 @@ const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
 export const PUBLIC_OAUTH_SCOPES = Object.freeze(Object.keys(PUBLIC_SCOPE_CAPABILITIES));
 export const HUMAN_REVIEW_SCOPE = "memory:review";
+export const HUMAN_HANDOFF_ACCEPT_SCOPE = "memory:handoff:accept";
 
 export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
   apiRoute: Object.freeze(["/mcp", "/v1/memory/", "/admin/memory/"]),
@@ -48,10 +49,14 @@ export const OAUTH_PROVIDER_OPTIONS = Object.freeze({
   }),
 });
 
-export function narrowRequestedScopes(requested, { allowReview = false } = {}) {
+export function narrowRequestedScopes(
+  requested,
+  { allowReview = false, allowHandoffAccept = allowReview } = {}
+) {
   const supported = new Set([
     ...PUBLIC_OAUTH_SCOPES,
     ...(allowReview ? [HUMAN_REVIEW_SCOPE] : []),
+    ...(allowHandoffAccept ? [HUMAN_HANDOFF_ACCEPT_SCOPE] : []),
   ]);
   const narrowed = [...new Set(requested ?? [])].filter(scope => supported.has(scope));
   if (narrowed.length === 0) throw new Error("no_supported_scope_requested");
@@ -150,14 +155,16 @@ export function buildGrantClaims({
 }) {
   const scope = narrowRequestedScopes(requestedScopes, {
     allowReview: allowOwnerReview,
+    allowHandoffAccept: allowOwnerReview,
   });
-  const isOwnerReview = scope.includes(HUMAN_REVIEW_SCOPE);
+  const isOwnerScope = scope.includes(HUMAN_REVIEW_SCOPE) ||
+    scope.includes(HUMAN_HANDOFF_ACCEPT_SCOPE);
   const numericId = Number(githubUser?.id);
   if (!Number.isSafeInteger(numericId) || numericId <= 0) {
     throw new Error("invalid_github_identity");
   }
   if (!tenantId || typeof tenantId !== "string") throw new Error("invalid_tenant");
-  if (!isOwnerReview && !/^oauth-[a-f0-9]{32}$/.test(String(assistantId || ""))) {
+  if (!isOwnerScope && !/^oauth-[a-f0-9]{32}$/.test(String(assistantId || ""))) {
     throw new Error("invalid_assistant_identity");
   }
   const login = String(githubUser.login ?? "");
@@ -169,17 +176,17 @@ export function buildGrantClaims({
       github_login: login,
       tenant_id: tenantId,
     },
-      props: {
-        auth_source: "oauth",
-        credential_id: `github-${numericId}`,
-        principal_id: isOwnerReview ? "owner" : `github:${numericId}`,
-        role: isOwnerReview ? "owner" : "portal",
-        assistant_id: isOwnerReview ? "human-review-console" : assistantId,
-        tenant_id: tenantId,
-        project_ids: [...new Set(projectIds.map(String))],
-        identity_ids: [],
-        scopes: scope,
-      },
+    props: {
+      auth_source: "oauth",
+      credential_id: `github-${numericId}`,
+      principal_id: isOwnerScope ? "owner" : `github:${numericId}`,
+      role: isOwnerScope ? "owner" : "portal",
+      assistant_id: isOwnerScope ? "human-review-console" : assistantId,
+      tenant_id: tenantId,
+      project_ids: [...new Set(projectIds.map(String))],
+      identity_ids: [],
+      scopes: scope,
+    },
   };
 }
 

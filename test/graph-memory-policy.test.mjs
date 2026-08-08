@@ -74,6 +74,21 @@ test("human review scope maps only for an owner principal", () => {
   assert.deepEqual(portal.capabilities, []);
 });
 
+test("handoff acceptance scope maps only to the owner approval capability", () => {
+  const owner = principalFromOAuthClaims(claims({
+    credential_id: "github-42",
+    assistant_id: "human-review-console",
+    role: "owner",
+    scopes: ["memory:handoff:accept"]
+  }));
+  assert.deepEqual(owner.capabilities, ["memory.handoff.accept"]);
+
+  const portal = principalFromOAuthClaims(claims({
+    scopes: ["memory:handoff:accept"]
+  }));
+  assert.deepEqual(portal.capabilities, []);
+});
+
 test("graph access requires exact tenant project and capability", () => {
   const principal = principalFromOAuthClaims(claims());
   assert.doesNotThrow(() => assertGraphAccess(

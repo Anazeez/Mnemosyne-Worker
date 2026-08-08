@@ -8,8 +8,14 @@ and read their own candidate status.
 
 All rollout flags default off. Production deployment accepts explicit inputs
 for read, MCP, Actions, proposal, owner-authenticated validation,
-owner-authenticated entity resolution, and owner review receipts. Internal
-review and publication are fixed to off in deployment automation.
+owner-authenticated entity resolution, owner review receipts, and the handoff
+acceptance gate. Internal review, publication, and handoff acceptance are
+fixed to off in deployment automation.
+
+The handoff MCP surface is additive: `handoff.compact` creates a local pending
+epoch draft, `handoff.propose` creates a pending confirmation for any complete
+draft, and `handoff.accept` requires the dedicated owner scope plus the exact
+confirmation/hash/receipt before any handoff is accepted.
 
 | Flag | Effect |
 |---|---|
@@ -21,6 +27,7 @@ review and publication are fixed to off in deployment automation.
 | `GRAPH_MEMORY_OWNER_COMMIT_ENABLED` | Permit owner-only canonical commit of an approved candidate |
 | `GRAPH_MEMORY_REVIEW_ENABLED` | Internal review gate; deployment keeps off |
 | `GRAPH_MEMORY_PUBLICATION_ENABLED` | Internal publication gate; deployment keeps off |
+| `GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED` | Owner-only explicit acceptance of one exact handoff draft; deployment keeps off |
 | `GRAPH_MEMORY_MCP_ENABLED` | Serve OAuth-protected Streamable HTTP MCP |
 | `GRAPH_MEMORY_ACTIONS_ENABLED` | Serve OAuth-protected Actions operations |
 
@@ -39,7 +46,9 @@ review and publication are fixed to off in deployment automation.
    anonymous denial on protected routes, and that review/publication remain
    unavailable.
 7. Enable read for the synthetic tenant.
-8. Enable MCP and Actions, then verify five tools with an owner-scoped token.
+8. Enable MCP and Actions, then verify eight tools with an owner-scoped token;
+   keep `GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED=0` until the approval adapter has
+   a reviewed owner client and rollback evidence.
 9. Enable proposal and prove it creates only `pending_validation`.
 10. Enable owner validation and prove it advances a valid candidate only to
     `pending_review`, with no accepted assertion or snapshot.

@@ -18,10 +18,11 @@ test("all graph memory rollout flags default off", () => {
     owner_commit: false,
     review: false,
     publication: false,
+    handoff_accept: false,
     mcp: false,
     actions: false,
   });
-  assert.equal(Object.keys(GRAPH_MEMORY_FLAGS).length, 10);
+  assert.equal(Object.keys(GRAPH_MEMORY_FLAGS).length, 11);
 });
 
 test("feature-gated services deny before calling implementations", async () => {
@@ -36,6 +37,7 @@ test("feature-gated services deny before calling implementations", async () => {
     traverseAcceptedMemory: service,
     createMemoryCandidate: service,
     getOwnCandidate: service,
+    acceptHandoffDraft: service,
   });
   await assert.rejects(
     gated.searchAcceptedMemory({}),
@@ -63,6 +65,7 @@ test("read and proposal can be enabled independently", async () => {
     traverseAcceptedMemory: () => service("traverse"),
     createMemoryCandidate: () => service("propose"),
     getOwnCandidate: () => service("status"),
+    acceptHandoffDraft: () => service("accept"),
   });
   assert.equal(await gated.searchAcceptedMemory({}), "search");
   assert.equal(await gated.getOwnCandidate({}), "status");
@@ -71,6 +74,23 @@ test("read and proposal can be enabled independently", async () => {
     error => error.code === "GRAPH_MEMORY_PROPOSE_DISABLED",
   );
   assert.deepEqual(calls, ["search", "status"]);
+});
+
+test("handoff acceptance remains separately disabled until its rollout gate is on", async () => {
+  const gated = featureGatedGraphServices({}, {
+    acceptHandoffDraft: async () => "accepted",
+  });
+  await assert.rejects(
+    gated.acceptHandoffDraft({}),
+    error => error.code === "GRAPH_MEMORY_HANDOFF_ACCEPT_DISABLED",
+  );
+
+  const enabled = featureGatedGraphServices({
+    GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: "1",
+  }, {
+    acceptHandoffDraft: async () => "accepted",
+  });
+  assert.equal(await enabled.acceptHandoffDraft({}), "accepted");
 });
 
 test("public health reports the exact rollout state", async () => {
@@ -91,6 +111,7 @@ test("public health reports the exact rollout state", async () => {
     owner_commit: false,
     review: false,
     publication: false,
+    handoff_accept: false,
     mcp: true,
     actions: false,
   });

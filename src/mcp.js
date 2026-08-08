@@ -1,4 +1,7 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  McpServer,
+  ResourceTemplate,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -13,6 +16,14 @@ import {
   searchAcceptedMemory,
   traverseAcceptedMemory,
 } from "./graph-memory/retrieval.js";
+import {
+  HANDOFF_RESOURCE_MIME_TYPE,
+  HANDOFF_RESOURCE_URI_TEMPLATE,
+  acceptHandoffDraft,
+  proposeHandoffCompaction,
+  proposeHandoffDraft,
+  readLatestHandoffResource,
+} from "./handoff/mcp.js";
 
 const targetShape = {
   tenant_id: z.string().min(2).max(64),
@@ -99,6 +110,62 @@ export const MCP_TOOL_DEFINITIONS = Object.freeze([
     }).strict(),
     annotations: retrievalAnnotations,
   }),
+  Object.freeze({
+    name: "handoff.compact",
+    description: "Compile accepted project handoffs into a pending epoch draft without writing memory.",
+    inputSchema: z.object({
+      ...targetShape,
+      occurred_at: z.string().datetime({ offset: true }).optional(),
+      event: z.enum(["phase_complete", "context_compaction", "project_complete"]).optional(),
+      agent_family: z.enum(["codex", "claude", "gemini", "other"]).optional(),
+      agent_id: z.string().min(2).max(128).optional(),
+      session_id: z.string().min(2).max(128).optional(),
+    }).strict(),
+    annotations: retrievalAnnotations,
+  }),
+  Object.freeze({
+    name: "handoff.propose",
+    description: "Validate a local handoff draft and request user confirmation without accepting memory.",
+    inputSchema: z.object({
+      ...targetShape,
+      local_draft: z.record(z.string(), z.unknown()),
+    }).strict(),
+    annotations: Object.freeze({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    }),
+  }),
+  Object.freeze({
+    name: "handoff.accept",
+    description: "Accept one exact proposed handoff after explicit owner approval.",
+    inputSchema: z.object({
+      ...targetShape,
+      confirmation_id: z.string().regex(/^handoff_confirmation_[a-f0-9]{32}$/),
+      payload_hash: z.string().regex(/^[a-f0-9]{64}$/),
+      local_draft: z.record(z.string(), z.unknown()),
+      approval: z.object({
+        approved: z.literal(true),
+        approved_by_credential_id: z.string().min(2).max(128),
+        receipt_hash: z.string().regex(/^[a-f0-9]{64}$/),
+      }).strict(),
+    }).strict(),
+    annotations: Object.freeze({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    }),
+  }),
+]);
+
+export const MCP_RESOURCE_DEFINITIONS = Object.freeze([
+  Object.freeze({
+    name: "handoff-latest",
+    uri_template: HANDOFF_RESOURCE_URI_TEMPLATE,
+    mime_type: HANDOFF_RESOURCE_MIME_TYPE,
+  }),
 ]);
 
 export const GRAPH_MEMORY_SERVICES = Object.freeze({
@@ -107,6 +174,10 @@ export const GRAPH_MEMORY_SERVICES = Object.freeze({
   traverseAcceptedMemory,
   createMemoryCandidate,
   getOwnCandidate,
+  proposeHandoffCompaction,
+  proposeHandoffDraft,
+  acceptHandoffDraft,
+  readLatestHandoffResource,
 });
 
 export async function invokeMemoryTool(name, {
@@ -181,6 +252,71 @@ export async function executeMemoryOperation(name, {
   return operations[name]();
 }
 
+export async function invokeHandoffTool(name, {
+  env,
+  principal,
+  input,
+  services = GRAPH_MEMORY_SERVICES,
+}) {
+  try {
+    const operations = {
+      "handoff.compact": services.proposeHandoffCompaction,
+      "handoff.propose": services.proposeHandoffDraft,
+      "handoff.accept": services.acceptHandoffDraft,
+    };
+    const operation = operations[name];
+    if (typeof operation !== "function") {
+      throw Object.assign(new Error("unknown_handoff_tool"), {
+        code: "UNKNOWN_HANDOFF_TOOL",
+        status: 404,
+      });
+    }
+    const output = await operation({
+      env,
+      principal,
+      input,
+    });
+    return {
+      content: [{ type: "text", text: JSON.stringify(output) }],
+      structuredContent: output,
+    };
+  } catch (error) {
+    const normalized = {
+      error: {
+        code: error?.code || "HANDOFF_OPERATION_FAILED",
+        message: "The handoff operation could not be completed",
+      },
+    };
+    return {
+      content: [{ type: "text", text: JSON.stringify(normalized) }],
+      structuredContent: normalized,
+      isError: true,
+    };
+  }
+}
+
+export async function invokeHandoffResource({
+  env,
+  principal,
+  tenantId,
+  projectId,
+  services = GRAPH_MEMORY_SERVICES,
+}) {
+  try {
+    return await services.readLatestHandoffResource({
+      env,
+      principal,
+      tenantId,
+      projectId,
+    });
+  } catch (error) {
+    throw Object.assign(new Error("The handoff resource could not be read"), {
+      code: error?.code || "HANDOFF_RESOURCE_FAILED",
+      status: error?.status || 400,
+    });
+  }
+}
+
 export async function handleMcpRequest(request, {
   env,
   principal,
@@ -191,6 +327,9 @@ export async function handleMcpRequest(request, {
     version: "1.0.0",
   });
   for (const definition of MCP_TOOL_DEFINITIONS) {
+    const invoke = definition.name.startsWith("handoff.")
+      ? invokeHandoffTool
+      : invokeMemoryTool;
     server.registerTool(
       definition.name,
       {
@@ -198,7 +337,7 @@ export async function handleMcpRequest(request, {
         inputSchema: definition.inputSchema,
         annotations: definition.annotations,
       },
-      input => invokeMemoryTool(definition.name, {
+      input => invoke(definition.name, {
         env,
         principal,
         input,
@@ -206,6 +345,31 @@ export async function handleMcpRequest(request, {
       }),
     );
   }
+  const resourceTemplate = new ResourceTemplate(
+    HANDOFF_RESOURCE_URI_TEMPLATE,
+    {}
+  );
+  server.registerResource(
+    "handoff-latest",
+    resourceTemplate,
+    {
+      description: "Latest accepted Mnemosyne handoff package for a tenant/project scope.",
+      mimeType: HANDOFF_RESOURCE_MIME_TYPE,
+    },
+    async (uri, variables) => ({
+      contents: [{
+        uri: uri.toString(),
+        mimeType: HANDOFF_RESOURCE_MIME_TYPE,
+        text: JSON.stringify(await invokeHandoffResource({
+          env,
+          principal,
+          tenantId: variables.tenant_id,
+          projectId: variables.project_id,
+          services,
+        })),
+      }],
+    }),
+  );
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
