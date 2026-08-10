@@ -140,6 +140,15 @@ function rpcError(id, code, message) {
   }, 400, { "MCP-Protocol-Version": MCP_PROTOCOL_VERSION });
 }
 
+function toolErrorResult(code, message) {
+  const error = { error: { code, message } };
+  return {
+    content: [{ type: "text", text: JSON.stringify(error) }],
+    structuredContent: error,
+    isError: true,
+  };
+}
+
 async function handleMcp(request, env) {
   if (request.method !== "POST") {
     return new Response(null, { status: 405, headers: { Allow: "POST", ...NO_STORE_HEADERS } });
@@ -176,33 +185,23 @@ async function handleMcp(request, env) {
   try {
     state = await stateRequest(env, "read");
   } catch {
-    return rpcResult(id, {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: {
-            code: "NO_OBSERVATION",
-            message: "No verified usage observation is available",
-          },
-        }),
-      }],
-      isError: true,
-    });
+    return rpcResult(id, toolErrorResult(
+      "STATE_UNAVAILABLE",
+      "The verified usage state is unavailable",
+    ));
+  }
+  if (state?.observation === null || state?.observation === undefined) {
+    return rpcResult(id, toolErrorResult(
+      "NO_OBSERVATION",
+      "No verified usage observation is available",
+    ));
   }
   const observation = sanitizeObservation(state?.observation);
   if (!observation) {
-    return rpcResult(id, {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: {
-            code: "NO_OBSERVATION",
-            message: "No verified usage observation is available",
-          },
-        }),
-      }],
-      isError: true,
-    });
+    return rpcResult(id, toolErrorResult(
+      "STATE_CORRUPT",
+      "The persisted usage observation is invalid",
+    ));
   }
   const text = JSON.stringify(observation);
   return rpcResult(id, {

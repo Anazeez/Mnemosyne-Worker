@@ -368,6 +368,18 @@ def _rpc_error(identifier: Any, code: int, message: str) -> Response:
     }, status=400)
 
 
+def _tool_error_result(code: str, message: str) -> Dict[str, Any]:
+    error = {"error": {"code": code, "message": message}}
+    return {
+        "content": [{
+            "type": "text",
+            "text": json.dumps(error, separators=(",", ":")),
+        }],
+        "structuredContent": error,
+        "isError": True,
+    }
+
+
 class UsageBridgeApplication:
     def __init__(self, capability_token: str, state_path: Path):
         self._capability_token = capability_token
@@ -428,16 +440,18 @@ class UsageBridgeApplication:
             try:
                 observation = read_current_observation(self._state_path)
             except StateError as error:
-                return _rpc_result(identifier, {
-                    "content": [{
-                        "type": "text",
-                        "text": json.dumps({"error": {
-                            "code": error.code,
-                            "message": error.public_message,
-                        }}, separators=(",", ":")),
-                    }],
-                    "isError": True,
-                })
+                return _rpc_result(
+                    identifier,
+                    _tool_error_result(error.code, error.public_message),
+                )
+            except sqlite3.Error:
+                return _rpc_result(
+                    identifier,
+                    _tool_error_result(
+                        "STATE_UNAVAILABLE",
+                        "The verified usage state is unavailable",
+                    ),
+                )
             text = json.dumps(observation, separators=(",", ":"))
             return _rpc_result(identifier, {
                 "content": [{"type": "text", "text": text}],

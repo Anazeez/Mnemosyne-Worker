@@ -141,6 +141,35 @@ class McpContractTests(unittest.TestCase):
         })
         self.assertNotIn("reset_detected", returned)
 
+    def test_empty_mcp_call_returns_one_coherent_no_observation_error(self):
+        app = UsageBridgeApplication(
+            "test-capability-token",
+            Path(tempfile.mkdtemp()) / "empty.sqlite3",
+        )
+        response = app.handle(
+            "POST",
+            "/mcp/test-capability-token",
+            {"content-type": "application/json"},
+            self._rpc(4, "tools/call", {
+                "name": "get_codex_usage",
+                "arguments": {},
+            }),
+        )
+        payload = json.loads(response.body)
+        expected_error = {
+            "error": {
+                "code": "NO_OBSERVATION",
+                "message": "No verified usage observation is available",
+            },
+        }
+        self.assertEqual(
+            json.loads(payload["result"]["content"][0]["text"]),
+            expected_error,
+        )
+        self.assertEqual(payload["result"]["structuredContent"], expected_error)
+        self.assertTrue(payload["result"]["isError"])
+        self.assertNotIn("error_code", payload)
+
     def test_live_http_server_proves_missing_wrong_and_valid_auth(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _McpHandler)
         server.application = UsageBridgeApplication("test-capability-token", self._state())
