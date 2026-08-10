@@ -252,18 +252,18 @@ export class UsageState {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!configuredToken(env.CAPABILITY_TOKEN) || !configuredToken(env.INGEST_TOKEN)) {
+    if (!configuredToken(env.CODEX_BRIDGE_TOKEN) || !configuredToken(env.INGEST_TOKEN)) {
       return json({ error: "service_not_configured" }, 503);
     }
     if (url.pathname === "/health" || url.pathname === "/health/") {
       return unauthorized();
     }
     if (url.pathname.startsWith("/health/")) {
-      if (!tokenPath(url.pathname, "health", env.CAPABILITY_TOKEN)) return unauthorized();
+      if (!tokenPath(url.pathname, "health", env.CODEX_BRIDGE_TOKEN)) return unauthorized();
       return json({ status: "ok", backend: "durable-object" });
     }
     if (url.pathname.startsWith("/mcp")) {
-      if (!tokenPath(url.pathname, "mcp", env.CAPABILITY_TOKEN)) return unauthorized();
+      if (!tokenPath(url.pathname, "mcp", env.CODEX_BRIDGE_TOKEN)) return unauthorized();
       return handleMcp(request, env);
     }
     if (url.pathname.startsWith("/ingest")) {
