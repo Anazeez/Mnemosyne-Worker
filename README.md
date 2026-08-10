@@ -36,6 +36,17 @@ invalidate, delete, export, or repair projections.
 See [graph-memory operations](docs/graph-memory-operations.md) for flags,
 deployment order, recovery, and the D1-authoritative privacy model.
 
+## Private Codex Usage Bridge
+
+The independent read-only Codex Usage Bridge lives under
+[`codex-usage-bridge/`](codex-usage-bridge/). It has its own Worker name,
+Durable Object state, token-gated MCP route, and collector ingestion route; it
+does not share this Worker’s runtime bindings or authentication surface. Its
+deployment is isolated in
+`.github/workflows/codex-usage-bridge-deploy.yml` and uses the existing
+Cloudflare Actions secrets in this repository plus the two bridge-specific
+token secrets.
+
 ## Reconstructed review surface
 
 The following routes are proposed; not active. Their presence on a review

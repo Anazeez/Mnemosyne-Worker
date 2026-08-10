@@ -6,4 +6,5 @@ node_modules/
 *.log
 *.sqlite*
 *.map
+__pycache__/
 .worktrees/

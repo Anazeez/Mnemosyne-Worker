@@ -1,0 +1,69 @@
+name: Deploy Codex Usage Bridge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "codex-usage-bridge/**"
+      - ".github/workflows/codex-usage-bridge-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-usage-bridge-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      USAGE_BRIDGE_CAPABILITY_TOKEN: ${{ secrets.USAGE_BRIDGE_CAPABILITY_TOKEN }}
+      USAGE_BRIDGE_INGEST_TOKEN: ${{ secrets.USAGE_BRIDGE_INGEST_TOKEN }}
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Validate deployment secrets without printing them
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$USAGE_BRIDGE_CAPABILITY_TOKEN"
+          test -n "$USAGE_BRIDGE_INGEST_TOKEN"
+          test "$USAGE_BRIDGE_CAPABILITY_TOKEN" != "$USAGE_BRIDGE_INGEST_TOKEN"
+          [[ "$USAGE_BRIDGE_CAPABILITY_TOKEN" =~ ^[A-Za-z0-9_-]{32,}$ ]]
+          [[ "$USAGE_BRIDGE_INGEST_TOKEN" =~ ^[A-Za-z0-9_-]{32,}$ ]]
+
+      - name: Run bridge tests
+        run: |
+          node --check codex-usage-bridge/worker/src/index.js
+          node --test codex-usage-bridge/worker/test/index.test.mjs
+          PYTHONPATH=codex-usage-bridge python3 -m unittest discover -s codex-usage-bridge/tests -v
+
+      - name: Install the MCP capability secret
+        shell: bash
+        run: |
+          printf '%s' "$USAGE_BRIDGE_CAPABILITY_TOKEN" |
+            npx --yes wrangler@4.120.0 secret put CAPABILITY_TOKEN \
+              --config codex-usage-bridge/wrangler.jsonc
+
+      - name: Install the collector ingestion secret
+        shell: bash
+        run: |
+          printf '%s' "$USAGE_BRIDGE_INGEST_TOKEN" |
+            npx --yes wrangler@4.120.0 secret put INGEST_TOKEN \
+              --config codex-usage-bridge/wrangler.jsonc
+
+      - name: Deploy the exact reviewed revision
+        run: npx --yes wrangler@4.120.0 deploy --config codex-usage-bridge/wrangler.jsonc
