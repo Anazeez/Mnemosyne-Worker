@@ -120,6 +120,30 @@ test("collector ingestion is separately token-gated and MCP returns four fields"
   ]);
 });
 
+test("empty usage retrieval returns one coherent NO_OBSERVATION error", async () => {
+  const env = makeEnv();
+  const response = await worker.fetch(
+    request(`/mcp/${CAPABILITY_TOKEN}`, "POST", {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "get_codex_usage", arguments: {} },
+    }),
+    env,
+  );
+  const payload = await response.json();
+  const expectedError = {
+    error: {
+      code: "NO_OBSERVATION",
+      message: "No verified usage observation is available",
+    },
+  };
+  assert.deepEqual(JSON.parse(payload.result.content[0].text), expectedError);
+  assert.deepEqual(payload.result.structuredContent, expectedError);
+  assert.equal(payload.result.isError, true);
+  assert.equal(Object.hasOwn(payload, "error_code"), false);
+});
+
 test("invalid ingestion shape is rejected without state mutation", async () => {
   const env = makeEnv();
   const response = await worker.fetch(
