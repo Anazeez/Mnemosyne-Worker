@@ -45,7 +45,7 @@ URL-safe capability token held in the deployment secret store or process
 environment:
 
 ```bash
-USAGE_BRIDGE_CAPABILITY_TOKEN='<32+ random URL-safe characters>' \
+CODEX_BRIDGE_TOKEN='<32+ random URL-safe characters>' \
 python3 -m usage_bridge serve \
   --host 127.0.0.1 \
   --port 8787 \
@@ -69,20 +69,17 @@ route.
 The production adapter is `worker/src/index.js`. It uses a Cloudflare Durable
 Object for the latest observation and bounded history, so the MCP does not
 depend on this machine's SQLite file. `wrangler.jsonc` declares the Worker and
-SQLite Durable Object migration. The GitHub workflow deploys only after these
-repository secrets are configured:
+SQLite Durable Object migration. The Worker keeps these Cloudflare secrets:
 
 ```text
-CLOUDFLARE_API_TOKEN
-CLOUDFLARE_ACCOUNT_ID
-USAGE_BRIDGE_CAPABILITY_TOKEN
-USAGE_BRIDGE_INGEST_TOKEN
+CODEX_BRIDGE_TOKEN
+INGEST_TOKEN
 ```
 
-The two usage tokens must be distinct, random, URL-safe, and at least 32
-characters. They are installed as Cloudflare Worker secrets and never appear
-in Git, source, logs, or this README. The MCP URL uses the capability token;
-the collector's `--upload-url` uses the separate ingestion token.
+`CODEX_BRIDGE_TOKEN` is the single ChatGPT-facing capability token. The
+collector uses the separate `INGEST_TOKEN`; it is never entered into ChatGPT.
+Both values must be distinct, random, URL-safe, and at least 32 characters.
+They never appear in Git, source, logs, or this README.
 
 After the first successful GitHub Actions deployment, configure the collector
 with the returned private URL without placing it in chat or source:

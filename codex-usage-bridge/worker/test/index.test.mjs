@@ -36,7 +36,7 @@ class FakeState {
 function makeEnv() {
   const state = new FakeState();
   return {
-    CAPABILITY_TOKEN,
+    CODEX_BRIDGE_TOKEN: CAPABILITY_TOKEN,
     INGEST_TOKEN,
     USAGE_STATE: {
       idFromName() {
