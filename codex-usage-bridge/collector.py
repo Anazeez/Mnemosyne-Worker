@@ -213,6 +213,7 @@ def upload_observation(ingest_url: str, observation: Mapping[str, Any]):
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": "codex-usage-bridge-collector/1",
         },
     )
     try:
