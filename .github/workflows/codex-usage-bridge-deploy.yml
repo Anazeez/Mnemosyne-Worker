@@ -7,6 +7,12 @@ on:
       - "codex-usage-bridge/**"
       - ".github/workflows/codex-usage-bridge-deploy.yml"
   workflow_dispatch:
+    inputs:
+      destroy:
+        description: Permanently retire the bridge Worker and its Durable Object state
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,6 +23,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: inputs.destroy != true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -64,3 +71,32 @@ jobs:
 
       - name: Deploy the exact reviewed revision
         run: npx --yes wrangler@4.120.0 deploy --config codex-usage-bridge/wrangler.jsonc
+
+  destroy:
+    if: inputs.destroy == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check out reviewed cleanup source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caea8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Validate Cloudflare credentials without printing them
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Retire Durable Object state
+        run: npx --yes wrangler@4.120.0 deploy --config codex-usage-bridge/wrangler.cleanup.jsonc
+
+      - name: Delete the bridge Worker
+        run: npx --yes wrangler@4.120.0 delete --name codex-usage-bridge --force --config codex-usage-bridge/wrangler.cleanup.jsonc
