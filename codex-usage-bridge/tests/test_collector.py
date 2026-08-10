@@ -132,6 +132,7 @@ class CollectorTests(unittest.TestCase):
         class IngestHandler(BaseHTTPRequestHandler):
             def do_POST(self):
                 captured["path"] = self.path
+                captured["user_agent"] = self.headers.get("User-Agent")
                 captured["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -159,6 +160,10 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(set(captured["body"]), {
                 "weekly_remaining", "reset_at", "credits_remaining", "observed_at",
             })
+            self.assertEqual(
+                captured.get("user_agent"),
+                "codex-usage-bridge-collector/1",
+            )
         finally:
             server.shutdown()
             server.server_close()
