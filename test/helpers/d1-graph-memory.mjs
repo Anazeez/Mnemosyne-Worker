@@ -33,6 +33,10 @@ const ownerMemoryCommitMigration = new URL(
   "../../migrations/009_owner_memory_commit_receipts.sql",
   import.meta.url
 );
+const handoffLineageMigration = new URL(
+  "../../migrations/010_handoff_lineage.sql",
+  import.meta.url
+);
 
 export async function migratedGraphMemoryEnvironment(overrides = {}) {
   const database = new DatabaseSync(":memory:");
@@ -44,6 +48,7 @@ export async function migratedGraphMemoryEnvironment(overrides = {}) {
   database.exec(await readFile(memoryResolutionMigration, "utf8"));
   database.exec(await readFile(ownerMemoryReviewMigration, "utf8"));
   database.exec(await readFile(ownerMemoryCommitMigration, "utf8"));
+  database.exec(await readFile(handoffLineageMigration, "utf8"));
   return {
     DB: new GraphMemoryD1(database),
     ...overrides

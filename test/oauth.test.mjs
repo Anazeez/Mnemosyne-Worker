@@ -43,9 +43,17 @@ test("OAuth requests are narrowed to supported public scopes", () => {
     () => narrowRequestedScopes(["memory:review"]),
     /no_supported_scope_requested/,
   );
+  assert.throws(
+    () => narrowRequestedScopes(["memory:handoff:accept"]),
+    /no_supported_scope_requested/,
+  );
   assert.deepEqual(
     narrowRequestedScopes(["memory:review"], { allowReview: true }),
     ["memory:review"],
+  );
+  assert.deepEqual(
+    narrowRequestedScopes(["memory:handoff:accept"], { allowReview: true }),
+    ["memory:handoff:accept"],
   );
 });
 
@@ -1154,6 +1162,16 @@ test("owner review grants require both owner identity and review client", () => 
       allowOwnerReview: false,
     }),
     /no_supported_scope_requested/,
+  );
+  assert.equal(
+    buildGrantClaims({
+      githubUser: { id: 42, login: "owner" },
+      tenantId: "personal",
+      projectIds: ["mnemosyne"],
+      requestedScopes: ["memory:handoff:accept"],
+      allowOwnerReview: true,
+    }).props.scopes[0],
+    "memory:handoff:accept",
   );
 });
 

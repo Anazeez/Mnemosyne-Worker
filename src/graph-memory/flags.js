@@ -9,6 +9,7 @@ export const GRAPH_MEMORY_FLAGS = Object.freeze({
   owner_commit: "GRAPH_MEMORY_OWNER_COMMIT_ENABLED",
   review: "GRAPH_MEMORY_REVIEW_ENABLED",
   publication: "GRAPH_MEMORY_PUBLICATION_ENABLED",
+  handoff_accept: "GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED",
   mcp: "GRAPH_MEMORY_MCP_ENABLED",
   actions: "GRAPH_MEMORY_ACTIONS_ENABLED",
 });
@@ -26,6 +27,7 @@ export function featureGatedGraphServices(env, services) {
   const state = graphMemoryFeatureState(env);
   const read = service => async (...arguments_) => {
     if (!state.read) throw disabled("GRAPH_MEMORY_READ_DISABLED");
+    if (typeof service !== "function") throw disabled("GRAPH_MEMORY_UNAVAILABLE");
     return service(...arguments_);
   };
   return {
@@ -33,9 +35,30 @@ export function featureGatedGraphServices(env, services) {
     searchAcceptedMemory: read(services.searchAcceptedMemory),
     traverseAcceptedMemory: read(services.traverseAcceptedMemory),
     getOwnCandidate: read(services.getOwnCandidate),
+    readLatestHandoffResource: read(services.readLatestHandoffResource),
+    proposeHandoffCompaction: read(services.proposeHandoffCompaction),
     createMemoryCandidate: async (...arguments_) => {
       if (!state.propose) throw disabled("GRAPH_MEMORY_PROPOSE_DISABLED");
+      if (typeof services.createMemoryCandidate !== "function") {
+        throw disabled("GRAPH_MEMORY_UNAVAILABLE");
+      }
       return services.createMemoryCandidate(...arguments_);
+    },
+    proposeHandoffDraft: async (...arguments_) => {
+      if (!state.propose) throw disabled("GRAPH_MEMORY_PROPOSE_DISABLED");
+      if (typeof services.proposeHandoffDraft !== "function") {
+        throw disabled("GRAPH_MEMORY_UNAVAILABLE");
+      }
+      return services.proposeHandoffDraft(...arguments_);
+    },
+    acceptHandoffDraft: async (...arguments_) => {
+      if (!state.handoff_accept) {
+        throw disabled("GRAPH_MEMORY_HANDOFF_ACCEPT_DISABLED");
+      }
+      if (typeof services.acceptHandoffDraft !== "function") {
+        throw disabled("GRAPH_MEMORY_UNAVAILABLE");
+      }
+      return services.acceptHandoffDraft(...arguments_);
     },
   };
 }

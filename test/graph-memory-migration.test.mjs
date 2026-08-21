@@ -35,6 +35,10 @@ const ownerMemoryCommitMigration = new URL(
   "../migrations/009_owner_memory_commit_receipts.sql",
   import.meta.url
 );
+const handoffLineageMigration = new URL(
+  "../migrations/010_handoff_lineage.sql",
+  import.meta.url
+);
 const goldenFixture = new URL(
   "../migrations/fixtures/graph-memory-golden.jsonl",
   import.meta.url
@@ -51,6 +55,7 @@ async function migratedDatabase() {
   db.exec(await readFile(memoryResolutionMigration, "utf8"));
   db.exec(await readFile(ownerMemoryReviewMigration, "utf8"));
   db.exec(await readFile(ownerMemoryCommitMigration, "utf8"));
+  db.exec(await readFile(handoffLineageMigration, "utf8"));
   return db;
 }
 
@@ -307,6 +312,90 @@ test("owner commit migration creates append-only canonical commit receipts", asy
   assert.match(sql, /owner commit receipts are append-only/i);
   assert.doesNotMatch(sql, /DROP TABLE/);
 });
+
+test("handoff lineage migration defines scoped forward-only DAG storage", async () => {
+  const sql = await readFile(handoffLineageMigration, "utf8");
+
+  for (const table of ["handoffs", "handoff_edges", "handoff_lineage"]) {
+    assert.match(sql, new RegExp(`CREATE TABLE ${table}`, "i"));
+  }
+  assert.match(sql, /handoff\.v1/);
+  assert.match(sql, /tenant_id TEXT NOT NULL/);
+  assert.match(sql, /project_id TEXT NOT NULL/);
+  assert.match(sql, /path_hash TEXT NOT NULL/);
+  assert.match(sql, /path_count INTEGER NOT NULL/);
+  assert.match(sql, /ON DELETE RESTRICT/);
+  assert.match(sql, /HANDOFF_LINEAGE_SELF_EDGE/);
+  assert.match(sql, /HANDOFF_LINEAGE_CYCLE/);
+  assert.match(sql, /CREATE INDEX handoff_edges_scope_related/i);
+  assert.match(sql, /CREATE INDEX handoffs_scope_state_generation/i);
+  assert.match(sql, /CREATE INDEX handoff_lineage_scope_ancestor/i);
+  assert.match(sql, /CREATE INDEX handoff_lineage_scope_descendant/i);
+  assert.doesNotMatch(sql, /DROP TABLE/);
+});
+
+test("handoff lineage migration exposes composite scope keys and restricted retention", async () => {
+  const db = await migratedDatabase();
+  for (const table of ["handoffs", "handoff_edges", "handoff_lineage"]) {
+    const row = db.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?
+    `).get(table);
+    assert.match(row.sql, /tenant_id/);
+    assert.match(row.sql, /project_id/);
+    assert.match(row.sql, /ON DELETE RESTRICT/);
+  }
+});
+
+test("handoff edge triggers reject self-edges and recursive cycles", async () => {
+  const db = await migratedDatabase();
+  for (const handoffId of ["root", "child", "grandchild"]) {
+    insertMigrationHandoff(db, handoffId);
+  }
+
+  const insertEdge = db.prepare(`
+    INSERT INTO handoff_edges (
+      tenant_id, project_id, handoff_id, related_handoff_id, relation_type
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+
+  assert.throws(
+    () => insertEdge.run(
+      "tenant-a", "project-a", "root", "root", "parent"
+    ),
+    /HANDOFF_LINEAGE_SELF_EDGE/
+  );
+
+  insertEdge.run("tenant-a", "project-a", "child", "root", "parent");
+  insertEdge.run(
+    "tenant-a", "project-a", "grandchild", "child", "parent"
+  );
+
+  assert.throws(
+    () => insertEdge.run(
+      "tenant-a", "project-a", "root", "grandchild", "supersedes"
+    ),
+    /HANDOFF_LINEAGE_CYCLE/
+  );
+});
+
+function insertMigrationHandoff(db, handoffId, tenantId = "tenant-a", projectId = "project-a") {
+  const timestamp = "2026-08-08T00:00:00.000Z";
+  db.prepare(`
+    INSERT INTO handoffs (
+      handoff_id, tenant_id, project_id, schema_version, state,
+      boundary_event, occurred_at, progress_state, generation, epoch_id,
+      compaction_level, payload_json, payload_hash, retention_class,
+      ttl_seconds, expires_at, agent_family, agent_id, session_id,
+      approval_receipt_hash, approved_by_credential_id, created_at,
+      accepted_at, superseded_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    handoffId, tenantId, projectId, "handoff.v1", "candidate", "task_complete",
+    timestamp, "ready_for_handoff", 0, null, "handoff", "{}", "a".repeat(64),
+    "project", null, null, "codex", "migration-test", null, null, null,
+    timestamp, null, null
+  );
+}
 
 test("golden pilot fixture is representative and bounded", async () => {
   const rows = (await readFile(goldenFixture, "utf8"))

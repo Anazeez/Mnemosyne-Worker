@@ -60,6 +60,7 @@ test("deployment config preserves every supported non-secret live binding", () =
       GRAPH_MEMORY_OWNER_COMMIT_ENABLED: "0",
       GRAPH_MEMORY_REVIEW_ENABLED: "0",
       GRAPH_MEMORY_PUBLICATION_ENABLED: "0",
+      GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: "0",
       GRAPH_MEMORY_MCP_ENABLED: "1",
       GRAPH_MEMORY_ACTIONS_ENABLED: "0",
     },
@@ -180,6 +181,32 @@ test("production workflow requires private OAuth inputs before activation", asyn
       /GRAPH_MEMORY_OWNER_COMMIT_ENABLED" == "1"/g,
     )?.length,
     2,
+  );
+  assert.equal(
+    workflow.match(
+      /GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED" == "1"/g,
+    )?.length,
+    2,
+  );
+});
+
+test("handoff acceptance is an explicit manual rollout input and remains off by default", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/production-deploy.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    workflow,
+    /enable_handoff_accept:[\s\S]*type: boolean[\s\S]*default: false/,
+  );
+  assert.match(
+    workflow,
+    /GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: \$\{\{ inputs\.enable_handoff_accept && '1' \|\| '0' \}\}/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /GRAPH_MEMORY_HANDOFF_ACCEPT_ENABLED: "0"/,
   );
 });
 

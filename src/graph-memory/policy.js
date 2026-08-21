@@ -17,6 +17,9 @@ export const OWNER_SCOPE_CAPABILITIES = Object.freeze({
     "memory.validate",
     "memory.resolve",
     "memory.publish"
+  ]),
+  "memory:handoff:accept": Object.freeze([
+    "memory.handoff.accept"
   ])
 });
 
